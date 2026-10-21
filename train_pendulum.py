@@ -23,9 +23,8 @@ from pyflyt_genesis.pendulum import PendulumEnv
 
 TASK = 'pendulum'
 NUM_ENVS = 1024
-UPDATES = 312            # PPO on the FlashSAC trunk: 312 x 32 x 1024 = 10.2M transitions,
-                         # matched to the flash_sac arm (10k x 1 x 1024 = 10.24M,
-                         # archived at results/pendulum_flashsac1024)
+UPDATES = 10000          # flash_sac: 10k iters x 1 step x 1024 envs = 10.24M transitions;
+                         # the PPO arms used 312 iters x 32 x 1024 = 10.2M (matched data)
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
 RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
@@ -33,7 +32,7 @@ RNN_HIDDEN_DIM = 128
 RNN_NUM_LAYERS = 1
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
+ALGORITHM = 'flash_sac'  # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
 
 if __name__ == '__main__':
     # Exploration overrides: the shared baseline (init_std=.5, entropy_coef=.001)
@@ -53,11 +52,20 @@ if __name__ == '__main__':
     # NOTE: lr_schedule/init_std/entropy_coef below are PPO-only and filtered
     # for flash_sac (a previous leak let learning_rate through unnoticed --
     # now intentional and pinned identically for both).
+    # Fair-config equalization (2026-10-21): lr schedule is the one material
+    # knob that was asymmetric -- PPO trains at fixed 1e-3 while flash_sac's
+    # paper schedule decayed to 1.5e-4 (slowing its late phase). learning_rate_end
+    # = peak makes flash_sac's schedule constant at the same 1e-3 (project-wide
+    # fixed-1e-3 convention). Remaining asymmetries are algorithm-native
+    # mechanics, not tunable configs: entropy/exploration (PPO entropy_coef+std
+    # vs SAC auto-temperature+zeta), data re-use (PPO 4 epochs vs UTD 1 replay),
+    # reward normalization (SAC's RewardNormalizer vs PPO raw), grad clip (PPO
+    # 1.0 vs SAC none -- ~inert under Adam's per-coordinate scale invariance).
+    sac_kw = dict(learning_rate_end=1e-3) if ALGORITHM == 'flash_sac' else {}
     ppo_kw = {} if ALGORITHM == 'flash_sac' else dict(
         init_std=1.0, entropy_coef=.01, lr_schedule='fixed',
-        arch='flash_residual')  # PPO on the FlashSAC trunk (src/common/ppo_flashnet.py)
-                                # for the architecture-matched algorithm A/B
+        arch='flash_residual')  # PPO on the (BN-free) FlashSAC trunk; 'mlp' = plain MLP arm
     run_training(TASK, PendulumEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
                  rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 learning_rate=1e-3, **ppo_kw)
+                 learning_rate=1e-3, **sac_kw, **ppo_kw)
