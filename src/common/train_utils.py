@@ -56,19 +56,20 @@ def build_cfg(rnn=False, rnn_hidden_dim=128, rnn_num_layers=1, *, lr_schedule='f
     (docking fixed 3e-4, transfer adaptive 3e-4)."""
     if arch == 'flash_residual':
         flash_cfg = {'class_name': 'common.ppo_flashnet:FlashResMLPModel'}
-        actor = {**flash_cfg, 'trunk_hidden': 128, 'trunk_blocks': 2,
+        # use_bn=False: BatchNorm is incompatible with PPO's on-policy ratio --
+        # with batch stats the log-prob of a sample depends on the OTHER samples
+        # in its batch, so the rollout policy (stats over 1024 replicas/step) and
+        # the update policy (stats over 8k minibatches) are different functions
+        # no matter how the stats are shared (verified 2026-10-21 bisection:
+        # BN split / batch-everywhere / renorm-off / head-gain / no-value-clip /
+        # no-BN-critic-only ALL flat-lined; the critic is innocent -- offline it
+        # fits returns 3x better than the MLP). The trunk keeps FlashSAC's
+        # UnitLinear residual geometry + RMSNorm + weight renormalization;
+        # input whitening moves to EmpiricalNormalization (as in the MLP arm).
+        actor = {**flash_cfg, 'trunk_hidden': 128, 'trunk_blocks': 2, 'use_bn': False,
                  'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
-        critic = {**flash_cfg, 'trunk_hidden': 256, 'trunk_blocks': 2}
-        # rsl_rl's clipped value loss reuses clip_param=0.2 as an ABSOLUTE
-        # value-unit band: on tasks with O(1e3) returns (pendulum ~ -1.4k) the
-        # critic may move <= 0.2/iteration toward its targets and never fits
-        # the value surface (verified 2026-10-21: critic stayed flat at
-        # -450..-525 everywhere, up/down contrast 1.16x vs the MLP arm's 30x).
-        # FlashSAC never hits this because its RewardNormalizer bounds TD
-        # targets to [-5, 5]. Disable the clip for the trunk arm.
-        critic_cfg_extra = {'use_clipped_value_loss': False}
+        critic = {**flash_cfg, 'trunk_hidden': 256, 'trunk_blocks': 2, 'use_bn': False}
     else:
-        critic_cfg_extra = {}
         model_cfg = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True}
         if rnn:  # recurrent backbone replaces the MLP (unsupported with flash_residual)
             model_cfg.update({'class_name': 'RNNModel', 'rnn_type': 'gru',
