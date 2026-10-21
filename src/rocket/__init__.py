@@ -43,6 +43,14 @@ Reward
     Pad contact pays (+5 - 0.3 |vz|) on every contact step; a landed success
     adds +3.
 
+    Two arms behind the env's `reward_version` argument: 'upstream' (default,
+    the reward above, verbatim) and 'v2' (2026-10-21 redesign -- impact-speed
+    potential Phi=sqrt(vz^2+2*9.81*z) replaces the exp(z) deceleration term,
+    an off-axis cost replaces the farmable holding term, first-touch quality
+    bonus and success +100 replace the per-contact-step +5 and the +3; full
+    rationale in src/rocket/env.py). All dense components are logged as
+    Episode/rew_* scalars in both arms.
+
 Episode End
     Success (truncation): pad contact with |v| < 0.02 m/s, |omega| <
     0.02 rad/s, tilt < 0.1 rad -- judged on the previous control-step speed,

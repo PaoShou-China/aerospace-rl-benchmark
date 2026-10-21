@@ -50,10 +50,24 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
+from ..common.curriculum import SuccessRateCurriculum
 
 
 class LowThrustTransferEnv:
-    def __init__(self,num_envs=64,backend='cpu',seed=7):
+    # Difficulty axis (0 easiest -> 1 hardest = the reference orbit): the
+    # initial eccentricity shrinks with d, which shrinks the required perigee
+    # raise (rp = a(1-e)); the reward/success criterion (terminal R > 0) is
+    # untouched and ra0/rp0 are re-derived per episode from the actual state.
+    # At d=1 the reference e=0.1 and its derived reference radii are restored
+    # bit-for-bit.
+    ecc0_min=.02             # axis: ecc0 .02 -> .1
+    benchmark_difficulty=1.
+    difficulty=None          # None = benchmark behavior (no cfg record)
+    curriculum=False
+    curriculum_window=1024   # completed episodes per advance decision
+    curriculum_threshold=.6  # rolling success rate that advances the stage
+
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
@@ -118,8 +132,33 @@ class LowThrustTransferEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
+        self._resolve_difficulty(difficulty,curriculum)
 
         self.reset()
+
+    def _resolve_difficulty(self,difficulty,curriculum):
+        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+        if difficulty is not None:
+            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
+            self.difficulty=float(difficulty)
+        if curriculum is not None:self.curriculum=bool(curriculum)
+        self._tracker=None
+        if self.curriculum:
+            if self.difficulty is None:self.difficulty=0.
+            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
+            self.cfg['curriculum']=True
+        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+
+    def _apply_difficulty(self,d):
+        """Map difficulty in [0,1] onto the initial-orbit eccentricity."""
+        self.difficulty=d
+        self.ecc0=self.ecc0_min+(0.1-self.ecc0_min)*d
+        # derived reference radii/speed follow the eccentricity (declared obs
+        # bounds only; values are returned raw)
+        self.ra_ref=self.sma0*(1+self.ecc0)
+        self.rp_ref=self.sma0*(1-self.ecc0)
+        self.vel_ref=math.sqrt(self.mu*(2/self.rp_ref-1/self.sma0))
+        self.cfg['difficulty']=d
 
     def _kepler_to_cartesian(self,mean_anomaly):
         """Perifocal -> GCRF state for the fixed (a,e,i,raan,argp) and given M."""
@@ -248,6 +287,11 @@ class LowThrustTransferEnv:
                 'perigee_raise_km':drp_km.sum()/n_done,
                 'apo_drift_km':dra_km.sum()/n_done,
                 'propellant_kg':dm_kg.sum()/n_done}
+            if self._tracker is not None:
+                new=self._tracker.update(done,self.complete)
+                if new is not None:
+                    self._apply_difficulty(new)
+                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 

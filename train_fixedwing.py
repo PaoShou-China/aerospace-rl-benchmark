@@ -27,6 +27,14 @@ and train_docking.py):
    0.304 (6912 episodes, 2x the baseline count), late-training success still
    rising where the baseline plateaued; cost is +48% wall time (3803 s) and
    2x transitions. Kept. Baseline (nsp=32): results/fixedwing_baseline_nsp32.
+
+Geometry and diagnostics (2026-10-21): the waypoint shell is now 20-65 m
+with a 20 m altitude floor (was 1-90 m and 0.5 m). The old shell sampled
+targets inside one minimum turn radius of the 100 m OOB sphere and required
+ground-skimming captures at z ~ 0.5 m. Termination reasons are now logged
+(Episode/crash_rate, out_of_bounds_rate, timeout_rate) and aggregated in
+run.json, so the remaining 4th-waypoint gap can be attributed instead of
+guessed.
 """
 import sys
 from pathlib import Path
@@ -41,19 +49,33 @@ NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
-LR_SCHEDULE = 'fixed'    # documented deviation, see module docstring
-LEARNING_RATE = 1e-3
-NUM_STEPS_PER_ENV = 64   # documented deviation (default 32), see module docstring
+# Web-alignment (2026-10-21): PPO hyperparameters follow "Adversarial RL for
+# Robust Control of Fixed-Wing Aircraft" (arXiv:2510.16650): lr 3e-4, 10 epochs,
+# entropy 0, gamma 0.99, lam 0.95, clip 0.2, vf_coef 0.5, 2048 steps/env.
+# num_steps_per_env stays 64 (verified local improvement, see docstring above);
+# 2048 would multiply wall time ~32x at 1024 envs. 1024 envs kept.
+LR_SCHEDULE = 'fixed'
+LEARNING_RATE = 3e-4
+NUM_STEPS_PER_ENV = 64
+NUM_LEARNING_EPOCHS = 10
+ENTROPY_COEF = 0.0
+VALUE_LOSS_COEF = 0.5
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+CURRICULUM = None
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
 if __name__ == '__main__':
     run_training(TASK, FixedwingWaypointsEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
+                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
                  lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 num_steps_per_env=NUM_STEPS_PER_ENV)
+                 num_steps_per_env=NUM_STEPS_PER_ENV,
+                 num_learning_epochs=NUM_LEARNING_EPOCHS,
+                 entropy_coef=ENTROPY_COEF, value_loss_coef=VALUE_LOSS_COEF,
+                 env_kwargs=ENV_KWARGS)

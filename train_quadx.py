@@ -18,43 +18,39 @@ from common.train_utils import run_training
 from pyflyt_genesis.quadx import QuadXHoverEnv
 
 TASK = 'quadx'
-NUM_ENVS = 1024
-UPDATES = 1000
+NUM_ENVS = 1024          # Genesis hover tutorial uses 8192; kept at 1024 for hardware/wall time
+UPDATES = 1000           # tutorial runs 301 iterations; kept for a comparable final policy
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-# Documented per-task PPO deviation (same precedent as docking): the KL-adaptive
-# schedule thrashes on this task (lr slammed between its 1e-5 floor and the
-# 1e-2 ceiling, then settles ~5e-5 and stalls below the fixed-lr plateau), and
-# the default fixed 3e-4 gets stuck at ~-260 return with 0% success. A 300-update
-# lr sweep (2026-10-20, results archived under results/quadx_sweep) picked
-# fixed 1e-3: success 1.0 with mean_reward rising monotonically.
+# Web-alignment (2026-10-21): hyperparameters follow the official Genesis hover
+# tutorial (rsl-rl defaults): lr 3e-4, 5 epochs, 4 mini-batches, entropy 0.01,
+# init_std 1.0, num_steps_per_env 100, gamma 0.99, lam 0.95, clip 0.2.
+# Note: the earlier local 300-update sweep (results/quadx_sweep) picked fixed
+# 1e-3 over 3e-4; that local result is intentionally overridden here so the
+# configuration matches the published reference. Re-run the sweep if this arm
+# stalls (documented failure was -260 return / 0% success at fixed 3e-4).
 LR_SCHEDULE = 'fixed'
-LEARNING_RATE = 1e-3
-# entropy_coef stays at the shared 0.001 default: a 0.005 variant was tried and
-# made the late-phase behavior worse (lower peak 858 @244, earlier drift, std
-# pushed back up 0.279 -> 0.311), so the docking late-collapse remedy does not
-# transfer to this task.
-ENTROPY_COEF = 0.001
-# Third documented deviation: exponential lr half-life of 300 updates, applied
-# by train_utils writing the optimizer param_groups directly (schedule='fixed'
-# never reapplies alg.learning_rate). Rationale: with success saturated the
-# policy mean random-walks off the hover ridge (first 1000-update attempt:
-# peak 917 @417 -> ~830 @699, success still 1.0); decaying lr damps that walk.
-# The half-life is deliberately long (300, not ~175) because fixed 3e-4 from
-# scratch stalls at -377 with 0% success -- the climb phase (first ~400
-# updates) must keep lr >= ~4e-4, and this schedule stays above 3.5e-4 through
-# update 600 while reaching ~1e-4 by update 1000.
-LR_DECAY_UPDATES = 300
+LEARNING_RATE = 3e-4
+ENTROPY_COEF = 0.01
+INIT_STD = 1.0
+NUM_STEPS_PER_ENV = 100
+NUM_LEARNING_EPOCHS = 5
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+CURRICULUM = None
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
 if __name__ == '__main__':
     run_training(TASK, QuadXHoverEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
+                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
                  lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 entropy_coef=ENTROPY_COEF, lr_decay_updates=LR_DECAY_UPDATES)
+                 entropy_coef=ENTROPY_COEF, init_std=INIT_STD,
+                 num_steps_per_env=NUM_STEPS_PER_ENV,
+                 num_learning_epochs=NUM_LEARNING_EPOCHS,
+                 env_kwargs=ENV_KWARGS)

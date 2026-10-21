@@ -21,14 +21,12 @@ from pyflyt_genesis.satellite import SatelliteAttitudeEnv
 
 TASK = 'satellite'
 NUM_ENVS = 1024
-UPDATES = 150
+UPDATES = 600            # from-scratch RL budget (warm-start refinement used 150)
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
-RESUME = True            # run 8: start from run-7's best checkpoint model_200.pt (57% greedy)
-CLEAN = False            # keep the warm-start + run-7 checkpoints (clean only applies to fresh runs anyway)
+RESUME = False           # pure RL: random init, no BC/DAgger warm start
+CLEAN = True
+OUT_DIR = str(Path(__file__).resolve().parent / 'results' / 'satellite_rl')  # keep the archived BC+DAgger runs in results/satellite
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
 # lr pinned to fixed (2026-10-20 tuning history): the KL-adaptive schedule
 # is proven broken on this task -- all prior runs clamp to the 1e-5 floor
@@ -90,12 +88,21 @@ LR_SCHEDULE = 'fixed'
 #   N*m*s stored momentum (unphysical for a quiescent spacecraft); a
 #   momentum-neutral home theta0 = (pi,0,pi,0) (Sum r_i = 0 exactly) makes
 #   every target solvable. User decision pending.
-LEARNING_RATE = 1.5e-5    # effective lr, maintained at LR_SIGMA_K * SIGMA_PIN by the coupling
-SIGMA_PIN = 0.1           # exploration std re-pinned every 25-update chunk
-LR_SIGMA_K = 1.5e-4       # lr = K * sigma keeps the mean-update step in the stable band
-FREEZE_OBS_NORM = True    # pin the empirical obs normalizers in eval mode
-# Documented deviations from the shared fair-comparison defaults (rendezvous
-# precedent: per-task values for exactly the variables the task needs):
+# Web-aligned pure-RL entry (2026-10-21): no BC/DAgger warm start. Values follow
+# arXiv:2505.00165 (lr 3e-4, 40 epochs, gamma 0.99, batch 150, minibatch 32,
+# clip 0.2). Adaptations: gamma stays 0.999 because 1200-step episodes make
+# 0.99 blind to the settle bonus (see history above); nsp 150 matches the
+# paper's 150-step rollout; 5 mini-batches mirror its ~32-sample minibatches.
+# The fixed schedule replaces SB3's KL-adaptive schedule (adaptive is proven
+# to clamp to 1e-5 on this task). lr/sigma coupling and obs-norm freezing are
+# warm-start-specific and removed.
+LEARNING_RATE = 3e-4
+INIT_STD = 1.0
+PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=150, num_mini_batches=5,
+                     num_learning_epochs=40, entropy_coef=0.0, init_std=INIT_STD,
+                     clip_param=0.2)
+# HISTORICAL: tuning log for the BC+DAgger warm-start runs 1-8 (superseded by
+# the pure-RL block above; kept for the reward/physics findings below).
 # - num_steps_per_env 250 / gamma 0.999 / num_mini_batches 1 / entropy 0.003 /
 #   lr half-life 400: the EXACT rendezvous recipe (structurally identical task:
 #   approach a target, brake, hold precision over a 1000-step episode) that
@@ -150,13 +157,16 @@ FREEZE_OBS_NORM = True    # pin the empirical obs normalizers in eval mode
 # - gamma 0.999 (default 0.99): 1200-step episodes; at gamma=0.99 the settle-
 #   bonus value of capturing is discounted to ~5% by the slew phase
 #   (gamma^300), leaving no gradient toward capture.
-PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=250, num_mini_batches=1,
-                     entropy_coef=0.001)
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+CURRICULUM = None
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
 if __name__ == '__main__':
     run_training(TASK, SatelliteAttitudeEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 freeze_obs_norm=FREEZE_OBS_NORM, sigma_pin=SIGMA_PIN,
-                 lr_sigma_coupling=LR_SIGMA_K, **PPO_OVERRIDES)
+                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
+                 out_dir=OUT_DIR, lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
+                 env_kwargs=ENV_KWARGS, **PPO_OVERRIDES)

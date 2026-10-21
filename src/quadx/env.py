@@ -15,7 +15,8 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
-from ..common.dynamics import euler, inverse_rotate
+from ..common.dynamics import euler, inverse_rotate, quat_from_euler
+from ..common.curriculum import SuccessRateCurriculum
 
 
 def hover_shaping(position,rpy,body_omega):
@@ -24,7 +25,22 @@ def hover_shaping(position,rpy,body_omega):
 
 
 class QuadXHoverEnv:
-    def __init__(self,num_envs=64,backend='cpu',seed=7):
+    # Difficulty axis (0 easiest = the deterministic-spawn benchmark -> 1
+    # hardest): reset perturbations grow with d (classic hover curriculum /
+    # domain randomization). At d=0 no random numbers are drawn, so the reset
+    # state and RNG stream match the legacy benchmark bit-for-bit. Success
+    # criteria (ground contact, bounds, step limit) are untouched.
+    spawn_xy_noise=0.        # spawn xy-offset radius [m] (axis 0 -> .5)
+    spawn_z_noise=0.         # spawn z-offset half-range [m] (axis 0 -> .25)
+    spawn_vel_noise=0.       # spawn |v0| per-axis half-range [m/s] (axis 0 -> .5)
+    spawn_att_noise=0.       # spawn per-axis euler half-range [rad] (axis 0 -> .35)
+    benchmark_difficulty=0.
+    difficulty=None          # None = benchmark behavior (no cfg record)
+    curriculum=False
+    curriculum_window=1024   # completed episodes per advance decision
+    curriculum_threshold=.6  # rolling success rate that advances the stage
+
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'quadx','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -70,8 +86,31 @@ class QuadXHoverEnv:
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
+        self._resolve_difficulty(difficulty,curriculum)
 
         self.reset()
+
+    def _resolve_difficulty(self,difficulty,curriculum):
+        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+        if difficulty is not None:
+            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
+            self.difficulty=float(difficulty)
+        if curriculum is not None:self.curriculum=bool(curriculum)
+        self._tracker=None
+        if self.curriculum:
+            if self.difficulty is None:self.difficulty=0.
+            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
+            self.cfg['curriculum']=True
+        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+
+    def _apply_difficulty(self,d):
+        """Map difficulty in [0,1] onto the spawn-perturbation knobs."""
+        self.difficulty=d
+        self.spawn_xy_noise=.5*d
+        self.spawn_z_noise=.25*d
+        self.spawn_vel_noise=.5*d
+        self.spawn_att_noise=.35*d
+        self.cfg['difficulty']=d
 
     def _scale_actions(self,actions):
         raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
@@ -123,6 +162,11 @@ class QuadXHoverEnv:
                 'success_rate':(done&self.complete).to(torch.float64).sum()/n_done,
                 'terminal_pos_err_m':pos_err.sum()/n_done,
                 'terminal_att_err_rad':att_err.sum()/n_done}
+            if self._tracker is not None:
+                new=self._tracker.update(done,self.complete)
+                if new is not None:
+                    self._apply_difficulty(new)
+                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
@@ -158,6 +202,21 @@ class QuadXHoverEnv:
         spawn=torch.zeros_like(p);spawn[:,2]=1.
         rotation=torch.zeros_like(q);rotation[:,0]=1
         velocity=torch.zeros_like(v);omega=torch.zeros_like(w)
+        # difficulty>0 perturbs the spawn (position ring + z, velocity, attitude);
+        # all knobs are 0 at the benchmark difficulty, where no random numbers
+        # are drawn and the reset matches the legacy deterministic spawn exactly
+        if self.spawn_xy_noise>0. or self.spawn_z_noise>0.:
+            u=self.plant.rng.uniform(3,mask)
+            rad=self.spawn_xy_noise*u[:,0];ang=2*math.pi*u[:,1]
+            off=torch.stack((rad*ang.cos(),rad*ang.sin(),self.spawn_z_noise*(2*u[:,2]-1.)),-1)
+            spawn=spawn+torch.where(mask[:,None],off,0.)
+        if self.spawn_vel_noise>0.:
+            u=self.plant.rng.uniform(3,mask)
+            velocity=velocity+torch.where(mask[:,None],self.spawn_vel_noise*(2*u-1.),0.)
+        if self.spawn_att_noise>0.:
+            u=self.plant.rng.uniform(3,mask)
+            rot=quat_from_euler(self.spawn_att_noise*(2*u-1.))
+            rotation=torch.where(mask[:,None],rot,rotation)
         self.plant.set_state(torch.where(mask[:,None],spawn,p),torch.where(mask[:,None],rotation,q),
                              torch.where(mask[:,None],velocity,v),torch.where(mask[:,None],omega,w))
         self.count.masked_fill_(mask,0)

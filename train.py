@@ -43,9 +43,6 @@ def main():
     parser.add_argument('--updates', type=int, default=1000)
     parser.add_argument('--backend', choices=['cpu', 'gpu'], default='gpu')
     parser.add_argument('--seed', type=int, default=7)
-    parser.add_argument('--rnn', action='store_true', help='GRU actor/critic backbone via rsl-rl RNNModel')
-    parser.add_argument('--rnn-hidden-dim', type=int, default=128)
-    parser.add_argument('--rnn-num-layers', type=int, default=1)
     parser.add_argument('--out', type=Path)
     parser.add_argument('--resume', action='store_true',
                         help='resume from the newest model_*.pt / checkpoint.pt already in --out')
@@ -57,9 +54,6 @@ def main():
 
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed)
     model_cfg = {'class_name': 'MLPModel', 'hidden_dims': [64, 64], 'activation': 'tanh', 'obs_normalization': True}
-    if args.rnn:
-        model_cfg.update({'class_name': 'RNNModel', 'rnn_type': 'gru',
-                          'rnn_hidden_dim': args.rnn_hidden_dim, 'rnn_num_layers': args.rnn_num_layers})
     cfg = {'num_steps_per_env': 32, 'save_interval': 100, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
            'actor': {**model_cfg, 'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': .5, 'std_type': 'log'}},
            'critic': dict(model_cfg),
@@ -82,8 +76,7 @@ def main():
     elapsed = time.perf_counter() - start
     runner.save(str(out / 'checkpoint.pt'))
 
-    report = {'task': env.cfg, 'device': str(env.device), 'updates': args.updates, 'recurrent': args.rnn,
-              'rnn': {'type': 'gru', 'hidden_dim': args.rnn_hidden_dim, 'layers': args.rnn_num_layers} if args.rnn else None,
+    report = {'task': env.cfg, 'device': str(env.device), 'updates': args.updates,
               'transitions': args.updates * cfg['num_steps_per_env'] * args.num_envs,
               'train_wall_seconds': elapsed,
               'completed_episodes': env.completed_episodes.detach().cpu().tolist(),

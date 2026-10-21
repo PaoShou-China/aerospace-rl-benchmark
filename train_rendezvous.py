@@ -34,6 +34,17 @@ not listed here is identical to the other task entries):
 The env's progress-potential brake_ref (0.1 m/s^2, soft dead-zone) and the
 20-point terminal bonus/violation spread are set on SpaceRendezvousEnv
 itself; see src/docking/env.py.
+
+Curriculum (2026-10-21): the 800-1200 m spawn makes the terminal "d<10 m and
+v<0.5 m/s" event too rare to bootstrap (0.8% success with the shared wide
+net) while the same CWH machinery reaches ~94% on docking at 50-100 m. The
+env therefore starts at 150-300 m and widens x1.5 per stage once the last
+1024 completed episodes clear 60%, reaching the benchmark range in ~5 stages.
+The task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
+eval.py (no env kwargs) always evaluates the full 800-1200 m benchmark.
+
+Narrow net: 64x64 was the only arm that learned this task (22% success vs
+0.8% for 512x256x128), so the shared residual trunk is pinned to 64.
 """
 import sys
 from pathlib import Path
@@ -48,17 +59,28 @@ NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
+# Web-alignment (2026-10-21): lr 3e-4 follows the hierarchical multiphase
+# rendezvous paper (arXiv:2610.17468), which also uses gamma 0.99, lam 0.95,
+# entropy 0.01, target KL 0.03. gamma/entropy keep the locally verified 0.999/
+# 0.003 (see docstring: gamma 0.99 makes the maneuver look like slow creeping;
+# entropy 0.01 caused std runaway). The paper's constant lr replaces the old
+# 1e-3 + 400-update decay, so the decay knob is dropped.
 PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=.999, num_mini_batches=1,
-                     lr_schedule='fixed', learning_rate=.001, entropy_coef=.003)
+                     lr_schedule='fixed', learning_rate=3e-4, entropy_coef=.003,
+                     trunk_hidden=64, critic_trunk_hidden=64)
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+# True is this task's proven default (easy 150-300 m start bootstraps braking).
+CURRICULUM = True
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
 if __name__ == '__main__':
     run_training(TASK, SpaceRendezvousEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, lr_decay_updates=400, **PPO_OVERRIDES)
+                 backend=BACKEND, resume=RESUME, clean=CLEAN,
+                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, **PPO_OVERRIDES)

@@ -30,9 +30,6 @@ NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
@@ -44,10 +41,24 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py
 # 4e-4..3e-3, no floor slam, std 0.5->0.10), so neither the adaptive pathology
 # nor the fixed-1e-3 default was ever beaten here; both are untested at the
 # new [128,128] network scale.
-PPO_OVERRIDES = {'gamma': 1.0, 'lr_schedule': 'adaptive', 'learning_rate': .0003}
+# Web-alignment (2026-10-21): values follow "RL for Low-Thrust Trajectory Design
+# of Interplanetary Missions" (arXiv:2008.08501): gamma 0.9999, lam 0.99,
+# lr 2.5e-4, entropy 4.75e-8, 30 epochs, clip 0.3, vf_coef 0.5. The paper
+# linearly decays lr (2.5e-4 -> 0) and clip (0.3 -> 0); rsl-rl only supports
+# fixed/adaptive schedules, so the constant start values are used here.
+PPO_OVERRIDES = {'gamma': 0.9999, 'lr_schedule': 'fixed', 'learning_rate': 2.5e-4,
+                 'lam': 0.99, 'entropy_coef': 4.75e-8, 'num_learning_epochs': 30,
+                 'clip_param': 0.3, 'value_loss_coef': 0.5}
+
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+CURRICULUM = None
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
 if __name__ == '__main__':
     run_training(TASK, LowThrustTransferEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, **PPO_OVERRIDES)
+                 backend=BACKEND, resume=RESUME, clean=CLEAN,
+                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, **PPO_OVERRIDES)

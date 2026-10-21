@@ -4,9 +4,11 @@ Description
     A 2.35 kg fixed-wing UAV (1.6 m span, 0.3 m chord main wing; 18 N
     tractor propeller, thrust-to-weight ~0.78) spawns at (0, 0, 10) m with
     a 20 m/s forward airspeed and must capture four waypoints sampled
-    uniformly in a spherical shell (radius 1-90 m, elevation >= 0.5 m)
-    around the origin, one at a time. Aerodynamics are blade-element
-    lifting surfaces (Cl_alpha_2D = 2*pi, eta = 0.65, stall at +14/-9 deg)
+    uniformly in a spherical shell (radius 20-65 m, altitude >= 20 m)
+    around the origin, one at a time. The shell leaves 35 m of margin to
+    the 100 m out-of-bounds sphere and keeps targets out of ground effect.
+    Aerodynamics are blade-element lifting surfaces (Cl_alpha_2D = 2*pi,
+    eta = 0.65, stall at +14/-9 deg)
     on the main wing, ±30 deg flapped ailerons and ±20 deg tail surfaces,
     each with a 50 ms first-order actuator lag. Genesis rigid-body engine
     at 240 Hz under a 120 Hz controller under a 30 Hz policy; 2% throttle

@@ -51,6 +51,16 @@ def euler(q):
                         torch.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))), -1)
 
 
+def quat_from_euler(rpy):
+    """Roll-pitch-yaw (XYZ intrinsic, PyBullet convention) to quaternion [w,x,y,z]."""
+    roll, pitch, yaw = rpy.unbind(-1)
+    cr, sr = .5*roll.cos(), .5*roll.sin()
+    cp, sp = .5*pitch.cos(), .5*pitch.sin()
+    cy, sy = .5*yaw.cos(), .5*yaw.sin()
+    return torch.stack((cr*cp*cy+sr*sp*sy, sr*cp*cy-cr*sp*sy,
+                        cr*sp*cy+sr*cp*sy, cr*cp*sy-sr*sp*cy), -1)
+
+
 class QuadDynamics:
     def __init__(self, n, device, dt=1/240, params=None):
         self.p = params or QuadParams.from_reference()

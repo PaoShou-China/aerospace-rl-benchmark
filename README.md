@@ -13,7 +13,7 @@ host-device synchronization, no gym/gymnasium dependency**: every operation
 (physics integration, contact checks, reward, reset, RNG) is a masked tensor
 kernel, so inactive replicas are frozen and consume no random numbers.
 Training runs PPO from [rsl-rl](https://github.com/leggedrobotics/rsl_rl)
-(`train.py`, optional GRU backbone via `--rnn`); evaluation via `eval.py`.
+(`train.py`); evaluation via `eval.py`.
 
 ## Environments
 
@@ -26,6 +26,7 @@ Training runs PPO from [rsl-rl](https://github.com/leggedrobotics/rsl_rl)
 | Low-thrust transfer | `LowThrustTransferEnv` | Two-body gravity + 3-axis 10 mN EP, RK4 10 s | 8 | 3 | 300 s/step | 166 steps ≈ 5 revs | none (terminal reward) |
 | Docking | `SpaceDockingEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 500 steps ≈ 8.3 min | range < 1 m & speed < 0.1 m/s |
 | Rendezvous | `SpaceRendezvousEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 1000 steps ≈ 16.7 min | range < 10 m & speed < 0.5 m/s, keep-out respected |
+| Pendulum (toy sanity check) | `PendulumEnv` | Classic single-DOF pendulum, explicit Euler 50 ms | 3 | 1 | 20 Hz | 200 steps = 10 s | completed-episode return > −200 |
 
 Per-task quantitative details (action/observation layouts, reward
 decompositions, termination conditions, spawn distributions) live in the
@@ -34,7 +35,8 @@ module docstring of each package: [src/quadx](src/quadx/__init__.py),
 [src/rocket](src/rocket/__init__.py),
 [src/satellite](src/satellite/__init__.py),
 [src/transfer](src/transfer/__init__.py),
-[src/docking](src/docking/__init__.py).
+[src/docking](src/docking/__init__.py),
+[src/pendulum](src/pendulum/__init__.py).
 
 ## Package layout
 
@@ -44,6 +46,7 @@ src/
 │   ├── plant.py     # TensorPlant (vehicle physics, contacts, warmup),
 │   │                #   TensorRandom (per-replica counter RNG streams)
 │   ├── dynamics.py  # quaternion/euler helpers
+│   ├── curriculum.py  # shared 0-1 difficulty ramp (success-rate gated)
 │   └── aerodynamics.py  # batched lifting-surface model
 ├── quadx/           # QuadX-Hover (rotary-wing station keeping)
 ├── fixedwing/       # Fixedwing-Waypoints (aerodynamic navigation)
@@ -51,6 +54,7 @@ src/
 ├── satellite/       # CMG attitude control (pure tensor)
 ├── transfer/        # low-thrust orbit raising (pure tensor)
 ├── docking/         # CWH docking + rendezvous (pure tensor)
+├── pendulum/        # classic gym Pendulum-v1 toy (training-stack sanity check)
 └── original_pyflyt/ # vendored PyFlyt vehicle URDF/YAML models
 train.py             # rsl-rl PPO entry point for all 7 tasks
 eval.py              # policy evaluation
@@ -74,6 +78,42 @@ them uniformly.
   accumulate episode statistics on device; `complete` is the per-replica
   success flag.
 - Actions arrive on `env.device`; implicit host/device copies raise.
+
+## Curriculum difficulty (0–1)
+
+Every environment exposes a unified difficulty setting in `[0, 1]` (0
+easiest, 1 hardest) — the project-wide curriculum feature
+([src/common/curriculum.py](src/common/curriculum.py)). Only initial-state /
+task-parameter distributions are modulated; success criteria, terminations
+and reward structure are untouched, so evaluation stays comparable at any
+training difficulty.
+
+- `difficulty=None` (default): published benchmark behavior, bit-for-bit
+  (eval.py builds envs without kwargs and is unaffected).
+- `difficulty=d` (float): train at a static difficulty.
+- `curriculum=True`: the difficulty auto-ramps 0 → 1 under the shared
+  `SuccessRateCurriculum` — +0.1 whenever a 1024-episode window closes with
+  a rolling success rate ≥ 0.6 (forward-only). The current difficulty is
+  recorded in `env.cfg` (`run.json`) and printed on each advance.
+
+The per-task difficulty axes (d=0 → d=1):
+
+| Task | Knob | d=0 (easy) → d=1 (benchmark) |
+|---|---|---|
+| Pendulum | reset ranges | th0 ±30° → ±180°, thdot0 ±0.25 → ±1 rad/s |
+| QuadX-Hover | spawn perturbations | deterministic spawn (benchmark) → ±0.5 m xy / ±0.25 m z, ±0.5 m/s, ±0.35 rad |
+| Fixedwing | waypoint shell | min radius 50 m → 20 m (max 65 m fixed) |
+| Rocket-Landing | initial conditions | xy ±2 m, z 440–450 m, euler ±0.05 → xy ±20 m, z 400–450 m, euler ±0.3 |
+| Satellite (CMG) | target attitude | ≤0.3 rad from home, no noise → uniform SO(3), ±0.001 noise |
+| Transfer | initial eccentricity | e0 0.02 → 0.1 |
+| Docking | spawn range/speed | 15–30 m, 0.1 m/s → 50–100 m, 0.5 m/s |
+| Rendezvous | spawn range | 150–300 m → 800–1200 m |
+
+All tasks place the published benchmark at d=1 except QuadX-Hover, whose
+deterministic-spawn benchmark is already the easiest variant (its axis
+extends toward harder spawn randomization). Train entries expose a single
+`CURRICULUM` constant (`None` off / float static / `True` auto-ramp);
+`train_rendezvous.py` ships with `CURRICULUM = True` (its proven default).
 
 ## Usage
 

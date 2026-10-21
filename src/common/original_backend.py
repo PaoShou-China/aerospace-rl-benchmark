@@ -49,8 +49,13 @@ class GenesisBulletClient:
         self._temp=tempfile.TemporaryDirectory(prefix='pyflyt-genesis-')
     def resetSimulation(self):
         self.disconnect();self._bodies=[];self._built=False;self._pending_pad=None;self._contacts=[]
+        # integrator left at the Genesis default (approximate_implicitfast):
+        # an explicit Euler override here made pad contacts jitter at ~0.1 m/s
+        # (measured 2026-10-20, controlled upright drop probe), which keeps
+        # |v| above the 0.02 m/s settle threshold and makes landing successes
+        # unreachable. iterations/ls_iterations stay at defaults (25/50).
         self._scene=gs.Scene(show_viewer=False,sim_options=gs.options.SimOptions(dt=self._dt,gravity=self._gravity),
-            rigid_options=gs.options.RigidOptions(integrator=gs.integrator.Euler,batch_links_info=True,enable_self_collision=False))
+            rigid_options=gs.options.RigidOptions(batch_links_info=True,enable_self_collision=False))
     def disconnect(self):
         if self._scene is not None:self._scene.destroy();self._scene=None
     def setGravity(self,x,y,z):

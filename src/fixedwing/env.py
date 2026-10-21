@@ -21,6 +21,7 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate
+from ..common.curriculum import SuccessRateCurriculum
 
 REACH_BONUS = 15.0
 CRASH_PENALTY = 10.0
@@ -31,10 +32,29 @@ CRASH_PENALTY = 10.0
 # variants, best head-on pass missed by 8.6 m). 10 m ~ one minimum turn
 # radius keeps the navigation challenge while making captures reachable.
 CAPTURE_RADIUS = 10.0
+# Waypoint shell. The original 1-90 m shell put targets within 10 m of the
+# 100 m out-of-bounds sphere, which a 10-15 m minimum turn radius cannot
+# reverse inside; z was clamped only at 0.5 m, so many targets required a
+# ground-skimming capture. 20-65 m keeps the navigation challenge while
+# leaving 35 m of OOB margin and a 20 m altitude floor.
+WAYPOINT_MIN_RADIUS = 20.0
+WAYPOINT_MAX_RADIUS = 65.0
+WAYPOINT_MIN_ALTITUDE = 20.0
 
 
 class FixedwingWaypointsEnv:
-    def __init__(self,num_envs=64,backend='cpu',seed=7):
+    # Difficulty axis (0 easiest -> 1 hardest = the benchmark shell): at d=0
+    # waypoints only spawn on large circles (min radius 50 m), at d=1 the full
+    # benchmark 20-65 m shell is restored bit-for-bit. Success criteria
+    # (capture radius, crash/OOB, step limit) are untouched.
+    waypoint_min_radius=WAYPOINT_MIN_RADIUS  # axis 50 -> WAYPOINT_MIN_RADIUS (20)
+    benchmark_difficulty=1.
+    difficulty=None          # None = benchmark behavior (no cfg record)
+    curriculum=False
+    curriculum_window=1024   # completed episodes per advance decision
+    curriculum_threshold=.6  # rolling success rate that advances the stage
+
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'fixedwing','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -70,12 +90,35 @@ class FixedwingWaypointsEnv:
         self.completed_returns=torch.zeros_like(self.returns)
         self.completed_episodes=torch.zeros_like(self.episode_length_buf)
         self.completed_successes=torch.zeros_like(self.episode_length_buf)
-        self.completed_metrics={'waypoints_reached':torch.zeros((),device=self.device,dtype=torch.float64)}
+        self.completed_metrics={'waypoints_reached':torch.zeros((),device=self.device,dtype=torch.float64),
+                                'crashes':torch.zeros((),device=self.device,dtype=torch.float64),
+                                'out_of_bounds':torch.zeros((),device=self.device,dtype=torch.float64),
+                                'timeouts':torch.zeros((),device=self.device,dtype=torch.float64)}
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
+        self._resolve_difficulty(difficulty,curriculum)
 
         self.reset()
+
+    def _resolve_difficulty(self,difficulty,curriculum):
+        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+        if difficulty is not None:
+            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
+            self.difficulty=float(difficulty)
+        if curriculum is not None:self.curriculum=bool(curriculum)
+        self._tracker=None
+        if self.curriculum:
+            if self.difficulty is None:self.difficulty=0.
+            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
+            self.cfg['curriculum']=True
+        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+
+    def _apply_difficulty(self,d):
+        """Map difficulty in [0,1] onto the waypoint-shell knob."""
+        self.difficulty=d
+        self.waypoint_min_radius=50.+(WAYPOINT_MIN_RADIUS-50.)*d
+        self.cfg['difficulty']=d
 
     def _scale_actions(self,actions):
         raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
@@ -134,9 +177,23 @@ class FixedwingWaypointsEnv:
         self.extras['terminal_observations']=TensorDict(
             {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
         if bool(done.any()):
-            self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1),
-                                    'waypoints_reached':self.target_index[done].to(torch.float64).mean()}
+            n=done.sum().clamp_min(1)
+            crashes=done&self.collision;oob=done&self.out_of_bounds
+            timeouts=done&self.truncated&~self.complete
+            self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/n,
+                                    'waypoints_reached':self.target_index[done].to(torch.float64).mean(),
+                                    'crash_rate':crashes.to(torch.float64).sum()/n,
+                                    'out_of_bounds_rate':oob.to(torch.float64).sum()/n,
+                                    'timeout_rate':timeouts.to(torch.float64).sum()/n}
             self.completed_metrics['waypoints_reached']+=self.target_index[done].to(torch.float64).sum()
+            self.completed_metrics['crashes']+=crashes.to(torch.float64).sum()
+            self.completed_metrics['out_of_bounds']+=oob.to(torch.float64).sum()
+            self.completed_metrics['timeouts']+=timeouts.to(torch.float64).sum()
+            if self._tracker is not None:
+                new=self._tracker.update(done,self.complete)
+                if new is not None:
+                    self._apply_difficulty(new)
+                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
@@ -194,9 +251,9 @@ class FixedwingWaypointsEnv:
         self.plant.zero(mask)
         theta=self.plant.rng.uniform(4,mask)*2*math.pi
         phi=self.plant.rng.uniform(4,mask)*2*math.pi
-        radius=1+self.plant.rng.uniform(4,mask)*89
+        radius=self.waypoint_min_radius+self.plant.rng.uniform(4,mask)*(WAYPOINT_MAX_RADIUS-self.waypoint_min_radius)
         targets=torch.stack((radius*torch.sin(phi)*torch.cos(theta),radius*torch.sin(phi)*torch.sin(theta),
-                             (radius*torch.cos(phi)).abs().clamp_min(.5)),-1)
+                             (radius*torch.cos(phi)).abs().clamp_min(WAYPOINT_MIN_ALTITUDE)),-1)
         self.targets.copy_(torch.where(mask[:,None,None],targets,self.targets))
         legs=(self.targets[:,1:]-self.targets[:,:-1]).norm(dim=-1)
         ext=torch.cat((legs,torch.zeros((self.num_envs,2),device=self.device,dtype=torch.float64)),-1)

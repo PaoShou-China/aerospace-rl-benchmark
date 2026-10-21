@@ -20,13 +20,14 @@ from common.train_utils import run_training
 from pyflyt_genesis.rocket import RocketLandingEnv
 
 # Zero-init the last linear layer of every MLPModel (actor mean head and critic
-# head) so the initial policy is exactly do-nothing: engine off (dim 3 identity
-# mapping, fire threshold 0.5), min throttle depth (dim 4 dead zone), zero fins
-# and gimbal. Measured 2026-10-20: the default kaiming-style init gives initial
-# mean actions ~N(0, 0.6) per dim, and THIS task's action structure turns a
-# positive dim-3/4 draw into an immediate un-commanded 3-TWR burn (deterministic
-# model_0 rollout: 100% ignite at step 1, depth 0.56 -> climb/tumble, episodes
-# 375 steps at reward -216). Zero-init is the standard do-nothing policy start.
+# head) so the initial policy is exactly do-nothing: ignition cmd 0.5 (raw 0 ->
+# [0,1] box midpoint, at the 0.5 relight threshold so the engine stays off on
+# the mean action), throttle 0.5, zero fins and gimbal. Measured 2026-10-20 on
+# the previous staged task: the default kaiming-style init gives initial mean
+# actions ~N(0, 0.6) per dim, which ignited immediately and tumbled the
+# booster; zero-init is the standard do-nothing policy start. With the
+# upstream [0,1] ignition box, exploration still fires on ~50% of sampled
+# steps (raw > 0), exactly like upstream's own exploration regime.
 import torch.nn as nn
 from rsl_rl.models import MLPModel as _MLPModel
 
@@ -49,15 +50,21 @@ NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
 RESUME = False           # upstream-aligned task rewrite (2026-10-20): old
                          # checkpoints belong to the dropped staged task, and
                          # the action box changed (ignition/throttle in [0,1]),
                          # so training restarts from scratch
 CLEAN = True             # wipe results/rocket before this fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+CURRICULUM = None
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
+
+
 class _JsonStd(list):
     """Per-dim init std as a JSON-serializable list that rsl_rl still accepts.
 
@@ -95,7 +102,17 @@ if __name__ == '__main__':
     # that touch-quality clusters keep regressing (measured: touch_speed
     # bounces 4.2 <-> 14 across iterations while its mean grinds down).
     # 64 doubles the batch (16 episodes/update), halving gradient noise.
+    # Web-alignment (2026-10-21): PPO values follow "Rocket Landing Control with
+    # Random Annealing Jump Start RL" (arXiv:2407.15083): lr 3e-4, gamma 0.995,
+    # lam 0.97, entropy 0.007, clip 0.2, target KL 0.01. The paper uses batch
+    # 20000 x 30 gradient steps; 64 steps/env x 1024 envs x 10 epochs gives
+    # ~655k gradient samples/update, close to the paper's ~600k (10 epochs is
+    # the equivalent of its 30 gradient steps at this batch size).
     run_training(TASK, RocketLandingEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, init_std=INIT_STD, num_steps_per_env=64)
+                 backend=BACKEND, resume=RESUME, clean=CLEAN,
+                 algo=ALGORITHM, init_std=INIT_STD, num_steps_per_env=64,
+                 lr_schedule='fixed', learning_rate=3e-4,
+                 gamma=0.995, lam=0.97, entropy_coef=0.007,
+                 num_learning_epochs=10,
+                 clip_param=0.2, value_loss_coef=1.0, desired_kl=0.01,
+                 env_kwargs=ENV_KWARGS)

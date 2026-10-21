@@ -31,19 +31,30 @@ import torch
 from rsl_rl.runners import OnPolicyRunner
 
 
-def build_cfg(rnn=False, rnn_hidden_dim=128, rnn_num_layers=1, *, lr_schedule='fixed',
+def build_cfg(*, lr_schedule='fixed',
               learning_rate=.001, desired_kl=.01, entropy_coef=.001, init_std=.5,
               gamma=.99, lam=.95, num_steps_per_env=32, num_learning_epochs=4,
-              num_mini_batches=4, arch='mlp'):
+              num_mini_batches=4, clip_param=.2, value_loss_coef=1.0,
+              arch='flash_residual', trunk_hidden=128, critic_trunk_hidden=256):
     """PPO/model config, identical for every task (fair-comparison baseline).
 
     Keyword overrides exist so a task entry can vary exactly the variables
     under test while everything else stays at the shared defaults.
 
-    arch: 'mlp' (default, 2x128 tanh MLP) or 'flash_residual' (the FlashSAC
-    network structure via src/common/ppo_flashnet.py: BN embedder + 2 residual
-    blocks + RMSNorm trunk, actor 2x128 / critic 2x256, UnitLinear/BN weight
-    renormalization on the update path) for architecture-matched algorithm A/Bs.
+    arch: 'flash_residual' (default, the FlashSAC network structure via
+    src/common/ppo_flashnet.py: BN embedder + 2 residual blocks + RMSNorm
+    trunk, actor 2x128 / critic 2x256, UnitLinear/RMSNorm weight
+    renormalization on the update path; BN-free for PPO -- BatchNorm is
+    incompatible with the on-policy ratio) or 'mlp' (opt-out 2x128 tanh MLP,
+    kept for architecture A/B arms). Trunk is the project-wide default since
+    the 2026-10-21 pendulum 3-way A/B: under the shared warmup-cosine
+    schedule it beats the MLP by 66 return points (-153.1 vs -219.4) and
+    nearly matches native FlashSAC (-144.4).
+
+    trunk_hidden / critic_trunk_hidden: widths of the residual trunk for the
+    actor / critic under arch='flash_residual'. Defaults (128/256) are the
+    project-wide baseline; narrow widths can be pinned as an explicit A/B
+    (e.g. rendezvous, where 64x64 beat 512x256x128 by 22 points).
 
     Shared lr defaults follow the 2026-10-20 tuning history: the KL-adaptive
     schedule is the project-wide pathology (rides its 1e-2 ceiling on
@@ -66,33 +77,44 @@ def build_cfg(rnn=False, rnn_hidden_dim=128, rnn_num_layers=1, *, lr_schedule='f
         # fits returns 3x better than the MLP). The trunk keeps FlashSAC's
         # UnitLinear residual geometry + RMSNorm + weight renormalization;
         # input whitening moves to EmpiricalNormalization (as in the MLP arm).
-        actor = {**flash_cfg, 'trunk_hidden': 128, 'trunk_blocks': 2, 'use_bn': False,
+        actor = {**flash_cfg, 'trunk_hidden': trunk_hidden, 'trunk_blocks': 2, 'use_bn': False,
                  'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
-        critic = {**flash_cfg, 'trunk_hidden': 256, 'trunk_blocks': 2, 'use_bn': False}
+        critic = {**flash_cfg, 'trunk_hidden': critic_trunk_hidden, 'trunk_blocks': 2, 'use_bn': False}
     else:
-        model_cfg = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True}
-        if rnn:  # recurrent backbone replaces the MLP (unsupported with flash_residual)
-            model_cfg.update({'class_name': 'RNNModel', 'rnn_type': 'gru',
-                              'rnn_hidden_dim': rnn_hidden_dim, 'rnn_num_layers': rnn_num_layers})
-        actor = {**model_cfg, 'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
-        critic = dict(model_cfg)
+        actor = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True,
+                 'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
+        critic = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True}
     return {'num_steps_per_env': num_steps_per_env, 'save_interval': 100, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
             'actor': actor,
             'critic': critic,
             'algorithm': {'class_name': 'PPO', 'learning_rate': learning_rate, 'num_learning_epochs': num_learning_epochs, 'num_mini_batches': num_mini_batches,
-                          'schedule': lr_schedule, 'desired_kl': desired_kl, 'entropy_coef': entropy_coef, 'gamma': gamma, 'lam': lam},
+                          'schedule': lr_schedule, 'desired_kl': desired_kl, 'entropy_coef': entropy_coef, 'gamma': gamma, 'lam': lam,
+                          'clip_param': clip_param, 'value_loss_coef': value_loss_coef},
             'logger': 'tensorboard'}
 
 
 def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu',
-                 rnn=False, rnn_hidden_dim=128, rnn_num_layers=1,
                  resume=False, clean=True, out_dir=None, lr_decay_updates=None,
+                 lr_cosine=False, learning_rate_end=1.5e-4,
                  freeze_obs_norm=False, lr_sigma_coupling=None, sigma_pin=None,
-                 algo='ppo', **algo_overrides):
+                 algo='ppo', env_kwargs=None, **algo_overrides):
     """Train one task end-to-end and write checkpoint.pt / run.json / config.json.
+
+    env_kwargs: extra keyword arguments forwarded to the env constructor
+    (e.g. rendezvous's opt-in range curriculum); None leaves every other
+    task entry's call signature unchanged.
 
     lr_decay_updates: optional exponential lr half-life in updates (opt-in;
     None keeps the constant lr the other task entries use).
+
+    lr_cosine (PPO only): warmup-cosine lr schedule, the IDENTICAL schedule
+    flash_sac's _set_lr applies -- same _warmup_cosine_decay formula, same
+    lr_warmup_rate=1e-6 fraction of total updates, same peak->end span. Use it
+    to put both algorithms under one shared schedule for fair A/Bs (with
+    schedule='fixed' rsl-rl never reapplies alg.learning_rate, so the
+    optimizer's param_groups are written directly, as in lr_decay_updates).
+    learning_rate_end is the cosine floor (flash_sac_cfg's paper default
+    1.5e-4; for flash_sac it simply forwards to flash_sac_cfg).
 
     freeze_obs_norm (PPO only): pin both empirical obs normalizers in eval
     mode after the checkpoint load -- EmpiricalNormalization.update() no-ops
@@ -141,7 +163,7 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         for p in out.glob('events.out.tfevents.*'):
             p.unlink()
 
-    env = env_cls(num_envs=num_envs, backend=backend, seed=seed)
+    env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **(env_kwargs or {}))
     if algo == 'flash_sac':
         from .flash_sac import FlashSACRunner, flash_sac_cfg
         valid = set(flash_sac_cfg())
@@ -152,7 +174,7 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         runner = FlashSACRunner(env, cfg, log_dir=str(out), device=str(env.device))
         steps_per_iter = 1  # one vectorized env step (num_envs transitions) per iteration
     elif algo == 'ppo':
-        cfg = build_cfg(rnn, rnn_hidden_dim, rnn_num_layers, **algo_overrides)
+        cfg = build_cfg(**algo_overrides)
         # OnPolicyRunner mutates cfg in place (resolving/popping class_name); pass a
         # deep copy so the dumped config.json stays a faithful training config.
         runner = OnPolicyRunner(env, copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
@@ -188,8 +210,25 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
 
     if lr_decay_updates and (lr_sigma_coupling or sigma_pin):
         raise ValueError('lr_decay_updates and lr_sigma_coupling/sigma_pin are mutually exclusive')
+    if lr_cosine and (lr_decay_updates or lr_sigma_coupling or sigma_pin):
+        raise ValueError('lr_cosine is mutually exclusive with lr_decay_updates/lr_sigma_coupling/sigma_pin')
     start = time.perf_counter()
-    if algo == 'ppo' and lr_decay_updates:
+    if algo == 'ppo' and lr_cosine:
+        # warmup-cosine lr, byte-identical schedule to flash_sac's _set_lr
+        from .flash_sac import _warmup_cosine_decay
+        lr0 = cfg['algorithm']['learning_rate']
+        warmup = max(1, int(1e-6 * updates))
+        step = max(1, updates // 100)
+        done = 0
+        while done < updates:
+            n = min(step, updates - done)
+            runner.learn(n)
+            done += n
+            lr = _warmup_cosine_decay(done, lr0, lr0, learning_rate_end, warmup, updates)
+            runner.alg.learning_rate = lr
+            for group in runner.alg.optimizer.param_groups:
+                group['lr'] = lr
+    elif algo == 'ppo' and lr_decay_updates:
         # exponential lr half-life; with schedule='fixed' rsl-rl never reapplies
         # alg.learning_rate to the optimizer (that path is inside the adaptive
         # branch), so write the optimizer's param_groups directly
@@ -234,8 +273,7 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     elapsed = time.perf_counter() - start
     runner.save(str(out / 'checkpoint.pt'))
 
-    report = {'task': env.cfg, 'device': str(env.device), 'updates': updates, 'algo': algo, 'recurrent': rnn,
-              'rnn': {'type': 'gru', 'hidden_dim': rnn_hidden_dim, 'layers': rnn_num_layers} if rnn else None,
+    report = {'task': env.cfg, 'device': str(env.device), 'updates': updates, 'algo': algo,
               'transitions': updates * steps_per_iter * num_envs,
               'train_wall_seconds': elapsed,
               'completed_episodes': env.completed_episodes.detach().cpu().tolist(),

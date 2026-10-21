@@ -23,9 +23,6 @@ NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RNN = False              # GRU actor/critic backbone via rsl-rl RNNModel
-RNN_HIDDEN_DIM = 128
-RNN_NUM_LAYERS = 1
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
 # PPO deviation under test (diagnosed docking failure mode): the KL-adaptive
@@ -43,15 +40,24 @@ LR_SCHEDULE = 'fixed'
 # the policy distribution wide enough for the advantage signal to pull it
 # back; every other setting stays at the shared fair-comparison values.
 ENTROPY_COEF = 0.005
-# lr pinned to the proven 3e-4 (the 96.6% held-out-success run): the shared
-# default moved to fixed 1e-3 on 2026-10-20 (A/B winner on quadx/fixedwing/
-# rendezvous), but 1e-3 has never been tested on this task -- keep the proven
-# value until an A/B says otherwise.
-LEARNING_RATE = 0.0003
+# Web-alignment (2026-10-21): lr/gamma follow "Neural-based Control for CubeSat
+# Docking Maneuvers" (arXiv:2410.12703): lr 5e-5, gamma 0.999, clip 0.2, 25M
+# transitions. entropy_coef stays 0.005 (the paper does not report entropy; the
+# 0.005 value is this task's measured late-collapse remedy, see above).
+LEARNING_RATE = 5e-5
+GAMMA = 0.999
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
+# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
+# None = off (published benchmark, bit-for-bit); float in [0,1] = static
+# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
+# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
+CURRICULUM = None
+ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
+              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
 if __name__ == '__main__':
     run_training(TASK, SpaceDockingEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, rnn=RNN, rnn_hidden_dim=RNN_HIDDEN_DIM,
-                 rnn_num_layers=RNN_NUM_LAYERS, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE, entropy_coef=ENTROPY_COEF)
+                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
+                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
+                 entropy_coef=ENTROPY_COEF, gamma=GAMMA,
+                 env_kwargs=ENV_KWARGS)

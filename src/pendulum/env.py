@@ -24,6 +24,7 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
+from ..common.curriculum import SuccessRateCurriculum
 
 
 class PendulumEnv:
@@ -38,8 +39,18 @@ class PendulumEnv:
     l=1.                     # rod length [m]
     dt=.05                   # integration step [s]
     success_return=-200.     # toy success bar on the completed-episode return
+    # Difficulty axis (0 easiest -> 1 hardest = the gym benchmark): the reset
+    # distribution narrows toward upright as d drops; at d=1 the ranges equal
+    # the legacy U[-pi,pi] / U[-1,1] bit-for-bit. Success criteria untouched.
+    th0_half=math.pi         # reset |th0| half-range [rad]
+    thdot0_max=1.            # reset |thdot0| bound [rad/s]
+    benchmark_difficulty=1.
+    difficulty=None          # None = benchmark behavior (no cfg record)
+    curriculum=False
+    curriculum_window=1024   # completed episodes per advance decision
+    curriculum_threshold=.6  # rolling success rate that advances the stage
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
@@ -78,8 +89,29 @@ class PendulumEnv:
         self.rng=TensorRandom(num_envs,d,seed)
         # run.json reports the mean completed-episode return (key toy signal)
         self.completed_metrics={'return':self.completed_returns}
+        self._resolve_difficulty(difficulty,curriculum)
 
         self.reset()
+
+    def _resolve_difficulty(self,difficulty,curriculum):
+        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+        if difficulty is not None:
+            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
+            self.difficulty=float(difficulty)
+        if curriculum is not None:self.curriculum=bool(curriculum)
+        self._tracker=None
+        if self.curriculum:
+            if self.difficulty is None:self.difficulty=0.
+            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
+            self.cfg['curriculum']=True
+        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+
+    def _apply_difficulty(self,d):
+        """Map difficulty in [0,1] onto the reset-distribution knobs."""
+        self.difficulty=d
+        self.th0_half=math.pi/6+(math.pi-math.pi/6)*d
+        self.thdot0_max=.25+(1.-.25)*d
+        self.cfg['difficulty']=d
 
     def _observe(self,mask):
         obs=torch.stack((self.th.cos(),self.th.sin(),self.thdot),-1)
@@ -138,6 +170,11 @@ class PendulumEnv:
             {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
         if bool(done.any()):
             self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1)}
+            if self._tracker is not None:
+                new=self._tracker.update(done,self.complete)
+                if new is not None:
+                    self._apply_difficulty(new)
+                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
@@ -149,8 +186,8 @@ class PendulumEnv:
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
         mask=envs_idx
         u=self.rng.uniform(2,mask)
-        th0=(2*u[:,0]-1)*math.pi
-        thdot0=2*u[:,1]-1.
+        th0=(2*u[:,0]-1)*self.th0_half
+        thdot0=(2*u[:,1]-1)*self.thdot0_max
         self.th.copy_(torch.where(mask,th0,self.th))
         self.thdot.copy_(torch.where(mask,thdot0,self.thdot))
         self.count.masked_fill_(mask,0)

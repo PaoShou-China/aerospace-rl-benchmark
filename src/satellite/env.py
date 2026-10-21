@@ -54,6 +54,7 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
+from ..common.curriculum import SuccessRateCurriculum
 
 
 def quat_mul(q1,q2):
@@ -78,6 +79,17 @@ def quat_log(q,eps=1e-8):
     return v/v_norm*(2*torch.atan2(v_norm,w))
 
 
+def quat_slerp(q0,q1,t):
+    """Slerp from q0 to q1 at fraction t (scalar); t >= 1 short-circuits to q1."""
+    if t>=1.:return q1
+    d=(q0*q1).sum(-1,keepdim=True)
+    q1=q1*torch.where(d<0,-1.,1.)
+    d=(q0*q1).sum(-1,keepdim=True).clamp(-1.,1.)
+    ang=torch.acos(d)
+    s=torch.sin(ang).clamp_min(1e-12)
+    return q0*(torch.sin((1-t)*ang)/s)+q1*(torch.sin(t*ang)/s)
+
+
 # Cluster geometries: gimbal axes g (fixed, unit), rows aligned per CMG.
 # 4: pyramid, one gimbal per bus face, skew 54.7356 deg = arctan(sqrt 2);
 # 6: orthogonal cluster, one CMG per bus face, full rank at theta=0.
@@ -94,7 +106,19 @@ def _rotor_axes_ref(num_cmgs):
 
 
 class SatelliteAttitudeEnv:
-    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4):
+    # Difficulty axis (0 easiest -> 1 hardest = the torchrl reference): the
+    # target attitude is pulled toward the start attitude as d drops (rotation
+    # angle cap 0.3 rad -> pi via slerp; at cap=pi the legacy uniform-SO(3)
+    # sampling code path runs untouched) and reset noise shrinks to zero.
+    # Success criteria (att/omega tolerances) are untouched.
+    target_angle_cap=math.pi # target rotation-angle cap [rad] (axis .3 -> pi)
+    benchmark_difficulty=1.
+    difficulty=None          # None = benchmark behavior (no cfg record)
+    curriculum=False
+    curriculum_window=1024   # completed episodes per advance decision
+    curriculum_threshold=.6  # rolling success rate that advances the stage
+
+    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4,difficulty=None,curriculum=None):
         if num_cmgs not in (4,6):raise ValueError('num_cmgs must be 4 or 6')
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
@@ -197,8 +221,29 @@ class SatelliteAttitudeEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
+        self._resolve_difficulty(difficulty,curriculum)
 
         self.reset()
+
+    def _resolve_difficulty(self,difficulty,curriculum):
+        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+        if difficulty is not None:
+            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
+            self.difficulty=float(difficulty)
+        if curriculum is not None:self.curriculum=bool(curriculum)
+        self._tracker=None
+        if self.curriculum:
+            if self.difficulty is None:self.difficulty=0.
+            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
+            self.cfg['curriculum']=True
+        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+
+    def _apply_difficulty(self,d):
+        """Map difficulty in [0,1] onto the target-attitude/noise knobs."""
+        self.difficulty=d
+        self.target_angle_cap=.3+(math.pi-.3)*d
+        self.reset_noise_scale=.001*d
+        self.cfg['difficulty']=d
 
     def _rotor_axes(self,theta):
         """Rotor momentum directions r_i(theta) via Rodrigues rotation; g.r0=0."""
@@ -351,6 +396,11 @@ class SatelliteAttitudeEnv:
             {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
         if bool(done.any()):
             self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1)}
+            if self._tracker is not None:
+                new=self._tracker.update(done,self.complete)
+                if new is not None:
+                    self._apply_difficulty(new)
+                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
@@ -365,6 +415,12 @@ class SatelliteAttitudeEnv:
         s1=torch.sqrt(1-u[:,0]);s2=torch.sqrt(u[:,0])
         ang1=2*math.pi*u[:,1];ang2=2*math.pi*u[:,2]
         target=torch.stack((s1*ang1.sin(),s1*ang1.cos(),s2*ang2.sin(),s2*ang2.cos()),-1)
+        if self.target_angle_cap<math.pi:
+            # difficulty<1: pull the target toward the start attitude (identity
+            # quaternion [1,0,0,0]); at the benchmark cap=pi the legacy
+            # uniform-SO(3) sample passes through untouched
+            home=torch.zeros_like(target);home[:,0]=1.
+            target=quat_slerp(home,target,self.target_angle_cap/math.pi)
         self.target_quat.copy_(torch.where(mask[:,None],target,self.target_quat))
         noise=2*self.rng.uniform(7+self.num_gimbals,mask)-1
         qn=torch.zeros_like(self.q);qn[:,0]=1;qn=qn+self.reset_noise_scale*noise[:,:4]
