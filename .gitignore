@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Experiment outputs (checkpoints, tensorboard, logs)
+results/
+runs/
+logs/
+*.log
+*.ckpt
+*.pt
+*.pth
+
+# Archives & scratch
+*.zip
+*.tar.gz
+trash/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
