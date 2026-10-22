@@ -1,21 +1,10 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
 
-A suite of eight GPU-native reinforcement-learning environments spanning
-atmospheric flight vehicles and spacecraft dynamics, written in the official
-Genesis RL environment format (`__init__` cfg/buffers, `step()` returning
-`(get_observations(), rew_buf, reset_buf, extras)`, `get_observations()`
-wrapping `obs_buf` in a TensorDict under the `'policy'` group, `reset_idx()`
-taking a device-resident boolean mask, `reset()`, `close()`).
+A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains seven aerospace tasks spanning atmospheric flight and spacecraft dynamics, together with a pendulum task used only as a training-pipeline check. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
-All state lives on exactly one device as `float64` physics / `float32`
-observation buffers. There is **no engine round-trip per replica, no
-host-device synchronization, no gym/gymnasium dependency**: every operation
-(physics integration, contact checks, reward, reset, RNG) is a masked tensor
-kernel, so inactive replicas are frozen and consume no random numbers.
+Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly, used to generate behavior-cloning data, or queried for nominal actions by an external residual-RL pipeline.
 
-A deeper, reviewer-oriented write-up of the infrastructure claims and their
-verification conditions lives in
-[docs/technical-highlights.md](docs/technical-highlights.md).
+The three atmospheric vehicle tasks use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
 
 ## Environments
 
