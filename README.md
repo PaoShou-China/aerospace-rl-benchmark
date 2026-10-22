@@ -1,5 +1,4 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
-
 A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains seven aerospace tasks spanning atmospheric flight and spacecraft dynamics, together with a pendulum task used only as a training-pipeline check. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
 Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly or used to generate behavior-cloning data for the warm-started learning pipeline.
