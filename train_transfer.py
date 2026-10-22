@@ -16,6 +16,10 @@ task; makes the PBRS return undiscounted and exactly telescoping over the
 166-step episode) and a disabled timeout value bootstrap inside the env
 (timeouts are true terminals). Shared PPO machinery lives in
 src/common/train_utils.py.
+ALGORITHM / CURRICULUM / ENV_KWARGS expose the shared switches: the
+algorithm arm ('ppo' | 'flash_sac') and the project-wide difficulty
+contract (src/common/curriculum.py): None = benchmark, float = static
+difficulty in [0, 1], True = success-rate-gated auto-ramp.
 """
 import sys
 from pathlib import Path

@@ -2,6 +2,8 @@
 
 面向审稿人的补充材料。版本锚点：commit `6b02383`（2026-10-21）；
 本文档为该提交之上新增的文件。文中路径相对仓库根目录，行号指向该提交。
+例外：亮点六引用的经典基线文件（baselines.py、baseline_eval.py、各
+专项 harness）为该提交之后新增，行号指向当前工作区。
 
 本文只写**能落到代码行、并注明复验条件**的东西。每条亮点按
 “断言 → 机制 → 证据 → 对审稿人的意义 → 边界”组织，最后单列
@@ -12,7 +14,7 @@
 ## 摘要
 
 与一般 RL 环境库（Gymnasium / Brax / Isaac Lab 等）相比，本套件的增量不在环境数量，
-而在五类**面向对照实验的基础设施**：
+而在六类**面向对照实验的基础设施**：
 
 1. **哈希清单化的参考基准**：上游 PyFlyt 0.29.0 的任务代码以冻结副本形式随仓库提供；
    另有源码/资产 SHA-256 校验原语。张量 plant 的惯量直接解析自参考 URDF，而非手工抄数。
@@ -24,6 +26,9 @@
    确定性评测，以及把“失败配置为什么失败”写进代码的负结果记录。
 5. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
    并显式声明数值不等价边界。
+6. **经典（非学习）基线库**：8 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
+   PDG、CWH-LQR、两脉冲制导等），同一环境、同一奖励、同一成功判据下给出
+   非学习参照，并保留基线的诚实失败模式作为 RL 的攻击面。
 
 ---
 
@@ -211,6 +216,36 @@
   均为 opt-in 且互斥关系显式检查
   （[train_utils.py:96-150](../src/common/train_utils.py#L96-L150)、
   [train_utils.py:246-270](../src/common/train_utils.py#L246-L270)）。
+- **docking 双因子定位（lr 迁移失败 × 架构负结果）与输出层零初始化**：
+  一次"trunk 0% vs MLP 94%"的表面对照被排查出两层混淆，最终用
+  2×2 配置矩阵把责任拆干净（全部 1024 envs / seed 7 / 其余配置逐项一致，
+  数字来自 `results/diag_docking_*`）：
+
+  | lr | envs | MLP | trunk（+零初始化头） |
+  |---|---|---|---|
+  | 5e-5（arXiv:2410.12703 对齐值） | 64 | 0.0% | — |
+  | 5e-5 | 1024 | 2.3% | 0%（零初始化 2.9%） |
+  | 3e-4（对齐前原值） | 64 | 79.4% | — |
+  | 3e-4 | 1024 | **77.9%** | **0.0%** |
+
+  ① **lr 5e-5 是全局毒药**：10-21 的 web 对齐把该 lr 写入入口后，docking
+  在任何架构/envs 下都不再成功——论文超参不跨 batch/任务尺度迁移，
+  这条负结果已写回入口注释
+  （[train_docking.py:71-82](../train_docking.py#L71-L82)）。
+  ② **架构效应在有效 lr 下依然为真**：同配置（1024 envs, 3e-4）MLP 77.9%
+  vs trunk 0.0%。tensorboard 证据链：trunk 默认初始化的初始策略严重非中性
+  （iter-0 return −342.7，MLP +22.6）；`Policy/mean_std` 与熵两臂几乎重合
+  （排除探索问题）；决定性差异在 critic——MLP 发现捕获瞬间 value loss
+  尖峰至 127 并重塑价值面，trunk 平坦收敛于 ~0.9，归一化栈
+  （RMSNorm/权重重归一化）把 1 m 捕获悬崖平滑掉，形成"无捕获数据 →
+  critic 学不到悬崖 → 无指向捕获的梯度"的自锁。③ **输出层零初始化**
+  （[train_docking.py:26-47](../train_docking.py#L26-L47)，先例
+  [train_rocket.py:49-65](../train_rocket.py#L49-L65)）把初始策略修成
+  零推力中性悬停（iter-0 return +59.8），捕获行为被短暂发现
+  （iter ~835 success 0.25）但守不住——它修的是起点问题，不是架构问题；
+  trunk 在 docking 上保持为记录在案的负结果，MLP 是该任务的可用臂。
+  该入口以 `ARMS` 常量同跑双臂（trunk → `results/docking`，mlp →
+  `results/docking_mlp`），配置除 arch 外逐项一致。
 
 **示例：同一协议下的三方对照（Pendulum，训练栈自检，非论文结论）**
 
@@ -266,6 +301,63 @@
 
 ---
 
+## 亮点六：每个任务配一个非学习基线，且基线不是稻草人
+
+**断言**：8 个任务各有一个解析式经典 GNC 基线，与学习算法共享同一环境、
+同一奖励、同一成功判据；基线在部分任务上达到 100%，在另一些任务上保留
+**有取证记录的失败模式**——后者正是 RL 相对经典方法的价值主张所在。
+
+**机制与证据**
+
+- 统一契约：所有基线实现于 [baselines.py](../src/common/baselines.py)
+  （`PendulumBaseline` … `RendezvousTwoImpulseBaseline`，
+  [baselines.py:156-1494](../src/common/baselines.py#L156-L1494)），工厂入口
+  `build_baseline(vehicle, env)`
+  （[baselines.py:1495](../src/common/baselines.py#L1495)）。每个控制器
+  **只读 `'policy'` 观测组**、构造时读取环境常数（质量、推力权限、CMG 几何、
+  名义轨道——即经典 GNC 设计者本会掌握的模型知识），**不读任何内部状态缓冲**，
+  不改环境语义（[baselines.py:1-26](../src/common/baselines.py#L1-L26)）。
+- 统一评测协议：[baseline_eval.py](../baseline_eval.py) 以与 `eval.py` 相同的
+  环境构造与成功计数口径（1024 envs / 2000 步 / seed 7）评测任意任务的基线，
+  结果写 `results/<task>/baseline.json`，控制器信息标记为
+  `classical, policy-observation-only`
+  （[baseline_eval.py:1-7](../baseline_eval.py#L1-L7)、
+  [baseline_eval.py:75](../baseline_eval.py#L75)）。
+- 覆盖的方法学谱系（每任务一个流派）：能量整形+LQR（pendulum）、
+  SE(3) 几何控制（Lee et al. 2010, quadx）、L1 横向+TECS 纵向
+  （fixedwing）、ZEM/PN 动力下降制导（rocket）、四元数 PD+奇异鲁棒
+  CMG 阻尼伪逆（satellite）、Gauss 方程切向制导（transfer）、
+  精确辛离散化 CWH-LQR（docking）、递归重解两脉冲 CWH 制导
+  （rendezvous）（[baselines.py:12-23](../src/common/baselines.py#L12-L23)）。
+- **基线的参考战绩**（官方 `baseline_eval` 口径）：docking / satellite /
+  transfer / rendezvous / quadx 100%；fixedwing ~74.6%（train 分布，
+  3700 步窗口，残余为失速约束下最小转弯半径 > 捕获球导致的 OOB 终局
+  极限环，记录于
+  [eval_fixedwing_autopilot.py](../eval_fixedwing_autopilot.py)）；
+  rocket 66.8%（2000 步窗口，失败约一半为着垫后反弹二次接触、
+  一半为制动段权限饱和，记录于
+  [rocket_pdg_test.py](../rocket_pdg_test.py) 的场景分解）。
+- **对照方向的双向证据**：基线并非天花板——RL 在 transfer 上达到约
+  2 倍基线终端分（PPO ≈ +20.6 km vs 基线 ≈ +11 km 当量）；基线也并非
+  稻草人——satellite 的动量中性 home 修复后，经典 CMG 基线在 RL 此前
+  仅 55–58% 的任务上直接 100%。两个方向的数字都写在各入口/
+  harness 的文档注释里。
+
+**对审稿人的意义**：学习算法的成绩有了非学习参照系；且参照系的失败
+模式被归因（权限饱和 / 几何不可达 / 数值病态）而非含糊带过，
+"RL 超越经典方法"的主张可以落到具体场景。
+
+**边界**
+
+- 基线公式是解析式，无优化器、无调参循环；它们的超参（增益、带宽、
+  伺服带）是**任务级手工设计**，不声称全局最优。
+- 成功率数字依赖评测窗口（步数/env 数），不同 harness 的窗口不同；
+  跨 harness 直接横比成功率无效（与亮点四的评测口径边界一致）。
+- rocket 基线的成功率强依赖评测窗口与版本（历史上 700 步/2000 步、
+  不同控制律版本在 ~57–79% 间变动），引用时必须声明窗口与版本锚点。
+
+---
+
 ## 不声称什么（Non-claims）
 
 审稿人最容易被“复现”二字误导，以下边界均为显式设计声明：
@@ -279,6 +371,8 @@
 5. **不声称算法等价**。PPO+FlashNet 与 FlashSAC 的偏差已在模块文档中列明；
    FlashSAC 移植与官方仓库的偏差也已列明。
 6. **示例数字不构成统计结论**。Pendulum 三方对照为单 seed 训练栈自检。
+7. **不声称经典基线最优**。基线是解析式手工设计（无优化器、无调参循环）；
+   它们的价值是同一判据下的非学习参照与已归因的失败模式，不是性能上界。
 
 ---
 
@@ -295,6 +389,7 @@
 | 课程难度写入 `run.json` | 已接线 | [train_utils.py:276-286](../src/common/train_utils.py#L276-L286) |
 | 评测始终在基准难度 | 已保证（eval 不传 kwargs） | [eval.py:54](../eval.py#L54) |
 | 双算法共用同一 LR 调度 | 已接线（opt-in `lr_cosine`） | [train_utils.py:216-230](../src/common/train_utils.py#L216-L230) |
+| 每任务一个经典基线、只读 policy 观测 | 已实现 + 官方口径实测 | `python baseline_eval.py <task>`，[baselines.py:1495](../src/common/baselines.py#L1495) |
 | 与上游物理逐位等价 | **不声称** | 见 Non-claims 第 1 条 |
 
 > 说明：两张“已实现但未接线”的审计原语（哈希校验、plant_id）保留为可选工具，
@@ -318,6 +413,9 @@ python -c "import json;r=json.load(open('results/pendulum_flashsac1024/run.json'
 
 # 4) 定位课程契约的实现位置
 grep -n "benchmark_difficulty\|_apply_difficulty" src/*/env.py
+
+# 5) 任一任务的经典基线（1024 envs / 2000 步 / seed 7，写 results/<task>/baseline.json）
+python baseline_eval.py pendulum
 ```
 
 ---
@@ -334,5 +432,8 @@ grep -n "benchmark_difficulty\|_apply_difficulty" src/*/env.py
 | FlashSAC 移植 | [src/common/flash_sac.py](../src/common/flash_sac.py) |
 | PPO 架构匹配臂与负结果记录 | [src/common/ppo_flashnet.py](../src/common/ppo_flashnet.py) |
 | 训练/记录管线、LR 调度对齐 | [src/common/train_utils.py](../src/common/train_utils.py) |
+| 8 任务经典基线库 | [src/common/baselines.py](../src/common/baselines.py) |
+| 基线统一评测入口 | [baseline_eval.py](../baseline_eval.py) |
+| 基线专项 harness（场景网格/消融） | [eval_docking_lqr.py](../eval_docking_lqr.py)、[eval_fixedwing_autopilot.py](../eval_fixedwing_autopilot.py)、[eval_rendezvous_baseline.py](../eval_rendezvous_baseline.py)、[rocket_pdg_test.py](../rocket_pdg_test.py)、[test_quadx_se3.py](../test_quadx_se3.py) |
 | 确定性评测 | [eval.py](../eval.py) |
 | 任务难度轴与使用约定 | [README.md](../README.md) |

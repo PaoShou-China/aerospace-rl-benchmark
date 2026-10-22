@@ -10,6 +10,10 @@ bound.
 Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_rendezvous.py`.
 Shared PPO machinery lives in src/common/train_utils.py.
+CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
+(src/common/curriculum.py): None = benchmark, float = static difficulty
+in [0, 1], True = success-rate-gated auto-ramp (this task's proven
+default, shipped enabled).
 
 Task-specific deviations from the shared fair-comparison baseline (all
 driven by the 1000-step horizon and verified in short sweep runs; everything

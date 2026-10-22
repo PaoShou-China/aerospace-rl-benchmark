@@ -1,6 +1,15 @@
-"""RSL-RL PPO training entry for the three original-task Genesis RL environments
-plus the fully tensorized space environments (satellite CMG attitude control,
-low-thrust perigee-raising transfer, CWH docking / rendezvous).
+"""Legacy quick-sweep PPO entry for all 7 real tasks (CLI aggregator).
+
+Tasks: the three original-task Genesis RL environments (quadx, fixedwing,
+rocket) plus the fully tensorized space environments (satellite CMG attitude
+control, low-thrust perigee-raising transfer, CWH docking / rendezvous).
+
+This is the small-config sweep entry (default 64 envs, 32-step rollouts,
+64x64 MLP, adaptive-KL schedule). For experiment runs use the self-contained
+per-task entries `train_<task>.py` instead -- they share
+src/common/train_utils.py, ship the project-standard 1024-env configuration
+and expose the CURRICULUM constant; this file passes no env kwargs (always
+benchmark difficulty).
 
 Usage: python train.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous [--num-envs 64] [--updates 1000]
 Defaults: GPU backend, seed 7, PPO config verified in the small-scale run.

@@ -61,6 +61,15 @@ Episode End
     200 m / z > 500 m.
     Truncation: 1200 policy steps (30 s).
 
+Difficulty / Curriculum
+    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
+    (bool) follow the project-wide contract of src/common/curriculum.py:
+    only the initial-condition distribution is modulated; the pad, success
+    and fatal criteria and reward are untouched. d=0 -> d=1: horizontal
+    offset xy ±2 m -> ±20 m, altitude 440-450 m -> 400-450 m (span
+    shrinking with difficulty), initial euler ±0.05 -> ±0.3 rad; d=1 is
+    the published benchmark.
+
 References
     - PyFlyt (J. K. Tai, github.com/jkuang421/PyFlyt), Rocket-Landing task
       defaults, rocket and landing-pad vehicle models (task_defaults:

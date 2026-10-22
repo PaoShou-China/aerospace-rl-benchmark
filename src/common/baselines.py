@@ -198,7 +198,7 @@ class PendulumBaseline(Baseline):
         gate = (torch.sigmoid((.65 - th.abs()) / .05)
                 * torch.sigmoid((2.5 - w.abs()) / .2))
         u = gate * u_lqr + (1 - gate) * u_energy
-        return (u / self.max_torque).clamp(-1., 1.).to(torch.float32)
+        return (u / self.max_torque).clamp(-1., 1.).unsqueeze(-1).to(torch.float32)
 
 
 # --------------------------------------------------------------------------- #
@@ -1495,3 +1495,95 @@ BUILDERS = {
 def build_baseline(vehicle, env):
     """Instantiate the classical baseline for a task name."""
     return BUILDERS[vehicle](env)
+
+
+# --------------------------------------------------------------------------- #
+# env-side nominal-action interface
+# --------------------------------------------------------------------------- #
+class NominalActionMixin:
+    """Internal nominal-action machinery for a task env.
+
+    Each env reuses its classical baseline controller (the classes above) as
+    the nominal policy: the ``nominal_controller`` class attribute names the
+    Baseline subclass, instantiated once against the env itself.  The mapping
+    obs -> action is the controller's own; it is batched, device-resident and
+    analytic (no per-env Python loop, no host round-trip).
+
+    The nominal action is exposed ONLY through ``extras['nominal_action']``,
+    written once per ``step`` from the observation the step acts on.  The
+    env-owned controller instance advances its internal state once per step
+    exactly there, and env resets are mirrored through ``reset_idx`` -- so
+    downstream RL code should read the info field and must NOT drive the
+    controller itself, or stateful integrators (quadx trim, fixedwing
+    integrals, rendezvous ratchet) would double-step.  All mixin methods are
+    internal (underscore-prefixed).
+
+    Per-task summary (source | input | output dim | action unit):
+
+        pendulum   PendulumBaseline      energy shaping + local LQR
+                   policy obs (cos, sin, thetadot)      -> (N, 1) [-1, 1]
+                   (1 = max_torque = 2 N m)
+        quadx      QuadXSE3Baseline      SE(3) geometric control (Lee 2010)
+                   policy obs (wb, quat, vb, p)         -> (N, 4) [-1, 1]
+                   (3 rate cmds in units of pi rad/s + collective)
+        fixedwing  FixedwingAutopilotBaseline  L1 lateral + TECS longitudinal
+                   policy obs (wb, quat, vb, p, wp deltas, valid)
+                                                        -> (N, 4) [-1, 1]
+                   (aileron, elevator, dead channel = 0, throttle)
+        rocket     RocketPDGBaseline     ZEM/ZEV powered-descent guidance
+                   policy obs (wb, quat, vb, p, aux)    -> (N, 7) [-1, 1]
+                   (throttle, 4 fins, 2 gimbal axes, ignition)
+        satellite  SatelliteCMGBaseline  quaternion PD + damped CMG steering
+                   policy obs (quat_err, w, gimbal angles, m_norm)
+                                                        -> (N, n_cmg) [-1, 1]
+                   (gimbal-rate cmds in units of action_scale rad/s)
+        transfer   TransferGaussBaseline Gauss planetary-equation tangential
+                   guidance
+                   policy obs (orbit elements)          -> (N, 3) [-1, 1]
+                   (thrust direction, saturated magnitude)
+        docking    DockingCWHLQRBaseline CWH-LQR terminal approach
+                   policy obs (relative p, v)           -> (N, 3) [-1, 1]
+                   (thrust in units of f_max m/s^2 per axis)
+        rendezvous RendezvousTwoImpulseBaseline  CWH two-impulse guidance
+                   policy obs (relative p, v)           -> (N, 3) [-1, 1]
+                   (thrust in units of f_max m/s^2 per axis)
+    """
+
+    nominal_controller = None   # Baseline subclass, set by each task env
+    _nominal = None
+    _nominal_checked = False
+
+    def _init_nominal(self):
+        """Build the nominal controller from this env (call once in __init__)."""
+        if self.nominal_controller is not None:
+            self._nominal = self.nominal_controller(self)
+
+    def _get_nominal_action(self, obs=None):
+        """Internal: nominal action for `obs` (default: the current observation).
+
+        Returns a (num_envs, num_actions) float32 tensor on env.device in the
+        env's native action convention.  Shape and device are checked on every
+        call; finiteness and the action range are verified on the first call
+        (kept off the hot path to avoid host synchronization per step).
+        """
+        if self._nominal is None:
+            raise RuntimeError(f'{type(self).__name__} defines no nominal controller')
+        if obs is None:
+            obs = self.get_observations()
+        with torch.no_grad():
+            a = self._nominal.actions(obs)
+        if a.shape != (self.num_envs, self.num_actions) or a.device != torch.device(self.device):
+            raise ValueError(f'nominal action mismatch: shape {tuple(a.shape)} '
+                             f'on {a.device} vs ({self.num_envs}, {self.num_actions}) '
+                             f'on {self.device}')
+        if not self._nominal_checked:
+            bound = float(getattr(self, 'clip_actions', 1.))
+            if not bool(torch.isfinite(a).all()) or float(a.abs().max()) > bound + 1e-6:
+                raise ValueError('nominal action violates finiteness/action range')
+            self._nominal_checked = True
+        return a
+
+    def _nominal_reset_idx(self, mask):
+        """Mirror an env reset onto the nominal controller (stateful ones only)."""
+        if self._nominal is not None:
+            self._nominal.reset_idx(mask)

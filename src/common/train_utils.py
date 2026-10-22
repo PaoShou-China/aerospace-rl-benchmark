@@ -65,6 +65,8 @@ def build_cfg(*, lr_schedule='fixed',
     fixedwing 150-update A/B, docking, rendezvous), so it is the shared
     default; entries with a different proven optimum pin it explicitly
     (docking fixed 3e-4, transfer adaptive 3e-4)."""
+    if arch not in ('flash_residual', 'mlp'):
+        raise ValueError(f'unknown arch {arch!r} (expected flash_residual | mlp)')
     if arch == 'flash_residual':
         flash_cfg = {'class_name': 'common.ppo_flashnet:FlashResMLPModel'}
         # use_bn=False: BatchNorm is incompatible with PPO's on-policy ratio --

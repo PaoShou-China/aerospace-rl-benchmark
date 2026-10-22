@@ -32,6 +32,13 @@ Episode End
     path of the training stack. Success metric: completed-episode return
     > -200 (do-nothing baseline ~ -680, swing-up-and-hold ~ -160); a
     healthy implementation clears the bar within ~100-200 updates.
+
+Difficulty / Curriculum
+    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
+    (bool) follow the project-wide contract of src/common/curriculum.py:
+    only the reset distribution is modulated; dynamics and reward are
+    untouched. d=0 -> d=1: th0 ±30° -> ±180°, thdot0 ±0.25 -> ±1 rad/s;
+    d=1 is the published benchmark.
 """
 
 from .env import PendulumEnv

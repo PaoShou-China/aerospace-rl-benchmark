@@ -55,6 +55,15 @@ Episode End
     No early termination; the singularity penalty alone discourages
     gimbal configurations with vanishing momentum authority.
 
+Difficulty / Curriculum
+    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
+    (bool) follow the project-wide contract of src/common/curriculum.py:
+    only the target-attitude distribution and observation noise are
+    modulated; dynamics, tolerances and reward are untouched. d=0 -> d=1:
+    target attitude within a 0.3 rad cap of the momentum-neutral home
+    quaternion, no noise -> uniform SO(3) target, ±0.001 observation
+    noise; d=1 is the published benchmark.
+
 References
     - torchrl SatelliteEnv (pytorch/rl, MIT), task reference for reward
       weights, tolerances and reset distribution.

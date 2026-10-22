@@ -22,6 +22,7 @@ from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate
 from ..common.curriculum import SuccessRateCurriculum
+from ..common.baselines import NominalActionMixin,FixedwingAutopilotBaseline
 
 REACH_BONUS = 15.0
 CRASH_PENALTY = 10.0
@@ -42,7 +43,7 @@ WAYPOINT_MAX_RADIUS = 65.0
 WAYPOINT_MIN_ALTITUDE = 20.0
 
 
-class FixedwingWaypointsEnv:
+class FixedwingWaypointsEnv(NominalActionMixin):
     # Difficulty axis (0 easiest -> 1 hardest = the benchmark shell): at d=0
     # waypoints only spawn on large circles (min radius 50 m), at d=1 the full
     # benchmark 20-65 m shell is restored bit-for-bit. Success criteria
@@ -53,6 +54,9 @@ class FixedwingWaypointsEnv:
     curriculum=False
     curriculum_window=1024   # completed episodes per advance decision
     curriculum_threshold=.6  # rolling success rate that advances the stage
+    # nominal controller: L1 lateral guidance + TECS (baselines.py, tuned on
+    # train/dev ICs; params in common/fixedwing_autopilot.json)
+    nominal_controller=FixedwingAutopilotBaseline
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         self.num_envs=num_envs
@@ -99,6 +103,7 @@ class FixedwingWaypointsEnv:
         self.cfg=dict(self.task_cfg)
         self._resolve_difficulty(difficulty,curriculum)
 
+        self._init_nominal()
         self.reset()
 
     def _resolve_difficulty(self,difficulty,curriculum):
@@ -136,6 +141,8 @@ class FixedwingWaypointsEnv:
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
+        # nominal (classical-controller) action for this step's observation
+        self.extras['nominal_action']=self._get_nominal_action()
         physical=self._scale_actions(actions)
         self.action.copy_(physical)
         command=physical.clone();command[:,3]=command[:,3]/2+.5
@@ -265,6 +272,7 @@ class FixedwingWaypointsEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

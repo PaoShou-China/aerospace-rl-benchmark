@@ -42,9 +42,11 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
 from ..common.curriculum import SuccessRateCurriculum
+from ..common.baselines import (NominalActionMixin,DockingCWHLQRBaseline,
+                                RendezvousTwoImpulseBaseline)
 
 
-class _CWHBase:
+class _CWHBase(NominalActionMixin):
     """Shared CWH relative-motion machinery; subclasses set the task table."""
 
     # Task table (SpaceGym Table 1); overridden per task.
@@ -149,6 +151,7 @@ class _CWHBase:
             self.cfg['curriculum']=True
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
+        self._init_nominal()
         self.reset()
 
     def _apply_difficulty(self,d):
@@ -195,6 +198,8 @@ class _CWHBase:
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
+        # nominal (classical-controller) action for this step's observation
+        self.extras['nominal_action']=self._get_nominal_action()
         thrust=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*self.f_max
         self.action.copy_(thrust)
         active=~(self.terminated|self.truncated)
@@ -288,6 +293,7 @@ class _CWHBase:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)
@@ -329,6 +335,9 @@ class SpaceDockingEnv(_CWHBase):
     pos_norm=100.
     vel_norm=1.
     reward_mode='progress'
+    # nominal controller: CWH-LQR terminal approach with range shield and
+    # capture net (baselines.py; exact symplectic discretization of the plant)
+    nominal_controller=DockingCWHLQRBaseline
 
 
 class SpaceRendezvousEnv(_CWHBase):
@@ -372,4 +381,8 @@ class SpaceRendezvousEnv(_CWHBase):
     # the same incentive ordering (approach shaping dominates) at 1/5 of the
     # churn, giving monotonic learning curves.
     terminal_bonus=20.
+    # nominal controller: receding-horizon CWH two-impulse guidance to the
+    # hold point on the initial line of sight (baselines.py; exact symplectic
+    # STM, online transfer-time ratchet)
+    nominal_controller=RendezvousTwoImpulseBaseline
     viol_penalty=20.

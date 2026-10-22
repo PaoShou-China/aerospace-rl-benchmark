@@ -51,9 +51,10 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
 from ..common.curriculum import SuccessRateCurriculum
+from ..common.baselines import NominalActionMixin,TransferGaussBaseline
 
 
-class LowThrustTransferEnv:
+class LowThrustTransferEnv(NominalActionMixin):
     # Difficulty axis (0 easiest -> 1 hardest = the reference orbit): the
     # initial eccentricity shrinks with d, which shrinks the required perigee
     # raise (rp = a(1-e)); the reward/success criterion (terminal R > 0) is
@@ -66,6 +67,9 @@ class LowThrustTransferEnv:
     curriculum=False
     curriculum_window=1024   # completed episodes per advance decision
     curriculum_threshold=.6  # rolling success rate that advances the stage
+    # nominal controller: Gauss planetary-equation tangential-thrust perigee
+    # raising (baselines.py; greedy coast/burn decision on the policy obs)
+    nominal_controller=TransferGaussBaseline
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         if num_envs<1:raise ValueError('n must be positive')
@@ -134,6 +138,7 @@ class LowThrustTransferEnv:
         self.rng=TensorRandom(num_envs,d,seed)
         self._resolve_difficulty(difficulty,curriculum)
 
+        self._init_nominal()
         self.reset()
 
     def _resolve_difficulty(self,difficulty,curriculum):
@@ -226,6 +231,8 @@ class LowThrustTransferEnv:
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
+        # nominal (classical-controller) action for this step's observation
+        self.extras['nominal_action']=self._get_nominal_action()
         rates=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
         self.action.copy_(rates)
         active=~(self.terminated|self.truncated)
@@ -321,6 +328,7 @@ class LowThrustTransferEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

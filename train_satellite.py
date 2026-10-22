@@ -10,6 +10,9 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_satellite.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in src/common/train_utils.py.
+CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
+(src/common/curriculum.py): None = benchmark, float = static difficulty
+in [0, 1], True = success-rate-gated auto-ramp.
 """
 import sys
 from pathlib import Path

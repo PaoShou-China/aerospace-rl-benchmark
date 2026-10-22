@@ -25,9 +25,10 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
 from ..common.curriculum import SuccessRateCurriculum
+from ..common.baselines import NominalActionMixin,PendulumBaseline
 
 
-class PendulumEnv:
+class PendulumEnv(NominalActionMixin):
     """Classic single-DOF pendulum swing-up, gym Pendulum-v1 spec."""
 
     # gym Pendulum-v1 constants
@@ -49,6 +50,8 @@ class PendulumEnv:
     curriculum=False
     curriculum_window=1024   # completed episodes per advance decision
     curriculum_threshold=.6  # rolling success rate that advances the stage
+    # nominal controller: energy-shaping swing-up + upright LQR (baselines.py)
+    nominal_controller=PendulumBaseline
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
         if num_envs<1:raise ValueError('n must be positive')
@@ -91,6 +94,7 @@ class PendulumEnv:
         self.completed_metrics={'return':self.completed_returns}
         self._resolve_difficulty(difficulty,curriculum)
 
+        self._init_nominal()
         self.reset()
 
     def _resolve_difficulty(self,difficulty,curriculum):
@@ -129,6 +133,8 @@ class PendulumEnv:
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
+        # nominal (classical-controller) action for this step's observation
+        self.extras['nominal_action']=self._get_nominal_action()
         torque=actions.to(torch.float64).reshape(self.num_envs,self.num_actions).clamp(-self.clip_actions,self.clip_actions)*self.max_torque
         self.action.copy_(torque)
         active=~(self.terminated|self.truncated)
@@ -198,6 +204,7 @@ class PendulumEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

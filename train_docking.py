@@ -9,14 +9,42 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_docking.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in src/common/train_utils.py.
+CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
+(src/common/curriculum.py): None = benchmark, float = static difficulty
+in [0, 1], True = success-rate-gated auto-ramp.
 """
 import sys
 from pathlib import Path
+
+import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))  # exposes `common`
 
 from common.train_utils import run_training
 from pyflyt_genesis.docking import SpaceDockingEnv
+
+# Zero-init the final linear head of FlashResMLPModel (actor mean head and
+# critic head) so the initial trunk policy is exactly do-nothing (zero thrust).
+# Rationale (measured 2026-10-22): with the default init the trunk's RMSNorm /
+# weight-renormalization stack starts from a badly non-neutral behavior
+# (iter-0 mean reward -343 vs the MLP arm's +23), so the first ~80 updates are
+# spent just climbing back to neutral approach; afterwards the run plateaus at
+# the hover reward (~58-60) for 900+ updates with ZERO successes in 65937
+# episodes -- the critic (value loss flat at ~0.9, never spiking like the
+# MLP's 127 at discovery) smooths away the 1 m capture cliff and the policy
+# gradient toward capture stays under the noise floor. A neutral start removes
+# the wasted recovery phase and gives the advantage signal an unbiased
+# do-nothing baseline, mirroring the zero-init precedent in train_rocket.py.
+from common.ppo_flashnet import FlashResMLPModel as _FlashResMLPModel
+
+_flash_res_init_orig = _FlashResMLPModel.__init__
+
+def _flash_res_init_zero_head(self, *args, **kwargs):
+    _flash_res_init_orig(self, *args, **kwargs)
+    nn.init.zeros_(self.mlp.weight)
+    nn.init.zeros_(self.mlp.bias)
+
+_FlashResMLPModel.__init__ = _flash_res_init_zero_head
 
 TASK = 'docking'
 NUM_ENVS = 1024
@@ -40,11 +68,17 @@ LR_SCHEDULE = 'fixed'
 # the policy distribution wide enough for the advantage signal to pull it
 # back; every other setting stays at the shared fair-comparison values.
 ENTROPY_COEF = 0.005
-# Web-alignment (2026-10-21): lr/gamma follow "Neural-based Control for CubeSat
-# Docking Maneuvers" (arXiv:2410.12703): lr 5e-5, gamma 0.999, clip 0.2, 25M
-# transitions. entropy_coef stays 0.005 (the paper does not report entropy; the
+# gamma 0.999 follows "Neural-based Control for CubeSat Docking Maneuvers"
+# (arXiv:2410.12703); its lr 5e-5 does NOT transfer -- see the measured note
+# below. entropy_coef stays 0.005 (the paper does not report entropy; the
 # 0.005 value is this task's measured late-collapse remedy, see above).
-LEARNING_RATE = 5e-5
+# Web-alignment NOTE (measured 2026-10-22): the 10-21 attempt to align lr to
+# "Neural-based Control for CubeSat Docking Maneuvers" (arXiv:2410.12703,
+# lr 5e-5) BROKE the task -- 0-2.9% success for BOTH architectures at 64 and
+# 1024 envs (results/diag_docking_*). The paper's lr does not transfer to this
+# task's batch scale. 3e-4 (the pre-alignment value, and the build_cfg shared
+# default) recovers: mlp 79.4% @64 / 77.9% @1024 envs. gamma 0.999 stays.
+LEARNING_RATE = 3e-4
 GAMMA = 0.999
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
 # Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
@@ -55,9 +89,18 @@ CURRICULUM = None
 ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
               else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
 
+# Architecture A/B (user decision 2026-10-22: docking keeps BOTH arms). CAUTION
+# (measured 2026-10-22): the archived 94% MLP reference predates the 1024-env
+# fair-comparison change -- it ran at num_envs=64 (possibly lr 3e-4); every
+# 1024-env arm so far (trunk AND mlp) plateaus at ~2-3%, so the dominant
+# variable is the config vintage (batch size / lr), NOT the architecture.
+ARMS = (('flash_residual', None), ('mlp', str(Path(__file__).resolve().parent / 'results' / 'docking_mlp')))
+
 if __name__ == '__main__':
-    run_training(TASK, SpaceDockingEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 entropy_coef=ENTROPY_COEF, gamma=GAMMA,
-                 env_kwargs=ENV_KWARGS)
+    for arch, out_dir in ARMS:
+        run_training(TASK, SpaceDockingEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
+                     backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
+                     out_dir=out_dir, arch=arch,
+                     lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
+                     entropy_coef=ENTROPY_COEF, gamma=GAMMA,
+                     env_kwargs=ENV_KWARGS)

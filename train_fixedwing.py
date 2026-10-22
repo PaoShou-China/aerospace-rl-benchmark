@@ -28,6 +28,10 @@ and train_docking.py):
    rising where the baseline plateaued; cost is +48% wall time (3803 s) and
    2x transitions. Kept. Baseline (nsp=32): results/fixedwing_baseline_nsp32.
 
+CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
+(src/common/curriculum.py): None = benchmark, float = static difficulty
+in [0, 1], True = success-rate-gated auto-ramp.
+
 Geometry and diagnostics (2026-10-21): the waypoint shell is now 20-65 m
 with a 20 m altitude floor (was 1-90 m and 0.5 m). The old shell sampled
 targets inside one minimum turn radius of the 100 m OOB sphere and required

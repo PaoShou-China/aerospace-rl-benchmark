@@ -8,6 +8,9 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_rocket.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in src/common/train_utils.py.
+CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
+(src/common/curriculum.py): None = benchmark, float = static difficulty
+in [0, 1], True = success-rate-gated auto-ramp.
 """
 import sys
 from pathlib import Path
@@ -44,6 +47,22 @@ def _mlp_init_zero_last(self, *args, **kwargs):
         nn.init.zeros_(last.bias)
 
 _MLPModel.__init__ = _mlp_init_zero_last
+
+# The trunk default (arch='flash_residual', FlashResMLPModel) REPLACES self.mlp
+# with a fresh nn.Linear AFTER super().__init__ returns, so the MLPModel patch
+# above is a no-op for trunk models (verified 2026-10-22: the Sequential head
+# it zeroes is discarded). Patch FlashResMLPModel too: zero its final linear
+# head, which is the actual actor-mean/critic output layer on the trunk latent.
+from common.ppo_flashnet import FlashResMLPModel as _FlashResMLPModel
+
+_flash_res_init_orig = _FlashResMLPModel.__init__
+
+def _flash_res_init_zero_head(self, *args, **kwargs):
+    _flash_res_init_orig(self, *args, **kwargs)
+    nn.init.zeros_(self.mlp.weight)
+    nn.init.zeros_(self.mlp.bias)
+
+_FlashResMLPModel.__init__ = _flash_res_init_zero_head
 
 TASK = 'rocket'
 NUM_ENVS = 1024
