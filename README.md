@@ -1,4 +1,4 @@
-# pyflyt-genesis: Fully Tensorized Aerospace RL Environments
+# AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
 
 A suite of eight GPU-native reinforcement-learning environments spanning
 atmospheric flight vehicles and spacecraft dynamics, written in the official
@@ -21,9 +21,9 @@ verification conditions lives in
 
 | Task | Class | Dynamics model | Obs dim | Act dim | Policy rate | Episode | Success criterion |
 |---|---|---|---|---|---|---|---|
-| QuadX-Hover | `QuadXHoverEnv` | Genesis rigid body (Crazyflie 2.x, 240 Hz) + rate-PID | 21 | 4 | 40 Hz | 400 steps = 10 s | none (graded hover reward) |
-| Fixedwing-Waypoints | `FixedwingWaypointsEnv` | Genesis rigid body (2.35 kg UAV, 240 Hz) + blade-element aero | 38 | 4 | 30 Hz | 3600 steps = 120 s | 4/4 waypoints captured (< 2 m) |
-| Rocket-Landing | `RocketLandingEnv` | Genesis rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 40 Hz | 1200 steps = 30 s | pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad |
+| QuadX-Hover | `QuadXHoverEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID | 21 | 4 | 40 Hz | 400 steps = 10 s | none (graded hover reward) |
+| Fixedwing-Waypoints | `FixedwingWaypointsEnv` | URDF rigid body (2.35 kg UAV, 240 Hz) + blade-element aero | 38 | 4 | 30 Hz | 3600 steps = 120 s | 4/4 waypoints captured (< 2 m) |
+| Rocket-Landing | `RocketLandingEnv` | URDF rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 40 Hz | 1200 steps = 30 s | pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad |
 | Satellite attitude (CMG) | `SatelliteAttitudeEnv` | Rigid body + 4- or 6-CMG cluster, RK4 2.5 ms | 23 / 29 | 4 / 6 | 40 Hz | 1200 steps = 30 s | att. error < 0.05 rad, \|ω\| < 0.02 rad/s at limit |
 | Low-thrust transfer | `LowThrustTransferEnv` | Two-body gravity + 3-axis 10 mN EP, RK4 10 s | 8 | 3 | 300 s/step | 166 steps ≈ 5 revs | none (terminal reward) |
 | Docking | `SpaceDockingEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 500 steps ≈ 8.3 min | range < 1 m & speed < 0.1 m/s |
