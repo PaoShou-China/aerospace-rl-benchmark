@@ -155,8 +155,8 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     bc_warmstart (PPO only): None disables; a dict enables the behavior-
     cloning warm start (src/common/bc_warmstart.py). Keys with defaults:
     'steps' (512 vectorized env steps of expert data, collected ON the
-    training env through extras['nominal_action'] -- the classical
-    baseline), 'epochs' (100 supervised epochs), 'batch_size' (8192),
+    training env by driving the task's classical baseline controller (its
+    ``nominal_controller``) directly through collect_expert), 'epochs' (100 supervised epochs), 'batch_size' (8192),
     'lr' (1e-3, a separate Adam over the actor's parameters), 'gamma'
     (None -> the PPO config's gamma, used only for the critic's
     returns-to-go targets) and 'fit_critic' (True). The env's episode

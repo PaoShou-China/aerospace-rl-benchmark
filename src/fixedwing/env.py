@@ -31,7 +31,7 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate
-from ..common.baselines import NominalActionMixin,FixedwingAutopilotBaseline
+from ..common.baselines import FixedwingAutopilotBaseline
 
 REACH_BONUS = 15.0
 CRASH_PENALTY = 10.0
@@ -52,7 +52,7 @@ WAYPOINT_MAX_RADIUS = 65.0
 WAYPOINT_MIN_ALTITUDE = 20.0
 
 
-class FixedwingWaypointsEnv(NominalActionMixin):
+class FixedwingWaypointsEnv:
     # Difficulty axis (0 easiest -> 1 hardest = the benchmark shell): at d=0
     # waypoints only spawn on large circles (min radius 50 m), at d=1 the full
     # benchmark 20-65 m shell is restored bit-for-bit. Success criteria
@@ -109,7 +109,6 @@ class FixedwingWaypointsEnv(NominalActionMixin):
         self.cfg=dict(self.task_cfg)
         self._resolve_difficulty(difficulty)
 
-        self._init_nominal()
         self.reset()
 
     def _resolve_difficulty(self,difficulty):
@@ -141,8 +140,6 @@ class FixedwingWaypointsEnv(NominalActionMixin):
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        # nominal (classical-controller) action for this step's observation
-        self.extras['nominal_action']=self._get_nominal_action()
         physical=self._scale_actions(actions)
         self.action.copy_(physical)
         command=physical.clone();command[:,3]=command[:,3]/2+.5
@@ -275,7 +272,6 @@ class FixedwingWaypointsEnv(NominalActionMixin):
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
-        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

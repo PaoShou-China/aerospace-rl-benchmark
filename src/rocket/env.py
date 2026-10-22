@@ -75,7 +75,7 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate, quat_from_euler
-from ..common.baselines import NominalActionMixin,RocketPDGBaseline
+from ..common.baselines import RocketPDGBaseline
 
 
 A_REF=9.81      # reference braking decel = g exactly: free fall conserves Phi (pays zero)
@@ -113,7 +113,7 @@ def rocket_shaping(position,previous_position,vel_z,previous_vel_z,rpy,body_omeg
     return total,components
 
 
-class RocketLandingEnv(NominalActionMixin):
+class RocketLandingEnv:
     # Difficulty axis (0 easiest -> 1 hardest = the upstream ICs): the reset
     # ranges narrow toward the nominal drop as d drops; at d=1 the upstream
     # xy +/-20 m, z [400,450], euler +/-0.3 rad are restored bit-for-bit.
@@ -185,7 +185,6 @@ class RocketLandingEnv(NominalActionMixin):
         self.cfg=dict(self.task_cfg)
         self._resolve_difficulty(difficulty)
 
-        self._init_nominal()
         self.reset()
 
     def _resolve_difficulty(self,difficulty):
@@ -210,8 +209,6 @@ class RocketLandingEnv(NominalActionMixin):
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        # nominal (classical-controller) action for this step's observation
-        self.extras['nominal_action']=self._get_nominal_action()
         physical=self._scale_actions(actions)
         # Upstream passes the gym action straight to set_setpoint; the plant
         # applies the ignition>0.5 rule per physics step (240 Hz, reignitable)
@@ -383,7 +380,6 @@ class RocketLandingEnv(NominalActionMixin):
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
-        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

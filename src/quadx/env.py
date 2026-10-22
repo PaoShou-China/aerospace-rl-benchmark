@@ -16,7 +16,7 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate, quat_from_euler
-from ..common.baselines import NominalActionMixin,QuadXSE3Baseline
+from ..common.baselines import QuadXSE3Baseline
 
 
 def hover_shaping(position,rpy,body_omega):
@@ -24,7 +24,7 @@ def hover_shaping(position,rpy,body_omega):
     return 1-delta.norm(dim=-1)-rpy[:,:2].norm(dim=-1)-.01*body_omega[:,2].square()
 
 
-class QuadXHoverEnv(NominalActionMixin):
+class QuadXHoverEnv:
     # Difficulty axis (0 easiest = the deterministic-spawn benchmark -> 1
     # hardest): reset perturbations grow with d (domain randomization). At
     # d=0 no random numbers are drawn, so the reset
@@ -88,7 +88,6 @@ class QuadXHoverEnv(NominalActionMixin):
         self.cfg=dict(self.task_cfg)
         self._resolve_difficulty(difficulty)
 
-        self._init_nominal()
         self.reset()
 
     def _resolve_difficulty(self,difficulty):
@@ -114,8 +113,6 @@ class QuadXHoverEnv(NominalActionMixin):
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        # nominal (classical-controller) action for this step's observation
-        self.extras['nominal_action']=self._get_nominal_action()
         physical=self._scale_actions(actions)
         self.action.copy_(physical)
         command=physical.clone()
@@ -231,7 +228,6 @@ class QuadXHoverEnv(NominalActionMixin):
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
-        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

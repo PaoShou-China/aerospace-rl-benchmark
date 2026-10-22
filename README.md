@@ -1,7 +1,8 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
+
 A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains seven aerospace tasks spanning atmospheric flight and spacecraft dynamics, together with a pendulum task used only as a training-pipeline check. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
-Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly, used to generate behavior-cloning data, or queried for nominal actions by an external residual-RL pipeline.
+Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly or used to generate behavior-cloning data for the warm-started learning pipeline.
 
 The three atmospheric vehicle tasks use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
 

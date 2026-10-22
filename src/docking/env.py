@@ -41,11 +41,11 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
-from ..common.baselines import (NominalActionMixin,DockingCWHLQRBaseline,
+from ..common.baselines import (DockingCWHLQRBaseline,
                                 RendezvousTwoImpulseBaseline)
 
 
-class _CWHBase(NominalActionMixin):
+class _CWHBase:
     """Shared CWH relative-motion machinery; subclasses set the task table."""
 
     # Task table (SpaceGym Table 1); overridden per task.
@@ -138,7 +138,6 @@ class _CWHBase(NominalActionMixin):
             self.difficulty=float(difficulty)
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
-        self._init_nominal()
         self.reset()
 
     def _apply_difficulty(self,d):
@@ -185,8 +184,6 @@ class _CWHBase(NominalActionMixin):
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        # nominal (classical-controller) action for this step's observation
-        self.extras['nominal_action']=self._get_nominal_action()
         thrust=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*self.f_max
         self.action.copy_(thrust)
         active=~(self.terminated|self.truncated)
@@ -283,7 +280,6 @@ class _CWHBase(NominalActionMixin):
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
-        self._nominal_reset_idx(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

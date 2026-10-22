@@ -1,23 +1,21 @@
 """Behavior-cloning warm start from the classical nominal controllers.
 
 Gives PPO a warm-started actor (and critic) instead of a random network
-initialization: roll the batched env with the classical baseline exposed
-through ``extras['nominal_action']`` (the NominalActionMixin contract --
-the env-owned controller advances exactly once per step inside ``step()``;
-this module only READS the info field), regress the actor's mean head onto
-the collected (obs, expert action) pairs, optionally regress the critic
-onto the empirical gamma-discounted returns-to-go of the same rollouts,
-and then let PPO refine from there.
+initialization: roll the batched env with the task's classical baseline
+controller (the env's ``nominal_controller`` class attribute), regress the
+actor's mean head onto the collected (obs, expert action) pairs, optionally
+regress the critic onto the empirical gamma-discounted returns-to-go of the
+same rollouts, and then let PPO refine from there.
 
-Data-collection semantics ("lag-1" expert rollout): ``step()`` computes the
-nominal action for the PRE-step observation, so the executed action for
-step t is the expert action computed at step t-1.  The STORED pairs
-(s_t, pi*(s_t)) are exact supervised targets; the visited state
-distribution is a one-step-delayed expert trajectory -- slightly off the
-expert's own trajectory (a mild DAgger-like state coverage), which is
-harmless-to-beneficial for BC robustness and keeps the env contract intact
-(no external driving of the stateful controllers, so no double-stepping of
-the quadx trim / fixedwing integrals / rendezvous ratchet).
+Data-collection semantics: the collector owns a dedicated controller
+instance and drives it directly -- compute the expert action from the
+current observation, execute exactly that action, then mirror env resets
+onto the controller via ``reset_idx``.  The env itself stays a plain tensor
+environment (no controller state, no info field).  Stored pairs
+(s_t, pi*(s_t)) are exact supervised targets on the expert's own closed-loop
+trajectory.  Because the executed action IS the controller's command, its
+internal self-integrations (docking fuel bookkeeping, quadx trim, fixedwing
+integrals, rendezvous ratchet) stay consistent with the visited states.
 
 PPO-only by design: flash_sac's tanh-bounded actor head is a different
 regression target and its runner is not touched here.
@@ -35,29 +33,43 @@ BC_DEFAULTS = {'steps': 512, 'epochs': 100, 'batch_size': 8192, 'lr': 1e-3,
 
 
 def collect_expert(env, steps):
-    """Roll the env for `steps` vectorized steps; expert actions come from
-    ``extras['nominal_action']`` (written by step() from the pre-step obs).
+    """Roll the env for `steps` vectorized steps under the task's classical
+    controller (``env.nominal_controller``), instantiated here and driven
+    directly; the env never sees it.
 
     Returns device-resident tensors: obs (T, N, obs_dim), act (T, N, A),
     rew (T, N), done (T, N) where done marks the env auto-reset at that
-    step.  The first step executes a zero action (no expert action exists
-    before the first step); its (obs, expert action) pair is still valid.
+    step.  The controller's stateful parts are reset on the same mask the
+    env resets on, so per-env controller state always matches the env.
     """
-    obs0 = env.get_observations()['policy']
-    num_actions = env.num_actions
-    T, N = steps, env.num_envs
-    obss = torch.empty(T, N, obs0.shape[-1], device=env.device, dtype=torch.float32)
-    acts = torch.empty(T, N, num_actions, device=env.device, dtype=torch.float32)
+    if env.nominal_controller is None:
+        raise RuntimeError(f'{type(env).__name__} declares no nominal_controller')
+    ctrl = env.nominal_controller(env)
+    obs = env.get_observations()
+    N, A = env.num_envs, env.num_actions
+    T = steps
+    obss = torch.empty(T, N, obs['policy'].shape[-1], device=env.device, dtype=torch.float32)
+    acts = torch.empty(T, N, A, device=env.device, dtype=torch.float32)
     rews = torch.empty(T, N, device=env.device)
     dones = torch.empty(T, N, device=env.device, dtype=torch.bool)
-    obs = obs0
-    action = torch.zeros(N, num_actions, device=env.device)
+    ctrl.reset_idx(torch.ones(N, dtype=torch.bool, device=env.device))
+    checked = False
     for t in range(T):
-        _, rew, done, extras = env.step(action)
-        expert = extras['nominal_action']  # expert action for `obs` (the pre-step state)
-        obss[t], acts[t], rews[t], dones[t] = obs, expert, rew, done
-        obs = env.get_observations()['policy']
-        action = expert
+        with torch.no_grad():
+            expert = ctrl.actions(obs)
+        if expert.shape != (N, A) or expert.device != torch.device(env.device):
+            raise ValueError(f'nominal action mismatch: shape {tuple(expert.shape)} '
+                             f'on {expert.device} vs ({N}, {A}) on {env.device}')
+        if not checked:
+            bound = float(getattr(env, 'clip_actions', 1.))
+            if not bool(torch.isfinite(expert).all()) or float(expert.abs().max()) > bound + 1e-6:
+                raise ValueError('nominal action violates finiteness/action range')
+            checked = True
+        obss[t], acts[t] = obs['policy'], expert
+        _, rew, done, _ = env.step(expert)
+        rews[t], dones[t] = rew, done
+        obs = env.get_observations()
+        ctrl.reset_idx(done)
     return obss, acts, rews, dones
 
 

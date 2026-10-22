@@ -11,7 +11,7 @@
 
 ## 2. 传统控制器（BC 数据源）审计
 
-BC warm-start 数据源 = 各任务 `nominal_controller`（`extras['nominal_action']` 契约）。各控制器均在训练/验证初始条件上调参并冻结后才开始采集 BC 数据，冻结状态如下：
+BC warm-start 数据源 = 各任务 `nominal_controller`（BC 采集器自建控制器实例直接驱动，env 的 info 不含 nominal 动作）。各控制器均在训练/验证初始条件上调参并冻结后才开始采集 BC 数据，冻结状态如下：
 
 | 任务 | 控制器 | train 场景成功率 | dev/test | 状态 | BC 决策 |
 |---|---|---|---|---|---|

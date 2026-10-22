@@ -167,7 +167,7 @@ DIFFICULTY = None
 ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
 
 # BC warm start (src/common/bc_warmstart.py): pretrain the actor/critic on the
-# classical nominal controller (extras['nominal_action']) before PPO. None = off.
+# classical nominal controller (driven directly by the BC collector) before PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 if __name__ == '__main__':
