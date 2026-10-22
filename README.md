@@ -6,6 +6,24 @@ Each aerospace task includes a conventional guidance, navigation, or control bas
 
 The three atmospheric vehicle tasks use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
 
+All state lives on exactly one device as `float64` physics / `float32`
+observation buffers. There is **no engine round-trip per replica, no
+per-replica Python loop, no gym/gymnasium dependency**: every operation
+(physics integration, contact checks, reward, reset, RNG) is a masked tensor
+kernel, so inactive replicas are frozen and consume no random numbers.
+
+Honesty note on synchronization: the *physics hot path* (per-physics-step
+pause/restore, contact accumulation, rocket mass write) is free of host-device
+syncs — data-dependent Python branching was removed in favor of unconditional
+idempotent tensor writes. Each env `step()` still performs exactly ONE host
+sync (`bool(done.any())`), needed to gate episode-boundary bookkeeping and the
+reset path; console logging syncs a few extra scalars on
+episode boundaries only.
+
+A deeper, reviewer-oriented write-up of the infrastructure claims and their
+verification conditions lives in
+[docs/technical-highlights.md](docs/technical-highlights.md).
+
 ## Environments
 
 | Task | Class | Dynamics model | Obs dim | Act dim | Policy rate | Episode | Success criterion |
@@ -17,7 +35,6 @@ The three atmospheric vehicle tasks use URDF-based rigid-body plants; four space
 | Low-thrust transfer | `LowThrustTransferEnv` | Two-body gravity + 3-axis 10 mN EP, RK4 10 s | 8 | 3 | 300 s/step | 166 steps ≈ 5 revs | none (terminal reward) |
 | Docking | `SpaceDockingEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 500 steps ≈ 8.3 min | range < 1 m & speed < 0.1 m/s |
 | Rendezvous | `SpaceRendezvousEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 1000 steps ≈ 16.7 min | range < 10 m & speed < 0.5 m/s, keep-out respected |
-| Pendulum (toy sanity check) | `PendulumEnv` | Classic single-DOF pendulum, explicit Euler 50 ms | 3 | 1 | 20 Hz | 200 steps = 10 s | completed-episode return > −200 |
 
 Per-task quantitative details (action/observation layouts, reward
 decompositions, termination conditions, spawn distributions, difficulty
@@ -28,7 +45,7 @@ axes) live in the module docstring of each package:
 [src/satellite](src/satellite/__init__.py),
 [src/transfer](src/transfer/__init__.py),
 [src/docking](src/docking/__init__.py) (covers both docking and
-rendezvous), [src/pendulum](src/pendulum/__init__.py).
+rendezvous).
 
 ## Package layout
 
@@ -39,7 +56,6 @@ src/
 │   │                    #   TensorRandom (per-replica counter RNG streams)
 │   ├── dynamics.py      # batched SI-unit QuadX model + quaternion/euler helpers
 │   ├── aerodynamics.py  # batched lifting-surface model (incl. stall)
-│   ├── curriculum.py    # shared 0-1 difficulty ramp (success-rate gated)
 │   ├── consistency.py   # frozen reference assets, URDF inertial parsing,
 │   │                    #   hash manifests, serializable plant contract
 │   ├── train_utils.py   # shared run_training() for the per-task entries
@@ -55,21 +71,25 @@ src/
 ├── satellite/           # CMG attitude control (pure tensor)
 ├── transfer/            # low-thrust orbit raising (pure tensor)
 ├── docking/             # CWH docking + rendezvous (pure tensor)
-├── pendulum/            # classic gym Pendulum-v1 toy (training-stack sanity check)
 └── original_pyflyt/     # vendored PyFlyt vehicle URDF/YAML models
-train.py                 # rsl-rl PPO entry point for all 7 real tasks
-train_<task>.py          # self-contained per-task entries (hard-coded params)
-train_rocket_v2.py       # rocket A/B arm with the redesigned reward
-eval.py                  # deterministic evaluation of trained checkpoints
-baseline_eval.py         # evaluation of the classical baselines
-classic_pendulum.py      # pendulum energy-shaping + LQR baseline entry
+scripts/                 # training / evaluation / visualization entry points
+├── train.py             # rsl-rl PPO entry point for all 7 real tasks
+├── train_<task>.py      # self-contained per-task entries (hard-coded params)
+├── sweep_tune.py        # small hyperparameter sweep harness
+├── eval.py              # deterministic evaluation of trained checkpoints
+├── baseline_eval.py     # evaluation of the classical baselines
+├── eval_docking_lqr.py / eval_fixedwing_autopilot.py /
+│   eval_rendezvous_baseline.py / rocket_pdg_test.py / test_quadx_se3.py
+│                        # per-task deep-dive harnesses
+├── summarize.py         # aggregate results/ into a summary table
+└── visualize.py         # checkpoint replay / trajectory visualization
 docs/technical-highlights.md  # reviewer-oriented infrastructure write-up
 ```
 
 The three atmospheric-vehicle tasks (`quadx`, `fixedwing`, `rocket`) run on
 the Genesis rigid-body engine with fully tensorized actuation/contact
 layers; the four space tasks (`satellite`, `transfer`, `docking`,
-`rendezvous`) are pure-tensor integrators with no engine at all. All eight
+`rendezvous`) are pure-tensor integrators with no engine at all. All seven
 share the identical `step`/`reset`/buffer contract, so the training
 entries treat them uniformly.
 
@@ -97,8 +117,7 @@ counts and device-side completion metrics in `results/<task>/run.json`.
 ## Classical (non-learned) baselines
 
 Each task is paired with a classical GNC baseline
-([src/common/baselines.py](src/common/baselines.py),
-[classic_pendulum.py](classic_pendulum.py)) so learned results have a
+([src/common/baselines.py](src/common/baselines.py)) so learned results have a
 non-learning reference on the same env, reward and success bar. Every
 controller reads only the `'policy'` observation group, takes env constants
 at construction, never touches internal state buffers, and leaves env
@@ -108,7 +127,6 @@ declared in each report):
 
 | Task | Baseline | Reference result |
 |---|---|---|
-| Pendulum | energy-shaping swing-up + discrete-time LQR | swing-up-and-hold, return ≈ −160 vs −200 bar |
 | QuadX-Hover | SE(3) geometric control (Lee et al. 2010) with integral trim | 100% (5120 episodes) |
 | Fixedwing | L1 lateral + TECS longitudinal autopilot | ~74.6% train / 73.1% test (3700-step window) |
 | Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | 66.8% (2000-step window) |
@@ -121,11 +139,11 @@ These are honest references, not strawmen: the fixedwing and rocket
 baselines retain documented residual failures (out-of-bound endgame limit
 cycles, authority-saturated braking transients) that RL is expected to
 attack. Task-specific deep-dive harnesses with per-scenario breakdowns and
-ablation arms: [eval_docking_lqr.py](eval_docking_lqr.py),
-[eval_fixedwing_autopilot.py](eval_fixedwing_autopilot.py),
-[eval_rendezvous_baseline.py](eval_rendezvous_baseline.py),
-[rocket_pdg_test.py](rocket_pdg_test.py),
-[test_quadx_se3.py](test_quadx_se3.py).
+ablation arms: [eval_docking_lqr.py](scripts/eval_docking_lqr.py),
+[eval_fixedwing_autopilot.py](scripts/eval_fixedwing_autopilot.py),
+[eval_rendezvous_baseline.py](scripts/eval_rendezvous_baseline.py),
+[rocket_pdg_test.py](scripts/rocket_pdg_test.py),
+[test_quadx_se3.py](scripts/test_quadx_se3.py).
 
 ## Conventions
 
@@ -139,28 +157,21 @@ ablation arms: [eval_docking_lqr.py](eval_docking_lqr.py),
   success flag.
 - Actions arrive on `env.device`; implicit host/device copies raise.
 
-## Curriculum difficulty (0–1)
+## Static difficulty (0–1)
 
-Every environment exposes a unified difficulty setting in `[0, 1]` (0
-easiest, 1 hardest) — the project-wide curriculum feature
-([src/common/curriculum.py](src/common/curriculum.py)). Only initial-state /
-task-parameter distributions are modulated; success criteria, terminations
-and reward structure are untouched, so evaluation stays comparable at any
-training difficulty.
+Every environment exposes a static difficulty setting in `[0, 1]` (0
+easiest, 1 hardest). Only initial-state / task-parameter distributions are
+modulated; success criteria, terminations and reward structure are untouched,
+so evaluation stays comparable at any training difficulty.
 
 - `difficulty=None` (default): published benchmark behavior, bit-for-bit
   (eval.py builds envs without kwargs and is unaffected).
 - `difficulty=d` (float): train at a static difficulty.
-- `curriculum=True`: the difficulty auto-ramps 0 → 1 under the shared
-  `SuccessRateCurriculum` — +0.1 whenever a 1024-episode window closes with
-  a rolling success rate ≥ 0.6 (forward-only). The current difficulty is
-  recorded in `env.cfg` (`run.json`) and printed on each advance.
 
 The per-task difficulty axes (d=0 → d=1):
 
 | Task | Knob | d=0 (easy) → d=1 (benchmark) |
 |---|---|---|
-| Pendulum | reset ranges | th0 ±30° → ±180°, thdot0 ±0.25 → ±1 rad/s |
 | QuadX-Hover | spawn perturbations | deterministic spawn (benchmark) → ±0.5 m xy / ±0.25 m z, ±0.5 m/s, ±0.35 rad |
 | Fixedwing | waypoint shell | min radius 50 m → 20 m (max 65 m fixed) |
 | Rocket-Landing | initial conditions | xy ±2 m, z 440–450 m, euler ±0.05 → xy ±20 m, z 400–450 m, euler ±0.3 |
@@ -172,8 +183,7 @@ The per-task difficulty axes (d=0 → d=1):
 All tasks place the published benchmark at d=1 except QuadX-Hover, whose
 deterministic-spawn benchmark is already the easiest variant (its axis
 extends toward harder spawn randomization). Train entries expose a single
-`CURRICULUM` constant (`None` off / float static / `True` auto-ramp);
-`train_rendezvous.py` ships with `CURRICULUM = True` (its proven default).
+`DIFFICULTY` constant (`None` = benchmark / float = static).
 
 ## Usage
 
@@ -181,29 +191,27 @@ Per-task entries (all parameters hard-coded in the file — edit constants,
 no CLI arguments):
 
 ```bash
-python train_quadx.py          # train_fixedwing.py | train_rocket.py
-                               # train_satellite.py | train_transfer.py
-                               # train_docking.py   | train_rendezvous.py
-                               # train_pendulum.py
-python train_rocket_v2.py      # rocket A/B arm with the redesigned reward
+python scripts/train_quadx.py          # train_fixedwing.py | train_rocket.py
+                                       # train_satellite.py | train_transfer.py
+                                       # train_docking.py   | train_rendezvous.py
 ```
 
 The original CLI aggregator still works for quick sweeps:
 
 ```bash
-python train.py --task quadx   # fixedwing | rocket | satellite
-                               # transfer | docking | rendezvous
+python scripts/train.py --task quadx   # fixedwing | rocket | satellite
+                                       # transfer | docking | rendezvous
 ```
 
 Evaluation and baselines:
 
 ```bash
-python eval.py quadx                     # deterministic checkpoint evaluation
-python baseline_eval.py quadx            # classical baseline, any of the 8 tasks
-python eval_docking_lqr.py               # per-task deep-dive harnesses:
-python eval_fixedwing_autopilot.py       #   scenario grids, ablation arms,
-python eval_rendezvous_baseline.py       #   per-scenario breakdown reports
-python rocket_pdg_test.py
+python scripts/eval.py quadx                     # deterministic checkpoint evaluation
+python scripts/baseline_eval.py quadx            # classical baseline, any of the 7 tasks
+python scripts/eval_docking_lqr.py               # per-task deep-dive harnesses:
+python scripts/eval_fixedwing_autopilot.py       #   scenario grids, ablation arms,
+python scripts/eval_rendezvous_baseline.py       #   per-scenario breakdown reports
+python scripts/rocket_pdg_test.py
 ```
 
 Results land in `results/<task>/` (`run.json` for training runs,

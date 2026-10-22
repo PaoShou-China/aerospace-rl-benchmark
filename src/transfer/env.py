@@ -50,7 +50,6 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
-from ..common.curriculum import SuccessRateCurriculum
 from ..common.baselines import NominalActionMixin,TransferGaussBaseline
 
 
@@ -64,14 +63,11 @@ class LowThrustTransferEnv(NominalActionMixin):
     ecc0_min=.02             # axis: ecc0 .02 -> .1
     benchmark_difficulty=1.
     difficulty=None          # None = benchmark behavior (no cfg record)
-    curriculum=False
-    curriculum_window=1024   # completed episodes per advance decision
-    curriculum_threshold=.6  # rolling success rate that advances the stage
     # nominal controller: Gauss planetary-equation tangential-thrust perigee
     # raising (baselines.py; greedy coast/burn decision on the policy obs)
     nominal_controller=TransferGaussBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
@@ -136,22 +132,16 @@ class LowThrustTransferEnv(NominalActionMixin):
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        self._resolve_difficulty(difficulty,curriculum)
+        self._resolve_difficulty(difficulty)
 
         self._init_nominal()
         self.reset()
 
-    def _resolve_difficulty(self,difficulty,curriculum):
-        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+    def _resolve_difficulty(self,difficulty):
+        """Shared difficulty resolution (every task env, same shape)."""
         if difficulty is not None:
             if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
             self.difficulty=float(difficulty)
-        if curriculum is not None:self.curriculum=bool(curriculum)
-        self._tracker=None
-        if self.curriculum:
-            if self.difficulty is None:self.difficulty=0.
-            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
-            self.cfg['curriculum']=True
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
     def _apply_difficulty(self,d):
@@ -294,11 +284,6 @@ class LowThrustTransferEnv(NominalActionMixin):
                 'perigee_raise_km':drp_km.sum()/n_done,
                 'apo_drift_km':dra_km.sum()/n_done,
                 'propellant_kg':dm_kg.sum()/n_done}
-            if self._tracker is not None:
-                new=self._tracker.update(done,self.complete)
-                if new is not None:
-                    self._apply_difficulty(new)
-                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 

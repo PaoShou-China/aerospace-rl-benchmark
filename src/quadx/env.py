@@ -16,7 +16,6 @@ import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate, quat_from_euler
-from ..common.curriculum import SuccessRateCurriculum
 from ..common.baselines import NominalActionMixin,QuadXSE3Baseline
 
 
@@ -27,8 +26,8 @@ def hover_shaping(position,rpy,body_omega):
 
 class QuadXHoverEnv(NominalActionMixin):
     # Difficulty axis (0 easiest = the deterministic-spawn benchmark -> 1
-    # hardest): reset perturbations grow with d (classic hover curriculum /
-    # domain randomization). At d=0 no random numbers are drawn, so the reset
+    # hardest): reset perturbations grow with d (domain randomization). At
+    # d=0 no random numbers are drawn, so the reset
     # state and RNG stream match the legacy benchmark bit-for-bit. Success
     # criteria (ground contact, bounds, step limit) are untouched.
     spawn_xy_noise=0.        # spawn xy-offset radius [m] (axis 0 -> .5)
@@ -37,14 +36,11 @@ class QuadXHoverEnv(NominalActionMixin):
     spawn_att_noise=0.       # spawn per-axis euler half-range [rad] (axis 0 -> .35)
     benchmark_difficulty=0.
     difficulty=None          # None = benchmark behavior (no cfg record)
-    curriculum=False
-    curriculum_window=1024   # completed episodes per advance decision
-    curriculum_threshold=.6  # rolling success rate that advances the stage
     # nominal controller: SE(3) geometric hover control, Lee et al. 2010
     # (baselines.py; reuses the env's rate+collective action convention)
     nominal_controller=QuadXSE3Baseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'quadx','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -90,22 +86,16 @@ class QuadXHoverEnv(NominalActionMixin):
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
-        self._resolve_difficulty(difficulty,curriculum)
+        self._resolve_difficulty(difficulty)
 
         self._init_nominal()
         self.reset()
 
-    def _resolve_difficulty(self,difficulty,curriculum):
-        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+    def _resolve_difficulty(self,difficulty):
+        """Shared difficulty resolution (every task env, same shape)."""
         if difficulty is not None:
             if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
             self.difficulty=float(difficulty)
-        if curriculum is not None:self.curriculum=bool(curriculum)
-        self._tracker=None
-        if self.curriculum:
-            if self.difficulty is None:self.difficulty=0.
-            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
-            self.cfg['curriculum']=True
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
     def _apply_difficulty(self,d):
@@ -137,14 +127,19 @@ class QuadXHoverEnv(NominalActionMixin):
             self.plant.controller(command,active)
             for _ in range(2):self.plant.physics_step(command,active)
             p,rpy,v,wb,vb=self._observe(active)
-            timeout=self.count>=self.max_steps
             collision=self.plant.ground_contact;bounds=p.norm(dim=-1)>3
             reward=torch.where(collision|bounds,-100.,self.reward)+hover_shaping(p,rpy,wb)
-            term=collision|bounds;trunc=timeout
+            term=collision|bounds
             self.reward.copy_(torch.where(active,reward,self.reward))
-            self.terminated|=term&active;self.truncated|=trunc&active
+            self.terminated|=term&active
             self.collision|=collision&active;self.out_of_bounds|=bounds&active
-            self.complete|=(timeout&~collision&~bounds)&active
+        # the time limit is applied AFTER the full control step (all physics
+        # substeps) so the final control step is not cut short; accidents still
+        # terminate inside the substep loop above
+        active=~(self.terminated|self.truncated)
+        timeout=(self.count>=self.max_steps)&active
+        self.truncated|=timeout
+        self.complete|=timeout&~self.collision&~self.out_of_bounds
 
         self.reset_buf=self.terminated|self.truncated
         # update buffers
@@ -161,28 +156,28 @@ class QuadXHoverEnv(NominalActionMixin):
         self.completed_metrics['terminal_pos_err_m']+=pos_err
         self.completed_metrics['terminal_att_err_rad']+=att_err
 
-        self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
+        # 'complete' marks eval success (survived to the limit) -- it is NOT an
+        # MDP termination. Normal step-limit expiry must stay a timeout so
+        # FlashSAC bootstraps from it; only true terminations (crash /
+        # out-of-bounds) cut the bootstrap.
+        self.extras['time_outs']=self.truncated&~self.terminated
         self.extras['terminal_observations']=TensorDict(
             {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
-        if bool(done.any()):
+        # single host sync per agent step (done == reset_buf; the same bool
+        # gates both the episode extras and the reset path)
+        done_any=bool(done.any())
+        if done_any:
             self.extras['episode']={
                 'success_rate':(done&self.complete).to(torch.float64).sum()/n_done,
                 'terminal_pos_err_m':pos_err.sum()/n_done,
                 'terminal_att_err_rad':att_err.sum()/n_done}
-            if self._tracker is not None:
-                new=self._tracker.update(done,self.complete)
-                if new is not None:
-                    self._apply_difficulty(new)
-                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
-        # Guard the unconditional reset call (fixedwing-precedent): reset_idx on
-        # an empty mask is a no-op for every buffer but used to run warmup, which
-        # advanced the global scene 20 ballistic substeps every agent step
-        # (~4.3x effective gravity). plant.warmup now early-exits on empty masks;
-        # this guard additionally skips the whole reset path.
-        if bool(self.reset_buf.any()):self.reset_idx(self.reset_buf)
+        # reset_idx on an empty mask is a no-op for every buffer and plant.warmup
+        # early-exits on empty masks (see plant.warmup), so gating it with the
+        # already-synced done_any is purely a cost guard, not a correctness one.
+        if done_any:self.reset_idx(self.reset_buf)
         self._update_observation()
         return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
 

@@ -40,10 +40,9 @@ Episode End
     Success (truncation): all 4 waypoints captured.
     Truncation: 3600 policy steps (120 s).
 
-Difficulty / Curriculum
-    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
-    (bool) follow the project-wide contract of src/common/curriculum.py:
-    only the waypoint placement distribution is modulated; dynamics,
+Difficulty
+    Constructor kwarg `difficulty` (float in [0, 1]) modulates
+    only the waypoint placement distribution; dynamics,
     terminations and reward are untouched. d=0 -> d=1: minimum waypoint
     shell radius 50 m -> 20 m (max radius fixed at 65 m); d=1 is the
     published benchmark.

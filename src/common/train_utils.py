@@ -47,7 +47,7 @@ def build_cfg(*, lr_schedule='fixed',
     renormalization on the update path; BN-free for PPO -- BatchNorm is
     incompatible with the on-policy ratio) or 'mlp' (opt-out 2x128 tanh MLP,
     kept for architecture A/B arms). Trunk is the project-wide default since
-    the 2026-10-21 pendulum 3-way A/B: under the shared warmup-cosine
+    the 2026-10-21 3-way A/B: under the shared warmup-cosine
     schedule it beats the MLP by 66 return points (-153.1 vs -219.4) and
     nearly matches native FlashSAC (-144.4).
 
@@ -99,11 +99,11 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
                  resume=False, clean=True, out_dir=None, lr_decay_updates=None,
                  lr_cosine=False, learning_rate_end=1.5e-4,
                  freeze_obs_norm=False, lr_sigma_coupling=None, sigma_pin=None,
-                 algo='ppo', env_kwargs=None, **algo_overrides):
+                 algo='ppo', env_kwargs=None, bc_warmstart=None, **algo_overrides):
     """Train one task end-to-end and write checkpoint.pt / run.json / config.json.
 
     env_kwargs: extra keyword arguments forwarded to the env constructor
-    (e.g. rendezvous's opt-in range curriculum); None leaves every other
+    (e.g. rendezvous's static spawn difficulty); None leaves every other
     task entry's call signature unchanged.
 
     lr_decay_updates: optional exponential lr half-life in updates (opt-in;
@@ -117,6 +117,13 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     optimizer's param_groups are written directly, as in lr_decay_updates).
     learning_rate_end is the cosine floor (flash_sac_cfg's paper default
     1.5e-4; for flash_sac it simply forwards to flash_sac_cfg).
+    NOTE on granularity: the two are the same FUNCTION but different
+    discretizations -- flash_sac re-evaluates the schedule at every gradient
+    update, while rsl-rl only exposes chunked lr writes, so PPO re-evaluates
+    it once per `updates//100` learn-iteration chunk (the value at the chunk's
+    START; the first chunk gets the schedule's step-0 value instead of the raw
+    initial lr). Report A/Bs under this schedule as "same formula, chunked vs
+    per-update application".
 
     freeze_obs_norm (PPO only): pin both empirical obs normalizers in eval
     mode after the checkpoint load -- EmpiricalNormalization.update() no-ops
@@ -144,6 +151,18 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     (src/common/flash_sac.py, Kim et al. 2026). Both consume the identical
     batched env protocol, checkpoint naming and reporting pipeline so results
     stay directly comparable across algorithms.
+
+    bc_warmstart (PPO only): None disables; a dict enables the behavior-
+    cloning warm start (src/common/bc_warmstart.py). Keys with defaults:
+    'steps' (512 vectorized env steps of expert data, collected ON the
+    training env through extras['nominal_action'] -- the classical
+    baseline), 'epochs' (100 supervised epochs), 'batch_size' (8192),
+    'lr' (1e-3, a separate Adam over the actor's parameters), 'gamma'
+    (None -> the PPO config's gamma, used only for the critic's
+    returns-to-go targets) and 'fit_critic' (True). The env's episode
+    counters are zeroed and the env reset after collection so the PPO run's
+    own reporting stays clean. Skipped when `resume` actually loads a
+    checkpoint (the checkpoint would overwrite the warm start anyway).
 
     Extra keyword arguments are forwarded to the selected algorithm's config
     builder (build_cfg for PPO, flash_sac.flash_sac_cfg for FlashSAC) so a
@@ -189,8 +208,42 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         if ckpt.exists():
             runner.load(str(ckpt))
             print(f'resumed from {ckpt}', flush=True)
+            resumed = True
         else:
             print('no checkpoint found, training from scratch', flush=True)
+            resumed = False
+    else:
+        resumed = False
+    if bc_warmstart:
+        if algo != 'ppo':
+            raise ValueError('bc_warmstart is PPO-only')
+        if resumed:
+            print('bc_warmstart skipped: a checkpoint was resumed', flush=True)
+        else:
+            from .bc_warmstart import BC_DEFAULTS, collect_expert, fit_behavior_cloning
+            bc_cfg = {**BC_DEFAULTS, **bc_warmstart}
+            if bc_cfg['gamma'] is None:
+                bc_cfg['gamma'] = cfg['algorithm']['gamma']
+            print(f'[bc] collecting expert data: {bc_cfg["steps"]} steps x {num_envs} envs', flush=True)
+            t0 = time.perf_counter()
+            obs, acts, rews, dones = collect_expert(env, bc_cfg['steps'])
+            collect_wall = time.perf_counter() - t0
+            print(f'[bc] collected {obs.shape[0] * num_envs} pairs in '
+                  f'{time.perf_counter() - t0:.1f}s', flush=True)
+            bc_report = fit_behavior_cloning(runner, obs, acts, rews, dones,
+                                             epochs=bc_cfg['epochs'], batch_size=bc_cfg['batch_size'],
+                                             lr=bc_cfg['lr'], gamma=bc_cfg['gamma'],
+                                             fit_critic=bc_cfg['fit_critic'])
+            bc_report['collect_wall_seconds'] = round(collect_wall, 1)
+            bc_warmstart = {**bc_cfg, **bc_report}
+            # fresh MDP state for the PPO run; zero the counters the expert
+            # rollout inflated so run.json only reports PPO's own episodes
+            env.reset()
+            env.completed_episodes.zero_()
+            env.completed_successes.zero_()
+            env.completed_returns.zero_()
+            for v in (getattr(env, 'completed_metrics', None) or {}).values():
+                v.zero_()
     if freeze_obs_norm:
         if algo != 'ppo':
             raise ValueError('freeze_obs_norm is PPO-only')
@@ -215,13 +268,21 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     if lr_cosine and (lr_decay_updates or lr_sigma_coupling or sigma_pin):
         raise ValueError('lr_cosine is mutually exclusive with lr_decay_updates/lr_sigma_coupling/sigma_pin')
     start = time.perf_counter()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     if algo == 'ppo' and lr_cosine:
-        # warmup-cosine lr, byte-identical schedule to flash_sac's _set_lr
+        # warmup-cosine lr, same formula as flash_sac's _set_lr. Applied at the
+        # START of each chunk -- including BEFORE the first chunk, so no update
+        # ever runs at a lr the schedule never prescribes.
         from .flash_sac import _warmup_cosine_decay
         lr0 = cfg['algorithm']['learning_rate']
         warmup = max(1, int(1e-6 * updates))
         step = max(1, updates // 100)
         done = 0
+        lr = _warmup_cosine_decay(0, lr0, lr0, learning_rate_end, warmup, updates)
+        runner.alg.learning_rate = lr
+        for group in runner.alg.optimizer.param_groups:
+            group['lr'] = lr
         while done < updates:
             n = min(step, updates - done)
             runner.learn(n)
@@ -278,6 +339,8 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     report = {'task': env.cfg, 'device': str(env.device), 'updates': updates, 'algo': algo,
               'transitions': updates * steps_per_iter * num_envs,
               'train_wall_seconds': elapsed,
+              'train_throughput_steps_per_s': round(updates * steps_per_iter * num_envs / max(elapsed, 1e-9), 1),
+              'peak_vram_gib': round(torch.cuda.max_memory_allocated() / 2**30, 2) if 'cuda' in str(env.device) else None,
               'completed_episodes': env.completed_episodes.detach().cpu().tolist(),
               'completed_successes': env.completed_successes.detach().cpu().tolist(),
               'physics_step_calls': getattr(getattr(env, 'plant', None), 'physics_steps', None),
@@ -286,6 +349,11 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         eps = max(int(env.completed_episodes.detach().sum()), 1)
         report['completed_metrics'] = {k: float(v.detach().sum()) / eps for k, v in env.completed_metrics.items()}
     (out / 'run.json').write_text(json.dumps(report, indent=2))
+    cfg['env_kwargs'] = dict(env_kwargs) if env_kwargs else {}
+    if isinstance(bc_warmstart, dict):
+        cfg['bc_warmstart'] = bc_warmstart
+    # the env's resolved difficulty (eval.py freezes evaluation at this level)
+    cfg['difficulty'] = getattr(env, 'difficulty', None)
     (out / 'config.json').write_text(json.dumps(cfg, indent=2))
     print(json.dumps(report, indent=2), flush=True)
     env.close()

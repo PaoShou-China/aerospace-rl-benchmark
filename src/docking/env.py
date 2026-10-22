@@ -41,7 +41,6 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
-from ..common.curriculum import SuccessRateCurriculum
 from ..common.baselines import (NominalActionMixin,DockingCWHLQRBaseline,
                                 RendezvousTwoImpulseBaseline)
 
@@ -69,26 +68,19 @@ class _CWHBase(NominalActionMixin):
     # |p0| sampling range interpolates linearly from init_range_start (d=0)
     # to init_range_final (d=1; the benchmark table when unset) and |v0| from
     # init_vmax_start when the task defines one. Success criteria (goal, keep-
-    # out, horizon) are untouched. The legacy per-stage x1.5 ladder is
-    # superseded by the continuous ramp under the shared SuccessRateCurriculum
-    # (same endpoints, same window/threshold gates).
-    curriculum=False
+    # out, horizon) are untouched.
     init_range_start=None     # easy |p0| sampling range [m] (difficulty 0)
     init_range_final=None     # benchmark |p0| sampling range [m] (difficulty 1)
     init_vmax_start=None      # easy |v0| bound [m/s]; None leaves init_vmax fixed
     benchmark_difficulty=1.
     difficulty=None           # None = benchmark behavior (no cfg record)
-    curriculum_window=1024    # completed episodes per advance decision
-    curriculum_threshold=.6   # rolling success rate that advances the stage
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,curriculum=None,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
-        if curriculum is not None:self.curriculum=bool(curriculum)
         self.task_cfg={'vehicle':self.vehicle,'num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized',
-                       'curriculum':bool(self.curriculum),
                        'init_range':list(self.init_range),
                        'task_defaults':'SpaceGym benchmark (CVPR 2026 W AI4Space), Section 3'}
         # Resolve the concrete device (with index) so action-device checks
@@ -137,18 +129,13 @@ class _CWHBase(NominalActionMixin):
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        # difficulty/curriculum resolution; init_range_final falls back to the
-        # benchmark class table when the task doesn't pin one
+        # difficulty resolution; init_range_final falls back to the benchmark
+        # class table when the task doesn't pin one
         self.init_range_benchmark=tuple(self.init_range)
         self.init_vmax_benchmark=self.init_vmax
         if difficulty is not None:
             if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
             self.difficulty=float(difficulty)
-        self._tracker=None
-        if self.curriculum:
-            if self.difficulty is None:self.difficulty=0.
-            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
-            self.cfg['curriculum']=True
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
         self._init_nominal()
@@ -226,13 +213,21 @@ class _CWHBase(NominalActionMixin):
         violation=(self.fuel>=self.fuel0)|(dist>self.range_fail)
         if self.keep_out is not None:
             violation=violation|(dist<self.keep_out)
-        success=(dist<self.pos_goal)&(speed<self.vel_goal)
+        # Termination priority (frozen 2026-10-22): a constraint violation on
+        # the terminal step is a failure, never a success. This matters for
+        # rendezvous because the 5 m keep-out sphere lies INSIDE the 10 m goal
+        # ball -- a capture-speed penetration of the no-fly zone would
+        # otherwise satisfy (dist, speed) and be counted as a success while
+        # also flagging terminated; the violation now wins and the episode is
+        # a keep-out failure (no terminal bonus, no completed_successes).
+        success=(dist<self.pos_goal)&(speed<self.vel_goal)&~violation
         self.count+=1
         timeout=self.count>=self.max_steps
         reward=reward+self.terminal_bonus*success.to(torch.float64)
         if self.reward_mode=='progress':
             # one-time terminal cost replaces the dense-mode per-step keep-out
-            # penalty; successes (even inside the keep-out sphere) are exempt
+            # penalty; since success requires a violation-free terminal state,
+            # every violating trajectory (including keep-out penetration) pays it
             reward=reward-self.viol_penalty*(violation&~success).to(torch.float64)
         self.reward.copy_(torch.where(active,reward,self.reward))
         self.complete|=success&active
@@ -255,11 +250,6 @@ class _CWHBase(NominalActionMixin):
         if bool(done.any()):
             self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1),
                                     'init_range_hi':torch.tensor(self.init_range[1],device=self.device,dtype=torch.float64)}
-            if self._tracker is not None:
-                new=self._tracker.update(done,self.complete)
-                if new is not None:
-                    self._apply_difficulty(new)
-                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
@@ -350,10 +340,9 @@ class SpaceRendezvousEnv(_CWHBase):
     max_steps=1000
     init_range=(800.,1200.)          # benchmark range; eval always uses this
     init_range_final=(800.,1200.)
-    # Training curriculum: 150-300 m is the docking-scale regime where the
-    # terminal braking maneuver is reachable by exploration; the difficulty
-    # then ramps continuously (success-rate-gated) out to the 800-1200 m
-    # benchmark under the shared SuccessRateCurriculum.
+    # Difficulty-0 easy endpoints: 150-300 m is the docking-scale regime where
+    # the terminal braking maneuver is reachable by exploration; difficulty 1
+    # restores the 800-1200 m benchmark range.
     init_range_start=(150.,300.)
     init_vmax=1.
     pos_goal=10.

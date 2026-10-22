@@ -1,9 +1,14 @@
 """Evaluation of the classical (non-learned) baselines on the batched GPU envs.
 
-Usage: python baseline_eval.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous|pendulum
-Defaults mirror eval.py: 1024 envs, 2000 env-steps, seed 7, same env
-construction, same success accounting from the env's completed-episode
-counters.  Each baseline reads only the 'policy' observation group.
+Usage: python baseline_eval.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous
+Defaults mirror eval.py: 1024 envs, seed 7, same env construction (if
+results/<task>/config.json exists, its env_kwargs / difficulty are restored),
+same success accounting from the env's completed-episode counters.  Each
+baseline reads only the 'policy' observation group.
+
+Unbiased episode accounting: the loop runs until EVERY replica has completed
+at least one full episode (safety-capped by --max-steps), so no in-flight
+episode is dropped (fixed-wing episodes last up to 3600 steps).
 """
 import argparse
 import json
@@ -12,7 +17,7 @@ import time
 import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -26,31 +31,38 @@ from pyflyt_genesis.rocket import RocketLandingEnv
 from pyflyt_genesis.satellite import SatelliteAttitudeEnv
 from pyflyt_genesis.transfer import LowThrustTransferEnv
 from pyflyt_genesis.docking import SpaceDockingEnv, SpaceRendezvousEnv
-from pyflyt_genesis.pendulum import PendulumEnv
 
 from common.baselines import build_baseline
 
 ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
-        'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv, 'pendulum': PendulumEnv}
+        'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('vehicle', choices=list(ENVS))
     parser.add_argument('--num-envs', type=int, default=1024)
-    parser.add_argument('--steps', type=int, default=2000)
+    parser.add_argument('--max-steps', type=int, default=20000,
+                        help='safety cap on env steps while every replica finishes one episode')
     parser.add_argument('--backend', choices=['cpu', 'gpu'], default='gpu')
     parser.add_argument('--seed', type=int, default=7)
     parser.add_argument('--out', type=Path, default=None,
                         help='results directory (default results/<vehicle>)')
     args = parser.parse_args()
 
-    out = args.out or Path(__file__).resolve().parent / 'results' / args.vehicle
+    out = args.out or Path(__file__).resolve().parent.parent / 'results' / args.vehicle
     out.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(args.seed)
-    env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed)
+    # match eval.py's env construction when a training config is available
+    cfg_path = out / 'config.json'
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    env_kwargs = dict(cfg.get('env_kwargs') or {})
+    env_kwargs.pop('curriculum', None)
+    if cfg.get('difficulty') is not None:
+        env_kwargs['difficulty'] = cfg['difficulty']
+    env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed, **env_kwargs)
     controller = build_baseline(args.vehicle, env)
 
     ep0 = env.completed_episodes.detach().clone()
@@ -58,11 +70,16 @@ def main():
     ret0 = env.completed_returns.detach().clone()
     obs = env.get_observations()
     start = time.perf_counter()
+    target = args.num_envs  # one completed episode per replica -> no selection bias
+    steps = 0
     with torch.no_grad():
-        for _ in range(args.steps):
+        while steps < args.max_steps:
             actions = controller.actions(obs)
             obs, _, reset_buf, _ = env.step(actions)
             controller.reset_idx(reset_buf)
+            steps += 1
+            if float((env.completed_episodes - ep0).sum()) >= target:
+                break
     wall = time.perf_counter() - start
 
     def gpu_sum(t):
@@ -73,7 +90,7 @@ def main():
     rets = gpu_sum(env.completed_returns - ret0)
     report = {'task': args.vehicle, 'baseline': controller.name,
               'controller_info': 'classical, policy-observation-only',
-              'env_steps': args.steps, 'num_envs': args.num_envs,
+              'env_steps': steps, 'num_envs': args.num_envs, 'env_kwargs': env_kwargs,
               'episodes_finished': episodes, 'successes': successes,
               'success_rate': successes / max(episodes, 1.),
               'mean_episode_return': rets / max(episodes, 1.),

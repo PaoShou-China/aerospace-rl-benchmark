@@ -22,7 +22,7 @@ import time
 import types
 from pathlib import Path
 
-_src = Path(__file__).parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -184,7 +184,7 @@ def test_hover():
 
 def test_varied_initial():
     print('T2: varied initial conditions')
-    # (a) difficulty-1 spawn noise through the env's own curriculum knob
+    # (a) difficulty-1 spawn noise through the env's static difficulty knob
     env = QuadXHoverEnv(num_envs=1024, backend=BACKEND, seed=7, difficulty=1.0)
     ctrl = QuadXSE3Baseline(env)
     ep0, sc0 = gpu_sum(env.completed_episodes), gpu_sum(env.completed_successes)

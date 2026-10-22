@@ -8,7 +8,6 @@ env at construction time, mirroring the model knowledge a classical GNC
 designer would have; no internal state buffer is read.
 
 Methods
-    pendulum    energy-shaping swing-up + local LQR (upright regulator)
     quadx       SE(3) geometric control (Lee et al. 2010): force/torque wrench
                 allocated onto the four rotors, mapped to rate+collective cmds
     fixedwing   L1 lateral guidance + TECS total-energy control
@@ -31,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from scipy.linalg import logm, solve_continuous_are, solve_discrete_are
+from scipy.linalg import logm, solve_discrete_are
 
 
 # --------------------------------------------------------------------------- #
@@ -167,38 +166,6 @@ class Baseline:
 
     def reset_idx(self, mask):
         """Mirror the env reset mask (only stateful controllers override)."""
-
-
-# --------------------------------------------------------------------------- #
-# pendulum: energy shaping + local LQR
-# --------------------------------------------------------------------------- #
-class PendulumBaseline(Baseline):
-    name = 'energy_shaping_lqr'
-
-    def __init__(self, env):
-        super().__init__(env)
-        self.g, self.m, self.l, self.dt = env.g, env.m, env.l, env.dt
-        self.max_torque = env.max_torque
-        # local LQR on [theta, thetadot] around the upright equilibrium
-        A = np.array([[0., 1.], [3 * self.g / (2 * self.l), 0.]])
-        B = np.array([[0.], [3. / (self.m * self.l ** 2)]])
-        P = solve_continuous_are(A, B, np.diag([20., 1.]), np.array([[.5]]))
-        K = np.linalg.solve(np.array([[.5]]), B.T @ P).reshape(2)
-        self.K = torch.as_tensor(K, device=self.device, dtype=torch.float64)
-        self.E_ref = 1.5 * self.m * self.g * self.l
-        self.k_energy = .5
-
-    def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
-        cos, sin, w = o[:, 0], o[:, 1], o[:, 2]
-        th = torch.atan2(sin, cos)
-        E = .5 * self.m * self.l ** 2 * w ** 2 + 1.5 * self.m * self.g * self.l * cos
-        u_energy = self.k_energy * w * (self.E_ref - E)
-        u_lqr = -(self.K[0] * th + self.K[1] * w)
-        gate = (torch.sigmoid((.65 - th.abs()) / .05)
-                * torch.sigmoid((2.5 - w.abs()) / .2))
-        u = gate * u_lqr + (1 - gate) * u_energy
-        return (u / self.max_torque).clamp(-1., 1.).unsqueeze(-1).to(torch.float32)
 
 
 # --------------------------------------------------------------------------- #
@@ -672,7 +639,11 @@ class RocketPDGBaseline(Baseline):
     FIN_YAW_K = 0.1587               # 4-fin differential yaw torque [N m/unit/V^2]
     AERO_K = 3.6                     # fin restoring spring k_aero [N m/rad/V^2]
     # guidance / control gains
-    V_TOUCH = 0.45                   # pulse band centre / manifold terminal speed
+    V_TOUCH = 0.35                   # pulse band centre / manifold terminal speed
+                                     # (lowered from 0.45: softer touchdown leaves
+                                     # less rocking energy; with S_ON/S_OFF
+                                     # lowered to 0.40/0.30 the 25 ms band drift
+                                     # still bounds the touch at <= ~0.55 m/s)
     TGO_FLOOR = 0.5                  # ZEM/ZEV singularity guard [s]
     S_GATE = 25.                     # airspeed below which the suicide-burn
                                      # endgame tracker replaces the ZEM law
@@ -704,13 +675,13 @@ class RocketPDGBaseline(Baseline):
                                      # (set above the burn-out speed so the
                                      # servo catches the vehicle right at
                                      # suicide-burn end; no coast dead zone)
-    S_OFF = 0.40                     # pulse hysteresis: cut when descending
+    S_OFF = 0.30                     # pulse hysteresis: cut when descending
                                      # slower than S_OFF -- while lit the net
                                      # accel is +a_min (min thrust > weight),
                                      # so the engine can only brake, never
                                      # hold a slow descent: pulsing is the
                                      # ONLY way to fly the last metre
-    S_ON = 0.50                      # ... and relight when faster than S_ON
+    S_ON = 0.40                      # ... and relight when faster than S_ON
     H_PULSE = 2.0                    # pulse servo altitude ceiling [m]
     A_LAT_PULSE = 1.5                # pulse-phase lateral accel cap [m/s^2]
                                      # (~1.6 deg tilt): nulls the <=0.5 m/s
@@ -724,7 +695,17 @@ class RocketPDGBaseline(Baseline):
                                      # Genesis scales the fueltank inertia with
                                      # fuel mass, so the URDF sum 2243 is ~4x
                                      # the true pitch inertia; free-osc probe)
-    KD_T = 4300.                     # tilt rate damping [N m s/rad] (~zeta .8)
+    KD_T = 6000.                     # tilt rate damping [N m s/rad] (~zeta .8;
+                                     # raised from 4300 in the 2026-10-22 tuning
+                                     # sweep: stronger terminal tilt-rate damping
+                                     # improves the arrival state (touch v/spin/
+                                     # tilt) far more than any pulse-band change
+                                     # -- settle failures are rocking/topple
+                                     # deaths, and KD_T is the only actuator
+                                     # path that damps rocking while lit.  8000
+                                     # is marginally better alone (83.9%) but
+                                     # degrades with the soft band; 10000
+                                     # overshoots (79.2%))
     KD_Z = 3.0                       # yaw spin damping [N m s/rad]
     REST_Z = 2.575                   # pad top 0.15 + leg bottom offset 2.425 [m]
 
@@ -1481,7 +1462,6 @@ class RendezvousTwoImpulseBaseline(Baseline):
 
 
 BUILDERS = {
-    'pendulum': PendulumBaseline,
     'quadx': QuadXSE3Baseline,
     'fixedwing': FixedwingAutopilotBaseline,
     'rocket': RocketPDGBaseline,
@@ -1520,9 +1500,6 @@ class NominalActionMixin:
 
     Per-task summary (source | input | output dim | action unit):
 
-        pendulum   PendulumBaseline      energy shaping + local LQR
-                   policy obs (cos, sin, thetadot)      -> (N, 1) [-1, 1]
-                   (1 = max_torque = 2 N m)
         quadx      QuadXSE3Baseline      SE(3) geometric control (Lee 2010)
                    policy obs (wb, quat, vb, p)         -> (N, 4) [-1, 1]
                    (3 rate cmds in units of pi rad/s + collective)

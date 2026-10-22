@@ -594,9 +594,17 @@ class FlashSAC:
 
     # ------------------------------- persistence ---------------------------------
     def state_dict(self):
+        # optimizer states are persisted so a resumed run continues the
+        # Adam moments instead of restarting them from zero (warm restart).
+        # NOTE: the replay buffer and RNG streams are NOT persisted -- loading
+        # a checkpoint is a parameter/optimizer warm start, not a bit-exact
+        # mid-run resume; report it as such.
         return {'actor': self.actor.state_dict(), 'critic': self.critic.state_dict(),
                 'target_critic': self.target_critic.state_dict(),
                 'log_temperature': self.log_temperature.detach().cpu(),
+                'actor_opt': self.actor_opt.state_dict(),
+                'critic_opt': self.critic_opt.state_dict(),
+                'temp_opt': self._temp_opt.state_dict(),
                 'normalizer': None if self.normalizer is None else
                 {'g_r': self.normalizer.g_r, 'g_r_max': self.normalizer.g_r_max,
                  'g_rms_mean': self.normalizer.g_rms.mean, 'g_rms_var': self.normalizer.g_rms.var,
@@ -609,6 +617,10 @@ class FlashSAC:
         self.target_critic.load_state_dict(sd['target_critic'])
         with torch.no_grad():
             self.log_temperature.copy_(sd['log_temperature'].to(self.device))
+        if 'actor_opt' in sd:  # optimizer moments (absent in pre-2026-10-22 checkpoints)
+            self.actor_opt.load_state_dict(sd['actor_opt'])
+            self.critic_opt.load_state_dict(sd['critic_opt'])
+            self._temp_opt.load_state_dict(sd['temp_opt'])
         if self.normalizer is not None and sd.get('normalizer'):
             n = self.normalizer
             n.g_r = sd['normalizer']['g_r'].to(self.device)
@@ -664,7 +676,7 @@ class FlashSACRunner:
         cur_length = torch.zeros(n, device=device)
         rew_hist, len_hist = [], []
         recent_rew, recent_len = [], []  # for the console line (TB consumes rew_hist/len_hist)
-        update_count = 0
+        update_count = agent._update_step  # continue the lr schedule across resumes
         for it in range(self._it, self._it + num_iterations):
             lr = self._set_lr(update_count, total_updates)
             with torch.no_grad():
@@ -719,13 +731,18 @@ class FlashSACRunner:
                       f'episodes {ce} | successes {cs} | recent return {recent:.2f}', flush=True)
                 recent_rew, recent_len = [], []
             if (it + 1) % self.save_interval == 0 or it + 1 == self._it + num_iterations:
-                self.save(str(self.log_dir / f'model_{it + 1}.pt'))
+                # record the ACTUAL completed iteration: _it is only advanced
+                # after the loop, so saving without this arg would stamp every
+                # mid-training checkpoint with the pre-learn iteration count
+                self.save(str(self.log_dir / f'model_{it + 1}.pt'), iteration=it + 1)
         self._it += num_iterations
 
-    def save(self, path):
-        payload = {'agent': self.agent.state_dict(), 'cfg': self.cfg, 'iteration': self._it}
+    def save(self, path, iteration=None):
+        payload = {'agent': self.agent.state_dict(), 'cfg': self.cfg,
+                   'iteration': self._it if iteration is None else iteration}
         torch.save(payload, path)
-        print(f'[FlashSAC] saved checkpoint {path}', flush=True)
+        print(f'[FlashSAC] saved checkpoint {path} (iteration {payload["iteration"]}, '
+              f'warm start: replay buffer / RNG not persisted)', flush=True)
 
     def load(self, path):
         payload = torch.load(path, map_location=self.device)

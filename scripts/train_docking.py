@@ -9,16 +9,15 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_docking.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in src/common/train_utils.py.
-CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
-(src/common/curriculum.py): None = benchmark, float = static difficulty
-in [0, 1], True = success-rate-gated auto-ramp.
+DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
+float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
 """
 import sys
 from pathlib import Path
 
 import torch.nn as nn
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))  # exposes `common`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))  # exposes `common`
 
 from common.train_utils import run_training
 from pyflyt_genesis.docking import SpaceDockingEnv
@@ -81,20 +80,21 @@ ENTROPY_COEF = 0.005
 LEARNING_RATE = 3e-4
 GAMMA = 0.999
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
-# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
-# None = off (published benchmark, bit-for-bit); float in [0,1] = static
-# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
-# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
-CURRICULUM = None
-ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
-              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
+# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
+# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
+DIFFICULTY = None
+ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
 
 # Architecture A/B (user decision 2026-10-22: docking keeps BOTH arms). CAUTION
 # (measured 2026-10-22): the archived 94% MLP reference predates the 1024-env
 # fair-comparison change -- it ran at num_envs=64 (possibly lr 3e-4); every
 # 1024-env arm so far (trunk AND mlp) plateaus at ~2-3%, so the dominant
 # variable is the config vintage (batch size / lr), NOT the architecture.
-ARMS = (('flash_residual', None), ('mlp', str(Path(__file__).resolve().parent / 'results' / 'docking_mlp')))
+ARMS = (('flash_residual', None), ('mlp', str(Path(__file__).resolve().parent.parent / 'results' / 'docking_mlp')))
+
+# BC warm start (src/common/bc_warmstart.py): pretrain the actor/critic on the
+# classical nominal controller (extras['nominal_action']) before PPO. None = off.
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 if __name__ == '__main__':
     for arch, out_dir in ARMS:
@@ -103,4 +103,4 @@ if __name__ == '__main__':
                      out_dir=out_dir, arch=arch,
                      lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
                      entropy_coef=ENTROPY_COEF, gamma=GAMMA,
-                     env_kwargs=ENV_KWARGS)
+                     env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)

@@ -39,11 +39,12 @@ The env's progress-potential brake_ref (0.1 m/s^2, soft dead-zone) and the
 20-point terminal bonus/violation spread are set on SpaceRendezvousEnv
 itself; see src/docking/env.py.
 
-Curriculum (2026-10-21): the 800-1200 m spawn makes the terminal "d<10 m and
+Difficulty (2026-10-21): the 800-1200 m spawn makes the terminal "d<10 m and
 v<0.5 m/s" event too rare to bootstrap (0.8% success with the shared wide
-net) while the same CWH machinery reaches ~94% on docking at 50-100 m. The
-env therefore starts at 150-300 m and widens x1.5 per stage once the last
-1024 completed episodes clear 60%, reaching the benchmark range in ~5 stages.
+net) while the same CWH machinery reaches ~94% on docking at 50-100 m. A
+success-rate-gated curriculum (150-300 m start, auto-widening to benchmark)
+was tried and later removed; training now runs directly at the benchmark
+spawn, with the static `difficulty` kwarg kept for controlled experiments.
 The task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
 eval.py (no env kwargs) always evaluates the full 800-1200 m benchmark.
 
@@ -53,7 +54,7 @@ Narrow net: 64x64 was the only arm that learned this task (22% success vs
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))  # exposes `common`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))  # exposes `common`
 
 from common.train_utils import run_training
 from pyflyt_genesis.docking import SpaceRendezvousEnv
@@ -75,16 +76,17 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py
 PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=.999, num_mini_batches=1,
                      lr_schedule='fixed', learning_rate=3e-4, entropy_coef=.003,
                      trunk_hidden=64, critic_trunk_hidden=64)
-# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
-# None = off (published benchmark, bit-for-bit); float in [0,1] = static
-# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
-# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
-# True is this task's proven default (easy 150-300 m start bootstraps braking).
-CURRICULUM = True
-ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
-              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
+# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
+# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
+DIFFICULTY = None
+ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
+
+# BC warm start (src/common/bc_warmstart.py): pretrain the actor/critic on the
+# classical nominal controller (extras['nominal_action']) before PPO. None = off.
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 if __name__ == '__main__':
     run_training(TASK, SpaceRendezvousEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, **PPO_OVERRIDES)
+                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART,
+                 **PPO_OVERRIDES)

@@ -38,10 +38,9 @@ Episode End
     Termination: ground contact, or ||p|| > 3 m.
     Truncation: 400 policy steps (10 s).
 
-Difficulty / Curriculum
-    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
-    (bool) follow the project-wide contract of src/common/curriculum.py:
-    only the spawn distribution is modulated; terminations and reward are
+Difficulty
+    Constructor kwarg `difficulty` (float in [0, 1]) modulates only the
+    spawn distribution; terminations and reward are
     untouched. d=0 (the deterministic-spawn benchmark, this task's easiest
     variant) -> d=1: position xy ±0.5 m / z ±0.25 m, velocity ±0.5 m/s,
     attitude ±0.35 rad. At d=0 the RNG is left untouched so the default

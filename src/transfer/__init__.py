@@ -41,10 +41,9 @@ Episode End
     any done, mirroring the reference semantics, so completed_successes
     counts episodes rather than mission achievements.
 
-Difficulty / Curriculum
-    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
-    (bool) follow the project-wide contract of src/common/curriculum.py:
-    only the initial orbit is modulated; dynamics, reward and the terminal
+Difficulty
+    Constructor kwarg `difficulty` (float in [0, 1]) modulates
+    only the initial orbit; dynamics, reward and the terminal
     score are untouched. d=0 -> d=1: initial eccentricity e0 0.02 -> 0.1
     (ra_ref/rp_ref/vel_ref recomputed accordingly); d=1 is the published
     benchmark.

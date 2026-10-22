@@ -8,7 +8,7 @@ This is the small-config sweep entry (default 64 envs, 32-step rollouts,
 64x64 MLP, adaptive-KL schedule). For experiment runs use the self-contained
 per-task entries `train_<task>.py` instead -- they share
 src/common/train_utils.py, ship the project-standard 1024-env configuration
-and expose the CURRICULUM constant; this file passes no env kwargs (always
+and expose the DIFFICULTY constant; this file passes no env kwargs (always
 benchmark difficulty).
 
 Usage: python train.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous [--num-envs 64] [--updates 1000]
@@ -24,7 +24,7 @@ from pathlib import Path
 
 # src/ is the pyflyt_genesis package root: env subpackages keep their relative
 # imports and the frozen original_pyflyt sources keep their absolute ones.
-_src = Path(__file__).resolve().parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -58,7 +58,7 @@ def main():
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
-    out = args.out or Path(__file__).resolve().parent / 'results' / args.vehicle
+    out = args.out or Path(__file__).resolve().parent.parent / 'results' / args.vehicle
     out.mkdir(parents=True, exist_ok=True)
 
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed)

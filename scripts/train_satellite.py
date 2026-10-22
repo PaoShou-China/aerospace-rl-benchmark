@@ -10,30 +10,44 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_satellite.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in src/common/train_utils.py.
-CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
-(src/common/curriculum.py): None = benchmark, float = static difficulty
-in [0, 1], True = success-rate-gated auto-ramp.
+DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
+float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
 """
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))  # exposes `common`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))  # exposes `common`
 
 from common.train_utils import run_training
 from pyflyt_genesis.satellite import SatelliteAttitudeEnv
 
 TASK = 'satellite'
 NUM_ENVS = 1024
-UPDATES = 600            # from-scratch RL budget (warm-start refinement used 150)
+UPDATES = 1000           # fair-comparison budget (matches the other 6 task entries)
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # pure RL: random init, no BC/DAgger warm start
-CLEAN = True
-OUT_DIR = str(Path(__file__).resolve().parent / 'results' / 'satellite_rl')  # keep the archived BC+DAgger runs in results/satellite
+RESUME = False           # pure-RL from scratch (warm-start protocol superseded)
+CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
-# lr pinned to fixed (2026-10-20 tuning history): the KL-adaptive schedule
-# is proven broken on this task -- all prior runs clamp to the 1e-5 floor
-# within a few updates, so check Loss/learning_rate first on any flat run.
+# 2026-10-22 warm-start refinement (run-9): the archived BC+DAgger checkpoint
+# (results/satellite, seed-7 1024-env run) re-evaluates at 94.8% deterministic
+# on the benchmark (results/satellite/eval.json) -- far above every pure-RL
+# from-scratch attempt (17.4% benchmark; curriculum run 5.5%, stalled at d=0.5,
+# archived as results/satellite_rl_benchmark_20261022). Refine it with the
+# gate-proven run-8 recipe: sigma pinned 0.1, lr = 1.5e-4 * sigma (constant
+# mean-update drift K), obs normalizers frozen (the warm start fitted them),
+# 150 updates at benchmark difficulty.
+LEARNING_RATE = 3e-4
+INIT_STD = 1.0
+# Pure-RL entry (arXiv:2505.00165 alignment): gamma 0.999 because 1200-step
+# episodes make 0.99 blind to the settle bonus; nsp 150 matches the paper's
+# 150-step rollout; 5 mini-batches mirror its ~32-sample minibatches.
+# The fixed schedule replaces SB3's KL-adaptive schedule (adaptive is proven
+# to clamp to 1e-5 on this task). lr/sigma coupling and obs-norm freezing are
+# warm-start-specific and removed.
+PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=150, num_mini_batches=5,
+                     num_learning_epochs=40, entropy_coef=0.0, init_std=INIT_STD,
+                     clip_param=0.2)
 # 2026-10-20 ROOT-CAUSE FIX: all 7 prior runs failed because the telescoped
 # shaping sign was INVERTED (negative potential with Phi_prev - Phi subtraction):
 # approaching the target and braking were penalized, so PPO plateaued at
@@ -91,19 +105,6 @@ LR_SCHEDULE = 'fixed'
 #   N*m*s stored momentum (unphysical for a quiescent spacecraft); a
 #   momentum-neutral home theta0 = (pi,0,pi,0) (Sum r_i = 0 exactly) makes
 #   every target solvable. User decision pending.
-# Web-aligned pure-RL entry (2026-10-21): no BC/DAgger warm start. Values follow
-# arXiv:2505.00165 (lr 3e-4, 40 epochs, gamma 0.99, batch 150, minibatch 32,
-# clip 0.2). Adaptations: gamma stays 0.999 because 1200-step episodes make
-# 0.99 blind to the settle bonus (see history above); nsp 150 matches the
-# paper's 150-step rollout; 5 mini-batches mirror its ~32-sample minibatches.
-# The fixed schedule replaces SB3's KL-adaptive schedule (adaptive is proven
-# to clamp to 1e-5 on this task). lr/sigma coupling and obs-norm freezing are
-# warm-start-specific and removed.
-LEARNING_RATE = 3e-4
-INIT_STD = 1.0
-PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=150, num_mini_batches=5,
-                     num_learning_epochs=40, entropy_coef=0.0, init_std=INIT_STD,
-                     clip_param=0.2)
 # HISTORICAL: tuning log for the BC+DAgger warm-start runs 1-8 (superseded by
 # the pure-RL block above; kept for the reward/physics findings below).
 # - num_steps_per_env 250 / gamma 0.999 / num_mini_batches 1 / entropy 0.003 /
@@ -160,16 +161,18 @@ PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=150, num_mini_batches=5,
 # - gamma 0.999 (default 0.99): 1200-step episodes; at gamma=0.99 the settle-
 #   bonus value of capturing is discounted to ~5% by the slew phase
 #   (gamma^300), leaving no gradient toward capture.
-# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
-# None = off (published benchmark, bit-for-bit); float in [0,1] = static
-# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
-# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
-CURRICULUM = None
-ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
-              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
+# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
+# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
+DIFFICULTY = None
+ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
+
+# BC warm start (src/common/bc_warmstart.py): pretrain the actor/critic on the
+# classical nominal controller (extras['nominal_action']) before PPO. None = off.
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 if __name__ == '__main__':
     run_training(TASK, SatelliteAttitudeEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 out_dir=OUT_DIR, lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 env_kwargs=ENV_KWARGS, **PPO_OVERRIDES)
+                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
+                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART,
+                 **PPO_OVERRIDES)

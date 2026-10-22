@@ -8,16 +8,15 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_rocket.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in src/common/train_utils.py.
-CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
-(src/common/curriculum.py): None = benchmark, float = static difficulty
-in [0, 1], True = success-rate-gated auto-ramp.
+DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
+float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
 """
 import sys
 from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))  # exposes `common`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))  # exposes `common`
 
 from common.train_utils import run_training
 from pyflyt_genesis.rocket import RocketLandingEnv
@@ -75,13 +74,18 @@ RESUME = False           # upstream-aligned task rewrite (2026-10-20): old
                          # so training restarts from scratch
 CLEAN = True             # wipe results/rocket before this fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (src/common/flash_sac.py)
-# Curriculum difficulty (project-wide feature, see src/common/curriculum.py):
-# None = off (published benchmark, bit-for-bit); float in [0,1] = static
-# difficulty (0 easiest, 1 hardest = benchmark); True = auto-ramp difficulty
-# 0 -> 1, advancing +0.1 whenever a 1024-episode window closes at >= 60% success.
-CURRICULUM = None
-ENV_KWARGS = ({'curriculum': True} if CURRICULUM is True
-              else {} if CURRICULUM is None else {'difficulty': CURRICULUM})
+# Static difficulty (None = published benchmark, bit-for-bit; float in [0, 1]
+# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
+DIFFICULTY = None
+# reward (2026-10-22): the redesigned shaping (impact-speed potential, off-axis
+# cost, first-touch bonus, success +100) is now the env's ONLY implementation --
+# the verbatim-upstream arm was deleted from src/rocket/env.py after the
+# 1000-update run that finished today with success 0.000 (vs classical baseline
+# 0.668) converged to a reward-farming local optimum on it: hover on the pad
+# axis farming the absolute holding term (+0.3/(||p_xy||+0.1) -> +1810 of the
+# +1471 mean episode return), burn the 5% fuel in ~305 steps, then hit the pad
+# at ~40 m/s (fatal, touch_speed 41.7, success_rate 0 across all 1000 updates).
+ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
 
 
 class _JsonStd(list):
@@ -113,6 +117,10 @@ INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 #     need sigma~0.2 to discover the suicide-burn timing. 0.05 on the
 #     disturbance dims cuts the noise-induced tumble ~16x (scales ~sigma^2).
 
+# BC warm start (src/common/bc_warmstart.py): pretrain the actor/critic on the
+# classical nominal controller (extras['nominal_action']) before PPO. None = off.
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+
 if __name__ == '__main__':
     # num_steps_per_env=64 (documented deviation from the shared 32 default,
     # user-sanctioned fallback knob, 2026-10-20): at 32 the batch holds only
@@ -134,4 +142,4 @@ if __name__ == '__main__':
                  gamma=0.995, lam=0.97, entropy_coef=0.007,
                  num_learning_epochs=10,
                  clip_param=0.2, value_loss_coef=1.0, desired_kl=0.01,
-                 env_kwargs=ENV_KWARGS)
+                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)

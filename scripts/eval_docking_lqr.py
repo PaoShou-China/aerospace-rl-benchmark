@@ -30,7 +30,7 @@ import time
 import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -48,7 +48,7 @@ SEEDS_MAIN = 7
 DIFFICULTIES = (0., 0.5, 1.)
 SEEDS_BENCH = (7, 13, 21)  # seed repeat at the benchmark difficulty
 BACKEND = 'gpu'
-OUT = Path(__file__).resolve().parent / 'results' / 'docking' / 'lqr_report.json'
+OUT = Path(__file__).resolve().parent.parent / 'results' / 'docking' / 'lqr_report.json'
 
 # arms on the natural distribution: (label, controller kwargs, difficulty, seed)
 DIST_ARMS = (

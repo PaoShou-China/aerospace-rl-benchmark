@@ -25,7 +25,7 @@ import sys
 import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -38,7 +38,12 @@ from common.baselines import RocketPDGBaseline
 from common.dynamics import quat_from_euler
 
 NUM_ENVS = 1024
-STEPS = 700                 # ~17.5 s of simulated flight per replica
+STEPS = 1250                # > the 1200-step time limit: since the 2026-10-22
+                            # env change a landed success does NOT truncate (the
+                            # episode runs to the time limit), so a 700-step
+                            # window never sees a reset on a settled rocket and
+                            # would report 0 successes; 1250 lets every
+                            # surviving episode reach its time-limit reset
 SEED = 7
 BACKEND = 'gpu'
 T_MAX = RocketPDGBaseline.T_MAX
@@ -210,7 +215,7 @@ def main():
         rep = run_scenario(name, ic)
         reports.append(rep)
         print(json.dumps(rep, indent=2), flush=True)
-    out = Path(__file__).resolve().parent / 'results' / 'rocket' / 'pdg_test_report.json'
+    out = Path(__file__).resolve().parent.parent / 'results' / 'rocket' / 'pdg_test_report.json'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(reports, indent=2))
     print(f'\nreport written to {out}')

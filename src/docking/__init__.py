@@ -61,10 +61,9 @@ Episode End
     sphere violation or range > 2000 m.
     Truncation: 500 steps (docking) / 1000 steps (rendezvous).
 
-Difficulty / Curriculum
-    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
-    (bool) follow the project-wide contract of src/common/curriculum.py:
-    only the reset distribution is modulated; dynamics, success criteria
+Difficulty
+    Constructor kwarg `difficulty` (float in [0, 1]) modulates
+    only the reset distribution; dynamics, success criteria
     and reward are untouched. d=0 -> d=1: docking spawn range 15-30 m,
     |v0| <= 0.1 m/s -> 50-100 m, |v0| <= 0.5 m/s; rendezvous spawn range
     150-300 m -> 800-1200 m (|v0| bound unchanged); d=1 is the published

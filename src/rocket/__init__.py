@@ -32,27 +32,25 @@ Observation Space (30,)
     gimbal angles (2), landing-pad contact flag (1)].
 
 Reward
-    Upstream dense shaping, per 120 Hz control step:
-    r = -0.3                                    stay-airborne cost
-        + 0.3 / (||p_xy|| + 0.1)                over-pad holding
+    Dense shaping, per 120 Hz control step (2026-10-22: the 'v2' redesign is
+    the only arm; the verbatim-upstream shaping was deleted after a full
+    1000-update run converged to a farming local optimum on its farmable
+    holding term -- rationale in src/rocket/env.py):
+    r = -3.0                                    stay-airborne cost
+        + 10 * (Phi_prev - Phi)                 impact-speed potential,
+            Phi = sqrt(vz^2 + 2*9.81*z)         free fall conserves Phi
         + 10 * (||p_xy_prev|| - ||p_xy||)       lateral progress
+        - 0.1 * ||p_xy||                        off-axis centring pressure
         + 0.2 * (z_prev - z)                    descent progress
-        + 4 * (vz - vz_prev + 1) / exp(z)       deceleration near the ground
-            * (1 if vz < 0 else -1)             (up-drift penalized)
-        - |omega_yaw| - ||(roll, pitch)||
-    Pad contact pays (+5 - 0.3 |vz|) on every contact step; a landed success
-    adds +3.
-
-    Two arms behind the env's `reward_version` argument: 'upstream' (default,
-    the reward above, verbatim) and 'v2' (2026-10-21 redesign -- impact-speed
-    potential Phi=sqrt(vz^2+2*9.81*z) replaces the exp(z) deceleration term,
-    an off-axis cost replaces the farmable holding term, first-touch quality
-    bonus and success +100 replace the per-contact-step +5 and the +3; full
-    rationale in src/rocket/env.py). All dense components are logged as
-    Episode/rew_* scalars in both arms.
+        - |omega_yaw| - ||(roll, pitch)||       attitude cost
+    First pad touch pays 50 * max(0, 1 - touch_speed); while SETTLED on the
+    pad after a landed success the env pays +10 per inner step (a success no
+    longer truncates -- the episode runs to the 1200-step time limit, so
+    landing softly early maximizes the settled stream).
 
 Episode End
-    Success (truncation): pad contact with |v| < 0.02 m/s, |omega| <
+    Success (NO truncation since 2026-10-22): pad contact with |v| < 0.02
+    m/s, |omega| <
     0.02 rad/s, tilt < 0.1 rad -- judged on the previous control-step speed,
     and the episode CONTINUES on intermediate-speed contact, so the rocket
     may settle on the pad (upstream touch semantics).
@@ -61,10 +59,9 @@ Episode End
     200 m / z > 500 m.
     Truncation: 1200 policy steps (30 s).
 
-Difficulty / Curriculum
-    Constructor kwargs `difficulty` (float in [0, 1]) and `curriculum`
-    (bool) follow the project-wide contract of src/common/curriculum.py:
-    only the initial-condition distribution is modulated; the pad, success
+Difficulty
+    Constructor kwarg `difficulty` (float in [0, 1]) modulates
+    only the initial-condition distribution; the pad, success
     and fatal criteria and reward are untouched. d=0 -> d=1: horizontal
     offset xy ±2 m -> ±20 m, altitude 440-450 m -> 400-450 m (span
     shrinking with difficulty), initial euler ±0.05 -> ±0.3 rad; d=1 is

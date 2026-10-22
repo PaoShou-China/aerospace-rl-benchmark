@@ -23,7 +23,7 @@ import sys
 import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -42,7 +42,7 @@ NUM_ENVS = 1024
 STAT_STEPS = 3700                    # > 3600-step episode horizon
 SEGMENT_REPEATS = 3
 SEG_STEPS = 3600
-OUT_PATH = Path(__file__).resolve().parent / 'results' / 'fixedwing' / 'autopilot_report.json'
+OUT_PATH = Path(__file__).resolve().parent.parent / 'results' / 'fixedwing' / 'autopilot_report.json'
 
 # Harness-injected routes (waypoints the env would never sample itself; used
 # only to exercise straight and turning flight, success criteria unchanged).

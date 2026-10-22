@@ -30,7 +30,7 @@ import sys
 import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent / 'src'
+_src = Path(__file__).resolve().parent.parent / 'src'
 _pkg = types.ModuleType('pyflyt_genesis')
 _pkg.__path__ = [str(_src)]
 sys.modules['pyflyt_genesis'] = _pkg
@@ -51,7 +51,7 @@ GRID_STEPS = 1005             # first episode ends by the 1000-step timeout
 GRID_DISTANCES = (150., 300., 600., 800., 1200., 1600., 1900.)
 GRID_SPEEDS = (0., .25, .5, 1., 2.)            # 2.0 beyond the 1 m/s spec
 STRESS = (1900., 12.)                          # exercises the infeasibility path
-OUT = Path('results/rendezvous/baseline_sweep.json')
+OUT = Path(__file__).resolve().parent.parent / 'results' / 'rendezvous' / 'baseline_sweep.json'
 
 
 def _unit_dirs(n, gen, device):

@@ -15,13 +15,22 @@ potential (so ending the episode early is never cheaper than flying). An
 explicit +15 per waypoint reached keeps a crisp sparse event; an explicit -10
 sharpens crash/OOB. Terminations, success semantics, observations and spawn
 distribution are unchanged from the original task.
+
+Action channels (audited 2026-10-22 against the upstream PyFlyt mode-0
+setpoint mapping, original_pyflyt/core/drones/fixedwing.py
+L141-144 `surface_assist_ids=[0,0,1,1,2] sign=[1,-1,1,-1,0]`): a0 ->
+differential ailerons, a1 -> horizontal tail + vertical tail (opposite
+sign), a2 -> DEAD (upstream maps it to the main wing whose deflection
+limit is 0; the plant multiplies it by 0), a3 -> throttle. Effective
+action dimensionality is therefore 3, not 4; the classical autopilot
+drives a2 with exactly 0 and BC/PPO learn a constant there. This is
+upstream design, not a porting bug -- do not "fix" the mapping.
 """
 import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorPlant
 from ..common.dynamics import euler, inverse_rotate
-from ..common.curriculum import SuccessRateCurriculum
 from ..common.baselines import NominalActionMixin,FixedwingAutopilotBaseline
 
 REACH_BONUS = 15.0
@@ -51,14 +60,11 @@ class FixedwingWaypointsEnv(NominalActionMixin):
     waypoint_min_radius=WAYPOINT_MIN_RADIUS  # axis 50 -> WAYPOINT_MIN_RADIUS (20)
     benchmark_difficulty=1.
     difficulty=None          # None = benchmark behavior (no cfg record)
-    curriculum=False
-    curriculum_window=1024   # completed episodes per advance decision
-    curriculum_threshold=.6  # rolling success rate that advances the stage
     # nominal controller: L1 lateral guidance + TECS (baselines.py, tuned on
     # train/dev ICs; params in common/fixedwing_autopilot.json)
     nominal_controller=FixedwingAutopilotBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None,curriculum=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'fixedwing','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -101,22 +107,16 @@ class FixedwingWaypointsEnv(NominalActionMixin):
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
-        self._resolve_difficulty(difficulty,curriculum)
+        self._resolve_difficulty(difficulty)
 
         self._init_nominal()
         self.reset()
 
-    def _resolve_difficulty(self,difficulty,curriculum):
-        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+    def _resolve_difficulty(self,difficulty):
+        """Shared difficulty resolution (every task env, same shape)."""
         if difficulty is not None:
             if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
             self.difficulty=float(difficulty)
-        if curriculum is not None:self.curriculum=bool(curriculum)
-        self._tracker=None
-        if self.curriculum:
-            if self.difficulty is None:self.difficulty=0.
-            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
-            self.cfg['curriculum']=True
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
     def _apply_difficulty(self,d):
@@ -156,17 +156,21 @@ class FixedwingWaypointsEnv(NominalActionMixin):
             self.plant.controller(command,active)
             for _ in range(2):self.plant.physics_step(command,active)
             p,rpy,v,wb,vb=self._observe(active)
-            timeout=self.count>=self.max_steps
             collision=self.plant.ground_contact;bounds=p.norm(dim=-1)>100
             reached=self.new_distance<CAPTURE_RADIUS
             self.target_index+=(reached&active).to(torch.long)
             complete=self.target_index>=4
-            term=collision|bounds;trunc=timeout|complete
+            term=collision|bounds;trunc=complete
             crash|=term&active
             reach_count+=(reached&active).to(torch.float64)
             self.terminated|=term&active;self.truncated|=trunc&active
             self.collision|=collision&active;self.out_of_bounds|=bounds&active
             self.complete|=complete&active
+        # the time limit is applied AFTER the full control step (all physics
+        # substeps) so the final control step is not cut short; accidents and
+        # waypoint completion still terminate inside the substep loop above
+        active=~(self.terminated|self.truncated)
+        self.truncated|=(self.count>=self.max_steps)&active
         # potential-based telescoping reward: progress + reach bonus - crash penalty
         self.reward.copy_(self._potential()-old_potential+REACH_BONUS*reach_count-CRASH_PENALTY*crash.to(torch.float64))
 
@@ -183,7 +187,10 @@ class FixedwingWaypointsEnv(NominalActionMixin):
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         self.extras['terminal_observations']=TensorDict(
             {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
-        if bool(done.any()):
+        # single host sync per agent step (done == reset_buf; the same bool
+        # gates both the episode extras and the reset path)
+        done_any=bool(done.any())
+        if done_any:
             n=done.sum().clamp_min(1)
             crashes=done&self.collision;oob=done&self.out_of_bounds
             timeouts=done&self.truncated&~self.complete
@@ -196,11 +203,6 @@ class FixedwingWaypointsEnv(NominalActionMixin):
             self.completed_metrics['crashes']+=crashes.to(torch.float64).sum()
             self.completed_metrics['out_of_bounds']+=oob.to(torch.float64).sum()
             self.completed_metrics['timeouts']+=timeouts.to(torch.float64).sum()
-            if self._tracker is not None:
-                new=self._tracker.update(done,self.complete)
-                if new is not None:
-                    self._apply_difficulty(new)
-                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 
@@ -209,9 +211,10 @@ class FixedwingWaypointsEnv(NominalActionMixin):
         # empty done-mask (the common per-step case) injected 20 pure-ballistic
         # substeps into EVERY agent step (28 total vs the intended 8 = 1/30 s),
         # making the effective gravity-to-lift ratio 3.5x and level flight
-        # physically impossible. reset_idx is only meaningful for replicas that
-        # actually ended, so skip it entirely when none did.
-        if bool(self.reset_buf.any()):
+        # physically impossible. warmup now early-exits on empty masks and the
+        # pause-restore in physics_step is unconditional, so an empty reset is
+        # fully safe; the gate reuses the already-synced done_any purely for cost.
+        if done_any:
             self.reset_idx(self.reset_buf)
         self._update_observation()
         return self.get_observations(),self.rew_buf,self.reset_buf,self.extras

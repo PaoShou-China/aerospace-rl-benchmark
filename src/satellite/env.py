@@ -26,18 +26,19 @@ far-field signal is the proven error-progress term alone; the near boost
 showed the capture maneuver is worth +560 return but earned only +0.2/step
 shaping under k1=30, invisible under PPO advantage noise -- and the brake
 term (k2, active inside 0.8 rad) surcharges arriving fast and rewards
-braking. A per-step settle bonus encodes the evaluation metric itself, whose
-omega threshold otherwise receives no gradient from any reward term: a
-Gaussian in (att_err/0.05, |omega|/0.02) peaking at ``+1`` at the region
-center (the smooth surrogate of the hard indicator -- run 3's hard cliff made
-near-target values bimodal, the critic's boundary error dwarfed the capture
-gradient, and the policy retreated from ~8% success to the zero-variance
-park equilibrium).
+braking (it also carries the dense near-target damping gradient). Termination
+(docking convention): entering the success region (att/omega tolerances)
+terminates the episode immediately with a one-time settle bonus; a runaway
+spin (|omega| > fail_omega) terminates as a failure with a one-time penalty
+(the telescoping reward alone is failure-neutral). Earlier revisions ran
+every episode the full 1200 steps and paid a per-step Gaussian settle bonus,
+which tied the return to the remaining horizon and let a policy hovering
+just outside the tolerance farm reward without ever succeeding.
 
 BUG FIX 2026-10-20: the original implementation stored the NEGATIVE potential
 ``Phi = -(k1*att_err + ...)`` but kept the ``Phi_prev - Phi`` subtraction, so
 the shaping sign was inverted -- approaching the target and braking were
-PENALIZED and the gated capture curriculum actively taught fly-throughs
+PENALIZED, actively teaching fly-throughs
 (training plateaued at att_err~0.3-0.6, <=5% success across all 7 prior runs;
 the physics itself is correct -- inertial angular momentum conserves to 0.0
 drift and single-CMG torque response matches the analytic CMG equation).
@@ -54,7 +55,6 @@ import math
 import torch
 from tensordict import TensorDict
 from ..common.plant import TensorRandom
-from ..common.curriculum import SuccessRateCurriculum
 from ..common.baselines import NominalActionMixin,SatelliteCMGBaseline
 
 
@@ -115,14 +115,11 @@ class SatelliteAttitudeEnv(NominalActionMixin):
     target_angle_cap=math.pi # target rotation-angle cap [rad] (axis .3 -> pi)
     benchmark_difficulty=1.
     difficulty=None          # None = benchmark behavior (no cfg record)
-    curriculum=False
-    curriculum_window=1024   # completed episodes per advance decision
-    curriculum_threshold=.6  # rolling success rate that advances the stage
     # nominal controller: quaternion PD + singularity-robust damped CMG
     # steering, Schaub & Junkins (baselines.py; gimbal-rate commands)
     nominal_controller=SatelliteCMGBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4,difficulty=None,curriculum=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4,difficulty=None):
         if num_cmgs not in (4,6):raise ValueError('num_cmgs must be 4 or 6')
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
@@ -149,19 +146,26 @@ class SatelliteAttitudeEnv(NominalActionMixin):
                                      #   worth ~6x the park equilibrium)
         self.reset_noise_scale=.001
         self.success_att_tol=.05;self.success_omega_tol=.02
-        self.settle_bonus=1.
-        self.settle_att_scale=self.success_att_tol
-        self.settle_omega_scale=self.success_omega_tol  # smooth settle bonus: Gaussian in
-                                     #   (att_err/0.05, |omega|/0.02), peaking at +1 at the
-                                     #   region center -- the smooth surrogate of the hard
-                                     #   success indicator. Run 3's hard cliff made
-                                     #   near-target values bimodal (+1 or 0): the critic's
-                                     #   boundary error (~+/-1/step) dwarfed the +0.7/step
-                                     #   capture gradient and the policy retreated from ~8%
-                                     #   success back to the zero-variance park equilibrium.
+        self.settle_bonus=1.         # one-time bonus on the success-terminating step.
+                                     # Was a per-step Gaussian state reward: with no
+                                     # early termination the episode sum scaled with the
+                                     # remaining horizon (~+1195 for an instant settle),
+                                     # dominating the telescoped shaping, and a policy
+                                     # hovering just OUTSIDE the hard tolerance farmed
+                                     # ~+0.5/step for 1200 steps without ever terminating.
+                                     # The dense damping gradient near the target is now
+                                     # carried by the telescoped brake term (k2), so the
+                                     # per-step surrogate is unnecessary.
+        self.fail_omega=10.          # failure termination: divergence catch. Legit slews
+                                     # peak ~1-3 rad/s (CMG torque authority), so only a
+                                     # runaway spin crosses this; failing fast stops bad
+                                     # trajectories from polluting the GAE chain.
+        self.fail_penalty=10.        # one-time terminal cost on failure; without it the
+                                     # telescoping reward is failure-neutral (hover and
+                                     # tumble to timeout score the same Phi0-Phi_T).
         self.brake_gain=30.          # k2: near-target brake-distance term, gated by
         self.brake_gate=.8           #   g = sigmoid((brake_gate - att_err)/brake_gate_soft)
-        self.brake_gate_soft=.15     #   wide gate: brake curriculum across the whole
+        self.brake_gate_soft=.15     #   wide gate: brake shaping across the whole
                                      #   approach (the narrow 0.2 gate let the policy park
                                      #   dead just outside it; greedy eval att_err~0.36)
         self.alpha_ref=1.0           # reference angular accel (rad/s^2) for the brake-distance term
@@ -225,22 +229,16 @@ class SatelliteAttitudeEnv(NominalActionMixin):
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        self._resolve_difficulty(difficulty,curriculum)
+        self._resolve_difficulty(difficulty)
 
         self._init_nominal()
         self.reset()
 
-    def _resolve_difficulty(self,difficulty,curriculum):
-        """Shared difficulty/curriculum resolution (every task env, same shape)."""
+    def _resolve_difficulty(self,difficulty):
+        """Shared difficulty resolution (every task env, same shape)."""
         if difficulty is not None:
             if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
             self.difficulty=float(difficulty)
-        if curriculum is not None:self.curriculum=bool(curriculum)
-        self._tracker=None
-        if self.curriculum:
-            if self.difficulty is None:self.difficulty=0.
-            self._tracker=SuccessRateCurriculum(self.difficulty,self.curriculum_window,self.curriculum_threshold)
-            self.cfg['curriculum']=True
         if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
     def _apply_difficulty(self,d):
@@ -367,27 +365,33 @@ class SatelliteAttitudeEnv(NominalActionMixin):
         # The k1/k2 gains are baked into _potential -- do not rescale here.
         phi=self._potential(att_err,m_norm)
         shaping=self._prev_phi-phi
-        # smooth settle bonus: encodes the success region (the eval metric) as a
-        # per-step state reward, Gaussian in (att_err/0.05, |omega|/0.02); the base
-        # terms give |omega|<0.02 no gradient at all, so a policy that slews
-        # correctly but arrives with |omega|~0.1 has zero incentive to damp to the
-        # settle band. The hard indicator cliff was replaced by the smooth form
-        # after run 3 (see __init__ note).
-        settled_dist=torch.exp(-0.5*(att_err/self.settle_att_scale)**2
-                               -0.5*(omega_norm/self.settle_omega_scale)**2)
-        # pure telescoping reward + settle bonus + tiny control regularizer: the
-        # former absolute per-step state costs (-att_err, -w_sing/(m+soft), -0.1|w|^2)
-        # swamped the shaping signal (-2.5/step vs +0.2/step) and are now folded
-        # into the potential (telescoped) instead.
-        reward=(torch.where(active,shaping+self.settle_bonus*settled_dist.double(),0.)
+        # termination/reward set (docking convention): success terminates the
+        # episode immediately (marked truncated but NOT time_out -- rsl_rl and
+        # FlashSAC treat it as terminal and skip bootstrapping) and pays a
+        # one-time settle bonus; runaway spin (|omega| > fail_omega) terminates
+        # as a failure with a one-time penalty. Before this change episodes
+        # always ran the full 1200 steps, the per-step settle bonus scaled the
+        # return with the remaining horizon, and success was only checkable at
+        # the timeout step (mid-episode arrivals that later drifted out were
+        # scored as failures).
+        success=(att_err<self.success_att_tol)&(omega_norm<self.success_omega_tol)
+        fail=omega_norm>self.fail_omega
+        # pure telescoping reward + one-time terminal bonus/penalty + tiny
+        # control regularizer: the former absolute per-step state costs
+        # (-att_err, -w_sing/(m+soft), -0.1|w|^2) swamped the shaping signal
+        # (-2.5/step vs +0.2/step) and are now folded into the potential
+        # (telescoped) instead.
+        terminal=(success.double()*self.settle_bonus-fail.double()*self.fail_penalty)
+        reward=(torch.where(active,shaping,0.)
+                +torch.where(active,terminal,0.)
                 -self.ctrl_cost_weight*(rates**2).sum(-1))
         self._prev_phi=torch.where(active,phi,self._prev_phi)
         self.count+=1
         timeout=self.count>=self.max_steps
-        complete=timeout&(att_err<self.success_att_tol)&(omega_norm<self.success_omega_tol)
         self.reward.copy_(torch.where(active,reward,self.reward))
-        self.truncated|=timeout&active
-        self.complete|=complete&active
+        self.complete|=success&active
+        self.terminated|=fail&active
+        self.truncated|=(timeout|success)&active
 
         self.reset_buf=self.terminated|self.truncated
         self.rew_buf.copy_(self.reward)
@@ -399,15 +403,14 @@ class SatelliteAttitudeEnv(NominalActionMixin):
         done=self.reset_buf
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
+        # snapshot BEFORE reset_idx: reset_idx calls _observe(mask), which would
+        # otherwise overwrite _observation with the post-reset initial state and
+        # hand downstream bootstrapping the wrong transition target.
+        terminal_obs=self._observation.to(torch.float32)
         self.extras['terminal_observations']=TensorDict(
-            {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
+            {'policy':terminal_obs},batch_size=[self.num_envs])
         if bool(done.any()):
             self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1)}
-            if self._tracker is not None:
-                new=self._tracker.update(done,self.complete)
-                if new is not None:
-                    self._apply_difficulty(new)
-                    print(f'[curriculum] success {self._tracker.last_rate:.2f} -> difficulty {new:.2f}',flush=True)
         else:
             self.extras.pop('episode',None)
 

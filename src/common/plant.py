@@ -137,7 +137,6 @@ class TensorPlant:
                 self.fuel=torch.full((n,),.05,device=d,dtype=torch.float64)
                 self.ignited=torch.zeros(n,device=d,dtype=torch.bool)
                 self.gimbal=torch.zeros((n,2),device=d,dtype=torch.float64)
-                self._mass_dirty=True
                 self.fuel_id=self.links['fueltank_link']
                 self.fuel_basis=torch.as_tensor(inertial_basis(self.drone.links[self.fuel_id]),device=d,dtype=torch.float64)
                 self.fuel_inertia=torch.tensor([self.params['booster_params'][f'inertia_i{x}{x}'] for x in 'xyz'],device=d,dtype=torch.float64)
@@ -224,11 +223,14 @@ class TensorPlant:
                 self.force[:,self.links['booster_link']]+=direction*(self.throttle[:,0]*b['max_thrust'])[:,None]
                 mass=(self.fuel*b['total_fuel']).clamp_min(1e-8)
                 inertia=self.fuel_basis.T@torch.diag_embed((self.fuel[:,None]*self.fuel_inertia).clamp_min(1e-8))@self.fuel_basis
-                # exact-skip: mass/inertia only change while fuel burns (throttle>0) or after a reset
-                if self._mass_dirty or bool((self.throttle[:,0]>1e-6).any()):
-                    self.drone.set_links_mass(mass[:,None].to(gs.tc_float),links_idx_local=[self.fuel_id])
-                    self.drone.set_links_inertia(inertia[:,None].to(gs.tc_float),links_idx_local=[self.fuel_id])
-                    self._mass_dirty=False
+                # unconditional mass write: set_links_mass/inertia are idempotent,
+                # so the update runs every physics step -- while no fuel burns it
+                # writes back identical values, keeping the hot path free of the
+                # bool((throttle>1e-6).any()) host sync (mass depends only on
+                # fuel, and fuel only changes while throttle>0, so skipping the
+                # write when fuel is constant was a pure performance shortcut)
+                self.drone.set_links_mass(mass[:,None].to(gs.tc_float),links_idx_local=[self.fuel_id])
+                self.drone.set_links_inertia(inertia[:,None].to(gs.tc_float),links_idx_local=[self.fuel_id])
         self.force*=mask[:,None,None];self.torque*=mask[:,None,None]
         qlinks=self.drone.get_links_quat().to(torch.float64)
         force=rotate(qlinks,self.force);torque=rotate(qlinks,self.torque)
@@ -246,11 +248,15 @@ class TensorPlant:
         self.ground_contact|=ground&mask;self.pad_contact|=pad&mask
         self.last_contact.copy_(torch.where(mask,ground|pad,self.last_contact))
         # Keep inactive replicas paused during early termination and reset warmup.
-        # exact-skip: for uniform masks the restore writes back identical values.
-        uniform=bool(mask.all()) or not bool(mask.any())
-        if not uniform:
-            pn,qn,vn,wn=self.state()
-            self.set_state(torch.where(mask[:,None],pn,p),torch.where(mask[:,None],qn,q),torch.where(mask[:,None],vn,v),torch.where(mask[:,None],wn,w))
+        # The restore runs UNCONDITIONALLY: for a fully-active batch the
+        # write-back is a lossless float32 round-trip (state() upcasts to
+        # float64, set_state casts the identical values back to float32), and
+        # for an all-inactive batch it now pauses them correctly too (the old
+        # `uniform` shortcut skipped the restore there and let the whole scene
+        # drift ballistically). This removes the per-physics-step
+        # bool(mask.all()) / bool(mask.any()) host-device syncs.
+        pn,qn,vn,wn=self.state()
+        self.set_state(torch.where(mask[:,None],pn,p),torch.where(mask[:,None],qn,q),torch.where(mask[:,None],vn,v),torch.where(mask[:,None],wn,w))
 
     def auxiliary(self):
         if self.vehicle=='quadx':return self.throttle
@@ -269,7 +275,6 @@ class TensorPlant:
             self.surfaces.actuation.masked_fill_(mask[:,None],0)
             if self.vehicle=='rocket':
                 self.fuel.masked_fill_(mask,.05);self.ignited.masked_fill_(mask,False);self.gimbal.masked_fill_(mask[:,None],0)
-                self._mass_dirty=True
 
     def warmup(self,mask,iterations=10):
         """Original 10-Aviary-step warmup with zero command on the masked slots."""
