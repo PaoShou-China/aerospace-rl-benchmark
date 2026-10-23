@@ -207,3 +207,7 @@ The checkpoint files are `policy.pt` (the policy reported here), `continuation.p
 The implementation targets this fixed rocket system with state observations, three parameter hypotheses, effective dynamics coefficients, and a short action horizon. Belief scales organize multi-hypothesis predictions and have not been statistically calibrated. The released model and reward implementation match the completed experiment. Packaging changes are recorded in [provenance.json](provenance.json); source attribution is in [NOTICE.md](NOTICE.md).
 
 Benchmark repository: [PaoShou-China/aerospace-rl-benchmark](https://github.com/PaoShou-China/aerospace-rl-benchmark).
+
+## Ongoing research
+
+A confidence-aware physical-inference and sequence-control candidate is described in [the research plan](docs/CONFIDENCE_SEQUENCE_RESEARCH.md). It adds causal reliability statistics, shared masked inference, action sequences, and full-episode training. Its results are pending; the checkpoint and completed results reported above retain their original meaning.

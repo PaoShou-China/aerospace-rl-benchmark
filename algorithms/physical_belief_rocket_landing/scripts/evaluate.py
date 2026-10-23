@@ -64,8 +64,12 @@ def run_cohort(args):
             params["distribution_cfg"]["init_std"] = torch.tensor(std, device=env.device)
         seed_policy = RocketPhaseModel({"policy": observation}, cfg["obs_groups"], "actor", 7,
                                       **params).to(env.device)
-        actor = UnifiedRocketActor(seed_policy, horizon=configuration["horizon"],
-                                   iterations=configuration["iterations"]).to(env.device)
+        if configuration.get('architecture', 'published') == 'published':
+            actor = UnifiedRocketActor(seed_policy, horizon=configuration["horizon"],
+                                       iterations=configuration["iterations"]).to(env.device)
+        else:
+            from common.rocket_confident_physics import build_physical_actor
+            actor = build_physical_actor(seed_policy, configuration).to(env.device)
         actor.load_state_dict(checkpoint["actor"], strict=True)
         actor.eval()
         del checkpoint
@@ -75,6 +79,9 @@ def run_cohort(args):
         book = FirstEpisodes(128)
         pending = torch.ones(128, dtype=torch.bool, device=env.device)
         completed = 0
+        last_explanation = {}
+        prediction_record = {}
+        calibration = torch.zeros(5, 4, device=env.device)
         original_reset = env.reset_idx
 
         def record_then_reset(mask):
@@ -90,8 +97,11 @@ def run_cohort(args):
                           "out_of_bounds": env.out_of_bounds, "settled_now": settled,
                           "episode_length": env.count, "terminal_speed": v.norm(dim=-1)}
                 values = {k:v[first].detach().cpu().tolist() for k,v in fields.items()}
+                explanation = {k:v[first].detach().cpu().tolist() for k,v in last_explanation.items()}
                 for j, i in enumerate(ids):
                     row = {k:v[j] for k,v in values.items()}
+                    if explanation:
+                        row['physical_explanation_before_terminal_action'] = {k:v[j] for k,v in explanation.items()}
                     row.update(sample_id=f"iid-stream-{args.seed+i}", rng_stream_id=args.seed+i,
                                initial_state_p_q_v_w=initial[i].tolist(),
                                success_then_failure=bool(row["official_success"] and
@@ -106,11 +116,19 @@ def run_cohort(args):
         env.reset_idx = record_then_reset
 
         def choose_action():
+            nonlocal last_explanation, prediction_record
             # Autograd is required INSIDE the physical solver even in evaluation.
             # Its temporary graphs die here, before advancing the real simulator.
             result = actor(observation, **memory.inputs(), create_graph=False)
             with torch.no_grad():
-                return actor.action(result, deterministic=True).detach(), result["belief"]["memory"].detach()
+                action = actor.action(result, deterministic=True).detach()
+                if hasattr(actor, 'prediction_statistics'):
+                    prediction, variance = actor.prediction_statistics(result['belief'], action)
+                    prediction_record = {'mean':prediction, 'variance':variance, 'confidence':result['confidence']}
+                    last_explanation = {k:result[k].detach() for k in
+                        ('confidence', 'solver_improvement', 'control_acceptance', 'physical_action_delta')}
+                    last_explanation['effective_parameter_gains'] = result['belief']['mean'].exp().detach()
+                return action, result["belief"]["memory"].detach()
 
         def sync():
             if args.backend == "gpu":
@@ -134,7 +152,17 @@ def run_cohort(args):
                 sync()
                 middle = time.perf_counter()
             with torch.no_grad():
-                following, _, done, _ = env.step(action)
+                live_before = pending.clone()
+                following, _, done, extra = env.step(action)
+                if prediction_record:
+                    from common.rocket_physical_core import observation_state
+                    target = torch.where(done[:, None], extra['terminal_observations']['policy'], following['policy'])
+                    error = actor.physics.residual(prediction_record['mean'], observation_state(target))
+                    bins = (prediction_record['confidence']*5).long().clamp(0, 4)
+                    coverage = (error.abs() <= 1.96*prediction_record['variance'].sqrt()).float().mean(-1)
+                    rows = torch.stack((torch.ones_like(coverage), error.square().mean(-1), coverage,
+                                        last_explanation['physical_action_delta']), -1)
+                    calibration.index_add_(0, bins, rows*live_before[:, None])
                 memory.advance(observation, action, next_memory, done)
                 observation = following["policy"]
             if profile:
@@ -168,6 +196,14 @@ def run_cohort(args):
                   "wall_seconds": time.perf_counter()-started,
                   "timing": {"profiled_steps": profiled_steps,
                              "policy_seconds": policy_seconds, "simulation_seconds": simulation_seconds}}
+        if prediction_record:
+            report['physics_diagnostics'] = {
+                'parameter_names':list(actor.physics.parameter_names),
+                'confidence_is_calibrated_probability':False,
+                'bin_edges':[0., .2, .4, .6, .8, 1.],
+                'columns':['transition_count', 'sum_normalized_mse', 'sum_nominal_95_coverage', 'sum_action_delta'],
+                'confidence_bins':calibration.cpu().tolist(),
+                'diagnostic_unit':'correlated transitions from first episodes'}
         baseline.write_json(out/"report.json", report)
         if not report["summary"]["complete_evaluation"]:
             raise RuntimeError("original full horizon left missing first episodes")
@@ -238,13 +274,15 @@ def coordinate(args):
                 time.sleep(2)
         from episode_metrics import FirstEpisodes
         book = FirstEpisodes(512)
-        cohorts, records = [], []
+        cohorts, records, physics_diagnostics = [], [], []
         for seed in baseline.DEV_SEEDS:
             report = json.loads((out/f"seed_{seed}"/"report.json").read_text())
             if report["checkpoint_sha256"] != checkpoint_hash or not report["summary"]["complete_evaluation"]:
                 raise RuntimeError(f"invalid completed cohort {seed}")
             cohorts.append({k:report[k] for k in ("seed", "summary", "initial_state_sha256")})
             records.extend(report["episodes"])
+            if 'physics_diagnostics' in report:
+                physics_diagnostics.append({'seed':seed, **report['physics_diagnostics']})
         if len(records) != 512 or len({r["sample_id"] for r in records}) != 512:
             raise RuntimeError("expected 512 distinct fixed first episodes")
         for i, row in enumerate(records):
@@ -254,6 +292,8 @@ def coordinate(args):
                   "physics_and_success_predicate_modified": False,
                   "evaluation_schedule": "four independent 128-env processes",
                   "wall_seconds": time.perf_counter()-started}
+        if physics_diagnostics:
+            report['physics_diagnostics'] = physics_diagnostics
         if baseline.sha256(run/"checkpoint.pt") != checkpoint_hash:
             raise RuntimeError("checkpoint changed during evaluation")
         baseline.write_json(out/"development512.json", report)

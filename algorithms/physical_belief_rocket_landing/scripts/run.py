@@ -72,6 +72,10 @@ def train(args):
         resume = package_path(config['resume'])
         check_recorded_artifact(resume)
         config['resume'] = str(resume)
+    if config.get('initialize_from'):
+        initial = package_path(config['initialize_from'])
+        check_recorded_artifact(initial)
+        config['initialize_from'] = str(initial)
     command = [sys.executable, '-u', str(ROOT / 'scripts/train.py'),
                '--out', str(args.out.resolve())]
     for key, value in config.items():

@@ -207,3 +207,7 @@ python scripts/run.py train --out runs/continue \
 当前实现面向状态观测下的固定火箭系统，使用三个参数假设、有效动力学系数和短时动作展开。物理信念的尺度用于组织多假设推演，尚未作统计校准。代码包保持已完成实验的模型和奖励实现，整理差异记录在 [provenance.json](provenance.json)，来源说明见 [NOTICE.md](NOTICE.md)。
 
 基准仓库：[PaoShou-China/aerospace-rl-benchmark](https://github.com/PaoShou-China/aerospace-rl-benchmark)。
+
+## 后续研究
+
+正在训练的新候选引入因果可信度、共享掩码推断、动作序列优化和完整回合训练，见[研究方案](docs/CONFIDENCE_SEQUENCE_RESEARCH.md#中文说明)。新实验结果待完成后报告；上文检查点及已完成结果仍对应原实验。

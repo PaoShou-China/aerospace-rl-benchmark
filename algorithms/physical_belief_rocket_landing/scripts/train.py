@@ -23,7 +23,7 @@ import snapshot as baseline
 
 OVERLAYS = ("rocket_phase_policy.py", "rocket_physical_core.py", "rocket_unified_physics.py",
             "rocket_flash_ppo.py", "rocket_reward_candidates.py", "rocket_direct_support.py",
-            "rocket_ppo_practical_support.py")
+            "rocket_ppo_practical_support.py", "rocket_confident_physics.py")
 
 
 def main():
@@ -32,6 +32,16 @@ def main():
     parser.add_argument("--parent", type=Path, default=baseline.ROOT/"artifacts/parent")
     parser.add_argument("--checkpoint", default="parent.pt")
     parser.add_argument("--resume", type=Path)
+    parser.add_argument("--initialize-from", type=Path)
+    parser.add_argument("--architecture", choices=("published", "confidence_sequence"), default="published")
+    parser.add_argument("--hypotheses", type=int, default=7)
+    parser.add_argument("--knots", type=int, default=3)
+    parser.add_argument("--ablation", choices=("full", "fixed_belief", "no_solver"), default="full")
+    parser.add_argument("--disable-confidence", action="store_true")
+    parser.add_argument("--reward-variant", choices=("settle", "persistent"), default="settle")
+    parser.add_argument("--prediction-coefficient", type=float, default=.1)
+    parser.add_argument("--anchor-coefficient", type=float, default=.002)
+    parser.add_argument("--initial-physical-authority", type=float, default=.25)
     parser.add_argument("--backend", choices=("cpu", "gpu"), default="gpu")
     parser.add_argument("--num-envs", type=int, default=512)
     parser.add_argument("--rollout", type=int, default=64)
@@ -45,6 +55,7 @@ def main():
     parser.add_argument("--max-microbatch", type=int, default=4096)
     parser.add_argument("--batch-tune-every", type=int, default=2)
     parser.add_argument("--gpu-memory-fraction", type=float, default=.8)
+    parser.add_argument("--gpu-memory-budget-gib", type=float, default=0.)
     parser.add_argument("--horizon", type=int, default=8)
     parser.add_argument("--iterations", type=int, default=2)
     parser.add_argument("--target-kl", type=float, default=.02)
@@ -55,6 +66,8 @@ def main():
     parser.add_argument("--skip-evaluation", action="store_true")
     parser.add_argument("--evaluation-workers", type=int, choices=range(1,5), default=4)
     args = parser.parse_args()
+    if args.resume and args.initialize_from:
+        parser.error("choose resume or initialize-from")
     if not .5 <= args.gpu_memory_fraction <= .97:
         parser.error("gpu-memory-fraction must be between .5 and .97")
     if min(args.num_envs, args.rollout, args.minibatch, args.microbatch,
@@ -76,6 +89,7 @@ def main():
     torch, _ = baseline.setup_imports(source, out, 1)
     from common.rocket_phase_policy import RocketPhaseModel
     from common.rocket_unified_physics import UnifiedRocketActor, PhysicalMemory
+    from common.rocket_confident_physics import build_physical_actor, initialize_from_published
     from common.rocket_ppo_practical_support import PracticalRewardAdapter
     from common.rocket_physical_core import observation_state
     from pyflyt_genesis.rocket import RocketLandingEnv
@@ -146,6 +160,8 @@ def main():
             persistent = torch.cuda.memory_allocated()
             other_usage = max(0, total-free-torch.cuda.memory_reserved())
             budget = max(0, self.memory_fraction*total-other_usage)
+            if args.gpu_memory_budget_gib > 0:
+                budget = min(budget, args.gpu_memory_budget_gib*2**30)
             # Estimate activation bytes per sample from real training, keeping
             # persistent tensors and other CUDA processes outside this budget.
             workspace = max(peak-persistent, 256*2**20)
@@ -212,7 +228,7 @@ def main():
 
         seed_policy, critic = build("actor", 7), build("critic", 1)
         reference = copy.deepcopy(seed_policy).eval().requires_grad_(False)
-        actor = UnifiedRocketActor(seed_policy, horizon=args.horizon, iterations=args.iterations).to(device)
+        actor = build_physical_actor(seed_policy, vars(args)).to(device)
         seed_ids = {id(p) for p in seed_policy.parameters()}
         new_parameters = [p for p in actor.parameters() if id(p) not in seed_ids]
         optimizer = torch.optim.Adam([
@@ -220,6 +236,16 @@ def main():
             {"params":new_parameters, "lr":args.actor_learning_rate},
             {"params":critic.parameters(), "lr":1e-4}], eps=1e-5)
         first_update = 0
+        transferred_keys = []
+        if args.initialize_from:
+            initial = torch.load(args.initialize_from, map_location=device, weights_only=False)
+            transferred_keys = initialize_from_published(actor, initial['actor'])
+            critic.load_state_dict(initial['critic'], strict=True)
+            status['new_environment_transitions'] = int(initial['environment_transitions'])
+            if args.architecture == 'confidence_sequence':
+                with torch.no_grad():
+                    authority = min(.95, max(.05, args.initial_physical_authority))
+                    actor.physical_mix_logit.fill_(math.log(authority/(1-authority)))
         if args.resume:
             resumed = torch.load(args.resume, map_location=device, weights_only=False)
             actor.load_state_dict(resumed["actor"])
@@ -237,7 +263,7 @@ def main():
             raise ValueError("remaining transition budget must be nonnegative and divisible by num-envs")
         last_update = first_update+math.ceil(remaining_transitions/(args.rollout*args.num_envs))
         status["planned_updates"] = last_update
-        manifest = {"architecture": "unified recurrent physical-belief hybrid actor",
+        manifest = {"architecture": args.architecture,
             "anchor_commit":baseline.ANCHOR, "parent_checkpoint_sha256":baseline.sha256(out/"parent.pt"),
             "source_sha256":{name:baseline.sha256(source/"src/common"/name) for name in OVERLAYS},
             "launcher_sha256":baseline.sha256(out/"campaign.py"),
@@ -251,8 +277,8 @@ def main():
                           "differentiable robust action optimization", "final hybrid likelihood PPO",
                           "actual-executed-action prediction loss", "four-step belief TBPTT",
                           "adaptive CUDA microbatches", "checkpoint/resume", "original final evaluation"],
-            "reward":"PracticalRewardAdapter settle, 64-step hold, gamma .999",
-            "training_success_early_termination":True, "physical_environment_modified":False,
+            "reward":args.reward_variant,
+            "training_success_early_termination":args.reward_variant == 'settle', "physical_environment_modified":False,
             "evaluation_success_predicate_modified":False, "teacher_queries":0,
             "hypothesis_uncertainty_calibrated":False, "contact_is_differentiable_surrogate":True,
             "internal_physics":"40Hz macro steps; analytic six-tick actuator endpoint/mean and regularized contact",
@@ -269,10 +295,17 @@ def main():
             "training_episode_counters_scope":"current process only",
             "sealed_test_used":False, "intermediate_evaluations":0,
             "ppo_trust_region":"exact joint Bernoulli/conditional Normal KL penalty and minibatch early stop",
-            "resume_checkpoint_sha256":baseline.sha256(args.resume) if args.resume else None}
+            "resume_checkpoint_sha256":baseline.sha256(args.resume) if args.resume else None,
+            "initialization_checkpoint_sha256":baseline.sha256(args.initialize_from) if args.initialize_from else None,
+            "transferred_parameter_keys":transferred_keys,
+            "initialization_optimizer_reset":bool(args.initialize_from),
+            "reliability_score_is_probability":False}
         baseline.write_json(out/"manifest.json", manifest)
         memory = PhysicalMemory(actor, args.num_envs, device)
-        adapter = PracticalRewardAdapter(env, gamma=.999, reward_variant="settle", success_hold_steps=64)
+        # A hold window longer than the original episode disables early
+        # success resets while retaining the recorded reward implementation.
+        hold_steps = int(env.max_steps)+1 if args.reward_variant == 'persistent' else 64
+        adapter = PracticalRewardAdapter(env, gamma=.999, reward_variant='settle', success_hold_steps=hold_steps)
         emit("training_started", status="training", actor_parameters=manifest["actor_parameters"],
              new_parameters=manifest["new_parameters"], num_envs=args.num_envs,
              horizon=args.horizon, shared_iterations=args.iterations,
@@ -313,8 +346,8 @@ def main():
             with torch.no_grad():
                 prior = reference({"policy":b["obs"]})[:,actor.continuous]
             anchoring = ((result["means"]-prior[:,None])/result["scales"]).square().mean()
-            objective = (policy_loss+.5*value_loss+.1*prediction-.001*entropy
-                         +.002*anchoring+.0001*result["model_control_cost"].mean()
+            objective = (policy_loss+.5*value_loss+args.prediction_coefficient*prediction-.001*entropy
+                         +args.anchor_coefficient*anchoring+.0001*result["model_control_cost"].mean()
                          +args.kl_coefficient*exact_kl)
             (objective*fraction).backward()
             with torch.no_grad():
@@ -330,6 +363,7 @@ def main():
             vector_steps = min(args.rollout, (transition_target-status["new_environment_transitions"])//args.num_envs)
             used_inference_batch = batches.inference
             rows = []
+            physical_diagnostics = []
             for t in range(vector_steps):
                 memory_input = memory.inputs()
                 result = infer(actor, obs, memory_input)
@@ -343,6 +377,13 @@ def main():
                     done = done.clone()
                     next_obs = next_td["policy"]
                     terminal = torch.where(done[:, None], extras["terminal_observations"]["policy"], next_obs)
+                    if args.architecture == 'confidence_sequence' and t % 16 == 0:
+                        prediction, variance = actor.prediction_statistics(result['belief'], action)
+                        error = actor.physics.residual(prediction, observation_state(terminal))
+                        physical_diagnostics.append(torch.stack((result['confidence'].mean(),
+                            result['solver_improvement'].mean(), result['control_acceptance'].mean(),
+                            result['physical_action_delta'].mean(), error.square().mean(),
+                            (error.abs() <= 1.96*variance.sqrt()).float().mean())))
                     terminal_value = critic({"policy":terminal}).squeeze(-1)
                     # Bootstrap true timeout from its pre-reset state, never from reset.
                     adjusted = reward+gamma*terminal_value*extras["time_outs"].float()
@@ -444,7 +485,7 @@ def main():
                 sequence_memory = torch.where(data["done"][t,sequence_env,None],
                     actor.initial_memory(len(sequence_env),device),belief["memory"])
             optimizer.zero_grad(set_to_none=True)
-            (.1*sequence_loss).backward()
+            (args.prediction_coefficient*sequence_loss).backward()
             norm = torch.nn.utils.clip_grad_norm_(actor.parameters(),1.)
             if not torch.isfinite(norm):
                 raise RuntimeError("nonfinite recurrent belief gradient")
@@ -453,6 +494,11 @@ def main():
             metrics = (metric_sums/max(1,loss_count)).tolist()
             used_training_batch = batches.training
             resources = batches.resources()
+            if physical_diagnostics:
+                values = torch.stack(physical_diagnostics).mean(0).tolist()
+                resources.update(dict(zip(('physical_confidence', 'solver_relative_improvement',
+                    'control_update_acceptance', 'physical_action_delta', 'normalized_prediction_mse',
+                    'prediction_interval_coverage_95'), values)))
             if (update+1-first_update)%args.batch_tune_every == 0:
                 batches.tune()
             emit("update", completed_updates=update+1, current_update=update+1,

@@ -50,5 +50,13 @@
     4000007
   ],
   "method_name": "Physical-Belief Control for Rocket Landing",
-  "submission_directory": "algorithms/physical_belief_rocket_landing"
+  "submission_directory": "algorithms/physical_belief_rocket_landing",
+  "ongoing_research": {
+    "architecture": "confidence_sequence",
+    "status": "training; evaluation pending",
+    "published_checkpoint_replaced": false,
+    "new_core_module_sha256": "9b244b5d3eb266bae24afafe6e8e4d37197e935eb7b52f2d7baae6bb7d2c8061",
+    "configuration": "configs/confidence_sequence.json",
+    "report": "docs/CONFIDENCE_SEQUENCE_RESEARCH.md"
+  }
 }

@@ -12,13 +12,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 13739,
-      "sha256": "46b21e6433d35072a16fb3cac618cfe22d456640f7c6e2f2c2dbfba884a4e71c"
+      "bytes": 14122,
+      "sha256": "9141ffcb470876197512cd970f07cac89236db9e03fc209731cbe74589fbbdc6"
     },
     {
       "path": "README.zh-CN.md",
-      "bytes": 11668,
-      "sha256": "e14732205899c9394440cc9c8dd8bfd33822d6374a8d0b3237cbf29937b08c88"
+      "bytes": 11959,
+      "sha256": "72890a1d2b88fe5139adfc2d47c54a73fa193a5a34ab32b787cb201ffd1abe78"
     },
     {
       "path": "__init__.py",
@@ -46,6 +46,11 @@
       "sha256": "e8df5fae67071eadf474037e9b9237013185a47be78a6e47f5feb7e220933489"
     },
     {
+      "path": "configs/confidence_sequence.json",
+      "bytes": 835,
+      "sha256": "73ad21e8e0eefc12626fdd4335035b5c3331fec783c1212a8b4199ff3c2cd950"
+    },
+    {
       "path": "configs/rocket_landing.json",
       "bytes": 601,
       "sha256": "453a861e9da5b0217b315ee809fb23b40d961083a10649b6a422c8de59f8c619"
@@ -54,6 +59,11 @@
       "path": "core/__init__.py",
       "bytes": 69,
       "sha256": "b5c625a7808ee4567e62005b7c544ef76c5fd59a55a567510a652fbf2e497fec"
+    },
+    {
+      "path": "core/rocket_confident_physics.py",
+      "bytes": 17321,
+      "sha256": "9b244b5d3eb266bae24afafe6e8e4d37197e935eb7b52f2d7baae6bb7d2c8061"
     },
     {
       "path": "core/rocket_direct_support.py",
@@ -91,14 +101,19 @@
       "sha256": "711a2ad957d24a02b9aaae717eb1b3eeade9ae12dabf18b6874030d4cea54b16"
     },
     {
+      "path": "docs/CONFIDENCE_SEQUENCE_RESEARCH.md",
+      "bytes": 7452,
+      "sha256": "180415c69482c2fed22a2aea91030bedf96bec02ab1e53b714bbb6184184fe24"
+    },
+    {
       "path": "docs/PACKAGING.md",
       "bytes": 1474,
       "sha256": "75aeaeacb473928ac745d5f11b8c27f9f2a87b8a6815b238a6d72995b1be4428"
     },
     {
       "path": "provenance.json",
-      "bytes": 3105,
-      "sha256": "206301fb7bcae6b4e124c8f66370e53f3eea46fb3e1f5c49560e1ad146e98adc"
+      "bytes": 3475,
+      "sha256": "bb67e854858fe07c582405c57205180306dae7fc43313234067ec86b8eab7b02"
     },
     {
       "path": "requirements.txt",
@@ -142,13 +157,18 @@
     },
     {
       "path": "scripts/evaluate.py",
-      "bytes": 15235,
-      "sha256": "b62bebb1795b0f24bdabb722ee64a4adf2d8b49a47124c2b607c8f04eca53674"
+      "bytes": 18147,
+      "sha256": "498982ffe9bbd5c22ee8b0774efe08bf9d9a3d31587ca6e73ca12de7d023f884"
+    },
+    {
+      "path": "scripts/research_campaign.py",
+      "bytes": 3633,
+      "sha256": "8ff9ceda99c3350cdb04c411f59dff1ed8e7ead07a99abb344e3f8cd76cd6ca6"
     },
     {
       "path": "scripts/run.py",
-      "bytes": 5532,
-      "sha256": "7cb8413b73bf0206a1e67e9e2caef394054a304fc6fc95ba37e51424bafd255e"
+      "bytes": 5718,
+      "sha256": "5667fecaac6fd02fb823628ad42d3440851c18ce2993748e47af78f1334f2596"
     },
     {
       "path": "scripts/snapshot.py",
@@ -157,8 +177,8 @@
     },
     {
       "path": "scripts/train.py",
-      "bytes": 29027,
-      "sha256": "89b5182afed244614a30202e84fd19dfaa951ccae33f3973062907982aceeb25"
+      "bytes": 32506,
+      "sha256": "ec6e040364f0025b3310641542c063747ddb1a80b0441014bfe37a04d5796c19"
     },
     {
       "path": "vendor/benchmark_source.tar.gz",
