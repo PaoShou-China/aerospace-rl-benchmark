@@ -1,0 +1,197 @@
+{
+  "status": "completed",
+  "search_programs": 10,
+  "training_neighborhood": {
+    "denominator": 32,
+    "parent_successes": 25,
+    "candidate_successes": 24,
+    "gained": 0,
+    "lost": 1,
+    "net": -1,
+    "all_initial_states_identical": true,
+    "triggered_episodes": 6,
+    "positive_trigger_outcomes": 0,
+    "parent_settled": 1,
+    "student_settled": 1
+  },
+  "training_on_policy": {
+    "denominator": 128,
+    "parent_successes": 101,
+    "candidate_successes": 100,
+    "gained": 1,
+    "lost": 2,
+    "net": -1,
+    "all_initial_states_identical": true,
+    "triggered_episodes": 19,
+    "positive_trigger_outcomes": 1,
+    "parent_settled": 1,
+    "student_settled": 1
+  },
+  "development": {
+    "summary": {
+      "denominator": 512,
+      "episodes_finished": 512,
+      "incomplete_episodes": 0,
+      "successes": 444,
+      "success_rate": 0.8671875,
+      "wilson_95_interval": [
+        0.8350392877789226,
+        0.8938668394245854
+      ],
+      "point_estimate_at_least_99_percent": false,
+      "wilson_lower_at_least_99_percent": false,
+      "complete_evaluation": true,
+      "failure_counts": {
+        "fatal_collision": 67,
+        "timeout": 1
+      },
+      "final_settled_successes": 0,
+      "final_settled_rate": 0.0,
+      "final_settled_wilson_95_interval": [
+        0.0,
+        0.007446975722882739
+      ],
+      "success_then_failure": 271
+    },
+    "cohorts": [
+      {
+        "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 107,
+          "success_rate": 0.8359375,
+          "wilson_95_interval": [
+            0.7621819239629298,
+            0.8901166835408066
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "fatal_collision": 20,
+            "timeout": 1
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 68
+        },
+        "wall_seconds": 51.59589550000965
+      },
+      {
+        "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 107,
+          "success_rate": 0.8359375,
+          "wilson_95_interval": [
+            0.7621819239629298,
+            0.8901166835408066
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "fatal_collision": 21
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 71
+        },
+        "wall_seconds": 57.459570291001
+      },
+      {
+        "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 116,
+          "success_rate": 0.90625,
+          "wilson_95_interval": [
+            0.8432700274269215,
+            0.945556195600853
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "fatal_collision": 12
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 77
+        },
+        "wall_seconds": 62.56464879200212
+      },
+      {
+        "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 114,
+          "success_rate": 0.890625,
+          "wilson_95_interval": [
+            0.8247655486183226,
+            0.9337212042929989
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "fatal_collision": 14
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 55
+        },
+        "wall_seconds": 52.262396457997966
+      }
+    ],
+    "comparison": {
+      "denominator": 512,
+      "parent_successes": 438,
+      "candidate_successes": 444,
+      "gained": 24,
+      "lost": 18,
+      "net": 6,
+      "all_initial_states_identical": true
+    },
+    "checkpoint_sha256": "1d5fcc65a01271325673e764d80771e01db2ba6af61abadaadb70d9e102a38b5",
+    "protocol": "upstream_source_first_episode_full_horizon_v1",
+    "backend": "cpu",
+    "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+    "frozen_before_development": true,
+    "sealed_test_used": false,
+    "reference": "results/local-group-selector-v1",
+    "reference_checkpoint_sha256": "68397471e5093b630c321e2617d2a6d75316ec8348986ba20952be07120abf78"
+  },
+  "training_transitions": 1920000,
+  "evaluation_transitions": 614400,
+  "environment_transitions": 2534400,
+  "wall_seconds": 902.3365389579994,
+  "matched_budget_ppo_control_completed": false,
+  "teacher_calls": 0,
+  "sealed_test_used": false,
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

@@ -1,0 +1,210 @@
+{
+  "protocol": "upstream_source_first_episode_full_horizon_v1",
+  "evaluation_category": "development",
+  "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+  "run_dir": "results/local-ppo95-v1/parent_reference",
+  "checkpoint": "results/local-ppo95-v1/parent_reference/epoch_120.pt",
+  "checkpoint_sha256": "f75e410291be0942296b198328f412952919673e9bedcfd6bb9dc4dc392611a4",
+  "engine_dtype": "torch.float32",
+  "config_sha256": "58620c8f4cc912f51d90d10ecbb70b70002fd42dcd102628bf1e57a9edd975cd",
+  "evaluation_config": {
+    "num_steps_per_env": 128,
+    "save_interval": 100,
+    "obs_groups": {
+      "actor": [
+        "policy"
+      ],
+      "critic": [
+        "policy"
+      ]
+    },
+    "actor": {
+      "class_name": "common.rocket_phase_policy:RocketPhaseModel",
+      "width": 256,
+      "activation": "swish",
+      "distribution_cfg": {
+        "class_name": "GaussianDistribution",
+        "init_std": 0.03,
+        "std_type": "log"
+      }
+    },
+    "critic": {
+      "class_name": "common.rocket_phase_policy:RocketPhaseModel",
+      "width": 256,
+      "activation": "swish"
+    },
+    "algorithm": {
+      "class_name": "PPO",
+      "learning_rate": 8e-05,
+      "num_learning_epochs": 4,
+      "num_mini_batches": 4,
+      "schedule": "fixed",
+      "desired_kl": 0.01,
+      "entropy_coef": 0.001,
+      "gamma": 0.999,
+      "lam": 0.98,
+      "clip_param": 0.1,
+      "value_loss_coef": 1.0
+    },
+    "logger": "tensorboard",
+    "env_kwargs": {},
+    "difficulty": null
+  },
+  "backend": "cpu",
+  "full_upstream_budget": false,
+  "online_training_transitions": 0,
+  "expert_training_transitions": 269191,
+  "run_planned_online_training_transitions": 0,
+  "source_manifest_sha256": "0c3fed66168a0c75541088298a199f6143f4eb09c7570f6006c288b7ff075a24",
+  "launcher_sha256": "244104cbb0bf446b0f1bbfb91250428fd0d7c9494c6ac3fd1c3696eee4adf310",
+  "summary": {
+    "denominator": 512,
+    "episodes_finished": 512,
+    "incomplete_episodes": 0,
+    "successes": 432,
+    "success_rate": 0.84375,
+    "wilson_95_interval": [
+      0.8097523524421957,
+      0.8726278517483224
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 80
+    },
+    "final_settled_successes": 1,
+    "final_settled_rate": 0.001953125,
+    "final_settled_wilson_95_interval": [
+      0.00034485776154337486,
+      0.010979278212421853
+    ],
+    "success_then_failure": 228
+  },
+  "cohorts": [
+    {
+      "seed": 1000007,
+      "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 106,
+        "success_rate": 0.828125,
+        "wilson_95_interval": [
+          0.7534600319269827,
+          0.8836688405185272
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 22
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 56
+      }
+    },
+    {
+      "seed": 2000007,
+      "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 110,
+        "success_rate": 0.859375,
+        "wilson_95_interval": [
+          0.7886475076210383,
+          0.9091603050573774
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 18
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 64
+      }
+    },
+    {
+      "seed": 3000007,
+      "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 109,
+        "success_rate": 0.8515625,
+        "wilson_95_interval": [
+          0.7797727087736895,
+          0.9028653688464999
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 19
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.0078125,
+        "final_settled_wilson_95_interval": [
+          0.0013804318928742412,
+          0.04292625943886061
+        ],
+        "success_then_failure": 52
+      }
+    },
+    {
+      "seed": 4000007,
+      "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 107,
+        "success_rate": 0.8359375,
+        "wilson_95_interval": [
+          0.7621819239629298,
+          0.8901166835408066
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 21
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 56
+      }
+    }
+  ],
+  "sealed_test_used": false,
+  "acceptance_passed": false,
+  "wall_seconds": 158.7733167080005,
+  "transfer_only": true,
+  "training_backend": "gpu",
+  "evaluation_backend": "cpu",
+  "new_transfer_training_interactions": 0,
+  "parent_run": "results/gpu-first-campaign-v2/phase_dagger/run",
+  "parent_online_training_transitions": 0,
+  "parent_inherited_online_transitions": 0,
+  "transfer_manifest_sha256": "6137f5c23f0396fe1aef9fc877b07a64ee5917f56bb616cde782ab699aa01926",
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

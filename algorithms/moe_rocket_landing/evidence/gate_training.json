@@ -1,0 +1,21 @@
+{
+  "updates": 800,
+  "loss_samples": [
+    2.3714447021484375,
+    0.443243145942688,
+    0.37789130210876465,
+    0.31104370951652527,
+    0.20676058530807495,
+    0.12367700040340424,
+    0.16651101410388947,
+    0.1141929030418396,
+    0.08955982327461243
+  ],
+  "positive_examples": 36,
+  "retention_examples": 23746,
+  "positive_class_accuracy": 0.8888888955116272,
+  "retention_accuracy": 0.9771329760551453,
+  "threshold": 0.98,
+  "threshold_source": "training-only 99.9th percentile of retention scores, clipped [.65,.98]",
+  "wall_seconds": 0.42002733300614636
+}

@@ -1,0 +1,11 @@
+{
+  "triggered": 38,
+  "gained_triggered": 2,
+  "gained_untriggered": 22,
+  "lost_triggered": 1,
+  "lost_untriggered": 17,
+  "program_counts": {
+    "8": 37,
+    "5": 1
+  }
+}

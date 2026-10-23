@@ -1,0 +1,8 @@
+{
+  "checkpoint": "student-final.pt",
+  "legacy_activation_ceiling_preserved": 150.0,
+  "checked_action_rows": 15360,
+  "maximum_absolute_difference": 0.0,
+  "physical_simulation_calls": 0,
+  "new_environment_transitions": 0
+}

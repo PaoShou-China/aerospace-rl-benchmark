@@ -1,0 +1,311 @@
+{
+  "snapshot_date": "2026-10-23",
+  "scope": "Historical completed development records; training budgets differ. Not a controlled component ablation.",
+  "records": [
+    {
+      "method": "Phase MoE DAgger r3",
+      "source_record": "results/direct-phase-dagger-r3/development512.json",
+      "source_sha256": "ccabbecb3180000a1c991aaf267ff3a935c57188c99414e7f79c28ed585e51e6",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 405,
+        "success_rate": 0.791015625,
+        "wilson_95_interval": [
+          0.7536951237380339,
+          0.824001753673257
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 107
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.001953125,
+        "final_settled_wilson_95_interval": [
+          0.00034485776154337486,
+          0.010979278212421853
+        ],
+        "success_then_failure": 243
+      }
+    },
+    {
+      "method": "Continued DAgger expert",
+      "source_record": "results/local-ppo95-v1/parent_reference/development.json",
+      "source_sha256": "fcb1756d6092b7670d7fc6c0599b289774bb5c7c7c05eea7ff5038463e82c9f2",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 432,
+        "success_rate": 0.84375,
+        "wilson_95_interval": [
+          0.8097523524421957,
+          0.8726278517483224
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 80
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.001953125,
+        "final_settled_wilson_95_interval": [
+          0.00034485776154337486,
+          0.010979278212421853
+        ],
+        "success_then_failure": 228
+      }
+    },
+    {
+      "method": "Initial-state expert selector",
+      "source_record": "results/local-group-selector-v1/development512.json",
+      "source_sha256": "a027a59eca84a5b4e0d18ba9f81fe23ab930721a1ed3f63140d17e45aa79f867",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 438,
+        "success_rate": 0.85546875,
+        "wilson_95_interval": [
+          0.8223623276661127,
+          0.8832808380309003
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 71,
+          "timeout": 3
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 253
+      }
+    },
+    {
+      "method": "Long-credit ignition PPO",
+      "source_record": "results/local-ppo95-v1/long_credit_ignition/development512.json",
+      "source_sha256": "84e31e5fac1a6d580f6cb567e327b806b3ea42dc6eef9176f333acc6f3e3b0ef",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 424,
+        "success_rate": 0.828125,
+        "wilson_95_interval": [
+          0.7930328989697278,
+          0.8583300232121304
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 85,
+          "timeout": 3
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 239
+      }
+    },
+    {
+      "method": "Reference-KL PPO continuation",
+      "source_record": "results/local-selector-ppo-control-v1/development512.json",
+      "source_sha256": "2dc81871d836778cf466d593623c8d8ce5e6e74e8f0f9a4fb86ec8bf0a7a8ff0",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 406,
+        "success_rate": 0.79296875,
+        "wilson_95_interval": [
+          0.755753822741615,
+          0.8258202149207585
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 104,
+          "timeout": 2
+        },
+        "final_settled_successes": 3,
+        "final_settled_rate": 0.005859375,
+        "final_settled_wilson_95_interval": [
+          0.0019946757921860923,
+          0.017083780683944113
+        ],
+        "success_then_failure": 235
+      }
+    },
+    {
+      "method": "Episode-return RLOO",
+      "source_record": "results/local-group-return-v1/development512.json",
+      "source_sha256": "2dc6c1145433c184b35f267be45d55526d4856342e7c70dbe805830446f7e52d",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 397,
+        "success_rate": 0.775390625,
+        "wilson_95_interval": [
+          0.7372680468181392,
+          0.8094115485844917
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 114,
+          "timeout": 1
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.001953125,
+        "final_settled_wilson_95_interval": [
+          0.00034485776154337486,
+          0.010979278212421853
+        ],
+        "success_then_failure": 228
+      }
+    },
+    {
+      "method": "Touchdown expert selector",
+      "source_record": "results/local-touchdown-selector-v1/development512.json",
+      "source_sha256": "899eb25820d6656c3852eabc1575d772f6c7795dcc68b2dbdf002f65d9312ce9",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 423,
+        "success_rate": 0.826171875,
+        "wilson_95_interval": [
+          0.7909499792318174,
+          0.8565357826989582
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 88,
+          "timeout": 1
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 242
+      }
+    },
+    {
+      "method": "Event repair selector",
+      "source_record": "results/local-repair-event-v1/development512.json",
+      "source_sha256": "667a0e9cdbe1f59aa9f88f1cef514465b00527a01e7318190e4f0993a64c1785",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 408,
+        "success_rate": 0.796875,
+        "wilson_95_interval": [
+          0.7598748962512072,
+          0.8294534619133311
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 104
+        },
+        "final_settled_successes": 3,
+        "final_settled_rate": 0.005859375,
+        "final_settled_wilson_95_interval": [
+          0.0019946757921860923,
+          0.017083780683944113
+        ],
+        "success_then_failure": 230
+      }
+    },
+    {
+      "method": "Unified physics PPO, GPU",
+      "source_record": "results/gpu-unified-physics-v6-final/development512.json",
+      "source_sha256": "4338819811fcd3dff27e4ead6729527280b00593f7fabf46d7cbf4d5b8d998fd",
+      "backend": "gpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 428,
+        "success_rate": 0.8359375,
+        "wilson_95_interval": [
+          0.8013798695270152,
+          0.8654916936591729
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 84
+        },
+        "final_settled_successes": 3,
+        "final_settled_rate": 0.005859375,
+        "final_settled_wilson_95_interval": [
+          0.0019946757921860923,
+          0.017083780683944113
+        ],
+        "success_then_failure": 214
+      }
+    },
+    {
+      "method": "Terminal-BC PPO",
+      "source_record": "results/practical-ppo-moe-terminal-bc-v1/development512.json",
+      "source_sha256": "e1e5b0c51ec69f4840bd87f95292a0df165534516f8770c859fb06bcf35c1181",
+      "backend": "cpu",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 405,
+        "success_rate": 0.791015625,
+        "wilson_95_interval": [
+          0.7536951237380339,
+          0.824001753673257
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 107
+        },
+        "final_settled_successes": 2,
+        "final_settled_rate": 0.00390625,
+        "final_settled_wilson_95_interval": [
+          0.0010718890803936704,
+          0.014129407144654047
+        ],
+        "success_then_failure": 231
+      }
+    }
+  ]
+}

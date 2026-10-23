@@ -1,0 +1,65 @@
+{
+  "method": "FastTD3-inspired restricted one-step distributional replay",
+  "baseline_report": "results/local-group-return-v1/baseline-development512.json",
+  "baseline_report_sha256": "34c436104cae79d1993e2f97457e604bafd6b9ea0f61bea978094baa94bd6ca7",
+  "candidate_report": "results/local-replay-refine-v1/development128.json",
+  "baseline_mean_parameters_equal_to_parent": true,
+  "baseline_distribution_differs_but_evaluation_is_deterministic": true,
+  "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+  "paired_initial_states": true,
+  "baseline_summary": {
+    "denominator": 128,
+    "episodes_finished": 128,
+    "incomplete_episodes": 0,
+    "successes": 100,
+    "success_rate": 0.78125,
+    "wilson_95_interval": [
+      0.7020157030455345,
+      0.8440947590506169
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 28
+    },
+    "final_settled_successes": 0,
+    "final_settled_rate": 0.0,
+    "final_settled_wilson_95_interval": [
+      0.0,
+      0.029136956273508416
+    ],
+    "success_then_failure": 56
+  },
+  "candidate_summary": {
+    "denominator": 128,
+    "episodes_finished": 128,
+    "incomplete_episodes": 0,
+    "successes": 97,
+    "success_rate": 0.7578125,
+    "wilson_95_interval": [
+      0.6767886369138937,
+      0.8238126200075785
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 31
+    },
+    "final_settled_successes": 0,
+    "final_settled_rate": 0.0,
+    "final_settled_wilson_95_interval": [
+      0.0,
+      0.029136956273508416
+    ],
+    "success_then_failure": 53
+  },
+  "gain_percentage_points": -2.34375,
+  "improved_episodes": 15,
+  "regressed_episodes": 18,
+  "baseline_eval_rerun": false,
+  "sealed_test_used": false,
+  "development_used_for_training_or_selection": false,
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

@@ -1,0 +1,8 @@
+torch==2.14.1
+tensordict==0.15.2
+genesis-world==1.4.4
+rsl-rl-lib==5.5.1
+tensorboard==2.21.0
+numpy==2.4.6
+scipy==1.17.1
+PyYAML==6.0.3

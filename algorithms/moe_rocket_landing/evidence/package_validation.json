@@ -1,0 +1,13 @@
+{
+  "kind": "offline_packaged_policy_equivalence",
+  "checked_action_rows": 15360,
+  "maximum_absolute_difference": 0.0,
+  "episode_memory_reset_rows": 352,
+  "legacy_activation_ceiling_m": 150,
+  "new_environment_transitions": 0,
+  "full_development_reevaluation": false,
+  "checkpoint_sha256": "1d5fcc65a01271325673e764d80771e01db2ba6af61abadaadb70d9e102a38b5",
+  "observation_source": "original training trace screen-000, sampled every 10 control steps",
+  "reference": "saved measured v1 policy modules",
+  "scope": "Deterministic policy and intervention-memory equivalence on saved observations; not a new physical rollout."
+}

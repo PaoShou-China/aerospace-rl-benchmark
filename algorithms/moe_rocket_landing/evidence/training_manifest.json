@@ -1,0 +1,55 @@
+{
+  "method": "counterfactual finite-feedback program search and learned local intervention gate",
+  "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+  "backend": "cpu",
+  "engine_precision": 32,
+  "parent": "results/local-group-selector-v1",
+  "parent_sha256": "68397471e5093b630c321e2617d2a6d75316ec8348986ba20952be07120abf78",
+  "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+  "overlays": {
+    "rocket_phase_policy.py": "11f2dac4f7e312b2caefdd3e93d0f0b4966a7317dd37205ab32f4de13f08b3fe",
+    "rocket_expert_selector.py": "9215b99dd641359619d126813ef22e9d95248553517b057402fba77a83a44b96",
+    "rocket_repair_program.py": "273a9fb82449f4c63845c88e139a2106e2990414feebf23a7eea7de67ab7a768",
+    "rocket_counterfactual_repair.py": "ec0062cf2bbdf2b10891c68fef3aeac18fb226af23cc94d1b418ded90653f3d9"
+  },
+  "launcher_sha256": "48ff8c744d8e37e23db862d0d9d3790dafc69ee97bfcc276800880e4fdaf8a36",
+  "train_seeds": {
+    "screening": 710007,
+    "neighborhood": 720007,
+    "on_policy": 730007
+  },
+  "development_seeds": [
+    1000007,
+    2000007,
+    3000007,
+    4000007
+  ],
+  "physical_dynamics_modified": false,
+  "success_predicate_modified": false,
+  "termination_modified": false,
+  "state_restoration_used": false,
+  "training_uses_development_labels": false,
+  "sealed_test_used": false,
+  "teacher_calls": 0,
+  "max_steps": 1200,
+  "training_cap": 1920000,
+  "search": {
+    "max_failure_cases": 16,
+    "initial_candidates_per_case": 16,
+    "disturbances": 2,
+    "rounds": 2,
+    "backtrack_control_steps": [
+      16,
+      64,
+      256,
+      512
+    ],
+    "round2_allocation": "8 candidates per case minimum plus gain/near-success weighted allocation",
+    "replica0": "unchanged natural RNG stream",
+    "replica1": "fresh paired future stream at earliest candidate intervention"
+  },
+  "proposal_refinement": "last 256 training episodes are 128 parent/student pairs instead of 256 unpaired students",
+  "budget_counts": "all natural-reset prefixes and full vector advances; optimization samples are separate",
+  "evaluation_protocol": "upstream_source_first_episode_full_horizon_v1",
+  "max_parallel_environments": 256
+}

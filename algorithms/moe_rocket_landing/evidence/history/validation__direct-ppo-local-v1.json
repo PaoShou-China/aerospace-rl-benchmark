@@ -1,0 +1,832 @@
+{
+  "kind": "single-seed local direct PPO development ablation",
+  "arms": {
+    "upstream_original": {
+      "training": {
+        "status": "completed",
+        "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+        "num_envs": 128,
+        "updates": 128,
+        "backend": "cpu",
+        "torch_threads": 4,
+        "original_budget": {
+          "num_envs": 1024,
+          "updates": 1000,
+          "online_transitions": 65536000
+        },
+        "online_transitions": 1048576,
+        "expert_transitions": 65536,
+        "full_upstream_budget": false,
+        "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+        "launcher_sha256": "32b38b3b73c19e6ba7b13364be1e572ddd927b24e48bdbc5ba694672d4af5f7e",
+        "local_algorithm_or_reward_fixes_applied": false,
+        "policy": "upstream direct PPO with upstream BC warm start",
+        "evaluation_is_final_acceptance": false,
+        "packages": {
+          "torch": "2.14.1",
+          "genesis-world": "1.4.4",
+          "rsl-rl-lib": "5.5.1",
+          "tensordict": "0.15.2"
+        },
+        "engine_dtype": "torch.float32",
+        "wrapper_dtype": "torch.float64",
+        "actor_class": "FlashResMLPModel",
+        "algorithm_class": "PPO",
+        "build_seconds": 13.528582041995833,
+        "pretraining_seconds_including_collection": 70.32411195800523,
+        "completed_training_episodes": 1368,
+        "successful_training_episodes": 0,
+        "training_success_rate": 0.0,
+        "checkpoint_sha256": "a0587cf58da081bf63ed84efb9c9ec2bc2057206eb8ba371662cdf7bbd26c638",
+        "wall_seconds": 574.1276862499944
+      },
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 0,
+        "success_rate": 0.0,
+        "wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 512
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 0
+      },
+      "diagnostic": {
+        "median_episode_seconds": 19.425,
+        "median_terminal_speed_m_s": 12.45121944770129,
+        "median_terminal_spin_rad_s": 7.356605105760784,
+        "median_remaining_fuel_fraction": 0.028645268586699142,
+        "fatal_episodes": 512,
+        "bounds_episodes": 0,
+        "timeout_episodes": 0
+      },
+      "report_sha256": "06b2fa5dce89cd222321bce1745851682daf9eb344bf75759dfd2d5c63c014a0"
+    },
+    "original": {
+      "training": {
+        "status": "completed",
+        "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+        "num_envs": 128,
+        "updates": 128,
+        "backend": "cpu",
+        "torch_threads": 2,
+        "online_transitions": 1048576,
+        "expert_transitions": 65536,
+        "full_upstream_budget": false,
+        "local_algorithm_or_reward_fixes_applied": true,
+        "environment_modified": false,
+        "control": "direct",
+        "reward_mode": "original",
+        "seed": 7,
+        "bc_steps": 512,
+        "bc_epochs": 100,
+        "bc_fit_critic": true,
+        "algorithm_changes": [
+          "forward-pure Flash trunk",
+          "post-optimizer weight projection in BC and PPO"
+        ],
+        "timeout_bootstrap": "upstream V(s_t) retained as shared limitation",
+        "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+        "candidate_manifest_sha256": "895c2e4927ba55d6aeb04348224f27f63fabd04f93db9a55f4433018267e073e",
+        "evaluation_is_final_acceptance": false,
+        "packages": {
+          "torch": "2.14.1",
+          "genesis-world": "1.4.4",
+          "rsl-rl-lib": "5.5.1",
+          "tensordict": "0.15.2"
+        },
+        "engine_dtype": "torch.float32",
+        "wrapper_dtype": "torch.float64",
+        "actor_class": "StableFlashResMLPModel",
+        "algorithm_class": "ProjectedFlashPPO",
+        "build_seconds": 8.78047687500657,
+        "pretraining_seconds_including_collection": 222.79066658299416,
+        "completed_training_episodes": 1674,
+        "successful_training_episodes": 0,
+        "training_success_rate": 0.0,
+        "checkpoint_sha256": "55852707fefd6abec39b874336427245c982a68a5b71d974abc8f4636b431bf8",
+        "wall_seconds": 938.7386651669949
+      },
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 0,
+        "success_rate": 0.0,
+        "wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 512
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 0
+      },
+      "diagnostic": {
+        "median_episode_seconds": 14.175,
+        "median_terminal_speed_m_s": 13.529691483497547,
+        "median_terminal_spin_rad_s": 16.43772634758853,
+        "median_remaining_fuel_fraction": 0.028690418362638206,
+        "fatal_episodes": 512,
+        "bounds_episodes": 0,
+        "timeout_episodes": 0
+      },
+      "expert_coverage": {
+        "transitions": 65536,
+        "collection_steps": 512,
+        "low_altitude_samples_z_below_10m": 23389,
+        "pad_contact_observation_samples": 0,
+        "completed_episodes": 0,
+        "completed_successes": 0,
+        "reward_min": -15.997806549072266,
+        "reward_max": 0.7700113654136658,
+        "reward_mean": -8.25384521484375,
+        "observation_sha256": "8dce1496ab618f127449af38d487815f8474bf606d7ff8a17c43e9ecae4be582",
+        "actions_sha256": "6a37cbbcc4c67b224ae16a45c67317cddd1d949f1e922770895acbe8c94ce001",
+        "truncated_return_tail_is_zero": true
+      },
+      "change_vs_upstream": {
+        "matched_episodes": 512,
+        "initial_states_equal": true,
+        "became_successful": 0,
+        "became_unsuccessful": 0,
+        "success_rate_delta_percentage_points": 0.0
+      },
+      "report_sha256": "5375a0ae533a80bd916b7bb1ce52062868702336f5912605afa824a5adc4dc73"
+    },
+    "legacy_scaled": {
+      "training": {
+        "status": "completed",
+        "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+        "num_envs": 128,
+        "updates": 128,
+        "backend": "cpu",
+        "torch_threads": 2,
+        "online_transitions": 1048576,
+        "expert_transitions": 65536,
+        "full_upstream_budget": false,
+        "local_algorithm_or_reward_fixes_applied": true,
+        "environment_modified": false,
+        "control": "direct",
+        "reward_mode": "legacy_scaled",
+        "seed": 7,
+        "bc_steps": 512,
+        "bc_epochs": 100,
+        "bc_fit_critic": true,
+        "algorithm_changes": [
+          "forward-pure Flash trunk",
+          "post-optimizer weight projection in BC and PPO"
+        ],
+        "timeout_bootstrap": "upstream V(s_t) retained as shared limitation",
+        "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+        "candidate_manifest_sha256": "895c2e4927ba55d6aeb04348224f27f63fabd04f93db9a55f4433018267e073e",
+        "evaluation_is_final_acceptance": false,
+        "packages": {
+          "torch": "2.14.1",
+          "genesis-world": "1.4.4",
+          "rsl-rl-lib": "5.5.1",
+          "tensordict": "0.15.2"
+        },
+        "engine_dtype": "torch.float32",
+        "wrapper_dtype": "torch.float64",
+        "actor_class": "StableFlashResMLPModel",
+        "algorithm_class": "ProjectedFlashPPO",
+        "build_seconds": 8.782900708989473,
+        "pretraining_seconds_including_collection": 240.83085204100644,
+        "completed_training_episodes": 2123,
+        "successful_training_episodes": 0,
+        "training_success_rate": 0.0,
+        "checkpoint_sha256": "e710540725f38a9b0e80dcb08bd9ded779103a8ae60f140bb7b707fd36e89259",
+        "wall_seconds": 979.1370867499936
+      },
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 0,
+        "success_rate": 0.0,
+        "wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 512
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 0
+      },
+      "diagnostic": {
+        "median_episode_seconds": 5.7125,
+        "median_terminal_speed_m_s": 4.566063174108751,
+        "median_terminal_spin_rad_s": 1.6712001207182383,
+        "median_remaining_fuel_fraction": 0.04343602974178813,
+        "fatal_episodes": 512,
+        "bounds_episodes": 0,
+        "timeout_episodes": 0
+      },
+      "expert_coverage": {
+        "transitions": 65536,
+        "collection_steps": 512,
+        "low_altitude_samples_z_below_10m": 23389,
+        "pad_contact_observation_samples": 0,
+        "completed_episodes": 0,
+        "completed_successes": 0,
+        "reward_min": -0.15997806191444397,
+        "reward_max": 0.007700113579630852,
+        "reward_mean": -0.08253845572471619,
+        "observation_sha256": "8dce1496ab618f127449af38d487815f8474bf606d7ff8a17c43e9ecae4be582",
+        "actions_sha256": "6a37cbbcc4c67b224ae16a45c67317cddd1d949f1e922770895acbe8c94ce001",
+        "truncated_return_tail_is_zero": true
+      },
+      "change_vs_upstream": {
+        "matched_episodes": 512,
+        "initial_states_equal": true,
+        "became_successful": 0,
+        "became_unsuccessful": 0,
+        "success_rate_delta_percentage_points": 0.0
+      },
+      "report_sha256": "8017e26723b1da6631c72b82302f4bd549a0f5064bc61859b7afcffab5843773",
+      "change_vs_fixed_stack_original_reward": {
+        "matched_episodes": 512,
+        "initial_states_equal": true,
+        "became_successful": 0,
+        "became_unsuccessful": 0,
+        "success_rate_delta_percentage_points": 0.0
+      }
+    },
+    "bounded_events": {
+      "training": {
+        "status": "completed",
+        "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+        "num_envs": 128,
+        "updates": 128,
+        "backend": "cpu",
+        "torch_threads": 2,
+        "online_transitions": 1048576,
+        "expert_transitions": 65536,
+        "full_upstream_budget": false,
+        "local_algorithm_or_reward_fixes_applied": true,
+        "environment_modified": false,
+        "control": "direct",
+        "reward_mode": "bounded_events",
+        "seed": 7,
+        "bc_steps": 512,
+        "bc_epochs": 100,
+        "bc_fit_critic": true,
+        "algorithm_changes": [
+          "forward-pure Flash trunk",
+          "post-optimizer weight projection in BC and PPO"
+        ],
+        "timeout_bootstrap": "upstream V(s_t) retained as shared limitation",
+        "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+        "candidate_manifest_sha256": "895c2e4927ba55d6aeb04348224f27f63fabd04f93db9a55f4433018267e073e",
+        "evaluation_is_final_acceptance": false,
+        "packages": {
+          "torch": "2.14.1",
+          "genesis-world": "1.4.4",
+          "rsl-rl-lib": "5.5.1",
+          "tensordict": "0.15.2"
+        },
+        "engine_dtype": "torch.float32",
+        "wrapper_dtype": "torch.float64",
+        "actor_class": "StableFlashResMLPModel",
+        "algorithm_class": "ProjectedFlashPPO",
+        "build_seconds": 8.521243291004794,
+        "pretraining_seconds_including_collection": 240.7187128749938,
+        "completed_training_episodes": 1684,
+        "successful_training_episodes": 0,
+        "training_success_rate": 0.0,
+        "checkpoint_sha256": "7172410b05ee7eb78e89e12fa85c9f75188fe6e42a09bc483de444c2c18d8acd",
+        "wall_seconds": 952.4649846249959
+      },
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 0,
+        "success_rate": 0.0,
+        "wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "out_of_bounds": 109,
+          "fatal_collision": 392,
+          "timeout": 11
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 0
+      },
+      "diagnostic": {
+        "median_episode_seconds": 20.65,
+        "median_terminal_speed_m_s": 21.51378479159684,
+        "median_terminal_spin_rad_s": 3.5011953023461366,
+        "median_remaining_fuel_fraction": 0.01568877626918741,
+        "fatal_episodes": 392,
+        "bounds_episodes": 109,
+        "timeout_episodes": 11
+      },
+      "expert_coverage": {
+        "transitions": 65536,
+        "collection_steps": 512,
+        "low_altitude_samples_z_below_10m": 23389,
+        "pad_contact_observation_samples": 0,
+        "completed_episodes": 0,
+        "completed_successes": 0,
+        "reward_min": -0.018032964318990707,
+        "reward_max": 0.023478850722312927,
+        "reward_mean": 0.002074659802019596,
+        "observation_sha256": "8dce1496ab618f127449af38d487815f8474bf606d7ff8a17c43e9ecae4be582",
+        "actions_sha256": "6a37cbbcc4c67b224ae16a45c67317cddd1d949f1e922770895acbe8c94ce001",
+        "truncated_return_tail_is_zero": true
+      },
+      "change_vs_upstream": {
+        "matched_episodes": 512,
+        "initial_states_equal": true,
+        "became_successful": 0,
+        "became_unsuccessful": 0,
+        "success_rate_delta_percentage_points": 0.0
+      },
+      "report_sha256": "bcc3b30f39bca1f7ed1d5fe533fa32c15ec0f096ba6e8375869271f871217768",
+      "change_vs_fixed_stack_original_reward": {
+        "matched_episodes": 512,
+        "initial_states_equal": true,
+        "became_successful": 0,
+        "became_unsuccessful": 0,
+        "success_rate_delta_percentage_points": 0.0
+      }
+    }
+  },
+  "fixed_stack_bc": {
+    "summary": {
+      "denominator": 512,
+      "episodes_finished": 512,
+      "incomplete_episodes": 0,
+      "successes": 0,
+      "success_rate": 0.0,
+      "wilson_95_interval": [
+        0.0,
+        0.007446975722882739
+      ],
+      "point_estimate_at_least_99_percent": false,
+      "wilson_lower_at_least_99_percent": false,
+      "complete_evaluation": true,
+      "failure_counts": {
+        "fatal_collision": 512
+      },
+      "final_settled_successes": 0,
+      "final_settled_rate": 0.0,
+      "final_settled_wilson_95_interval": [
+        0.0,
+        0.007446975722882739
+      ],
+      "success_then_failure": 0
+    },
+    "diagnostic": {
+      "median_episode_seconds": 5.1625000000000005,
+      "median_terminal_speed_m_s": 8.471397966944325,
+      "median_terminal_spin_rad_s": 1.5233701558732002,
+      "median_remaining_fuel_fraction": 0.04736232793996992,
+      "fatal_episodes": 512,
+      "bounds_episodes": 0,
+      "timeout_episodes": 0
+    }
+  },
+  "expert_states_actions_equal_across_reward_arms": true,
+  "evaluation_episodes_per_arm": 512,
+  "evaluation_horizon": 1200,
+  "all_arms_engine_float32": true,
+  "all_evaluation_original_environment": true,
+  "sealed_test_used": false,
+  "acceptance_passed": false,
+  "limitations": [
+    "One training seed and 1.6 percent of upstream default online budget",
+    "Shared upstream timeout bootstrap uses V(s_t)",
+    "BC critic retains zero-tail empirical returns",
+    "Raw baseline used 4 Torch threads; candidate training used 2; wall times are not isolated speed comparisons"
+  ],
+  "full_horizon_bc_diagnostic": {
+    "training": {
+      "status": "completed",
+      "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+      "num_envs": 128,
+      "updates": 0,
+      "backend": "cpu",
+      "torch_threads": 2,
+      "online_transitions": 0,
+      "expert_transitions": 153600,
+      "full_upstream_budget": false,
+      "local_algorithm_or_reward_fixes_applied": true,
+      "environment_modified": false,
+      "control": "direct",
+      "reward_mode": "original",
+      "seed": 7,
+      "bc_steps": 1200,
+      "bc_epochs": 100,
+      "bc_fit_critic": false,
+      "training_kind": "BC only diagnostic",
+      "algorithm_changes": [
+        "forward-pure Flash trunk",
+        "post-optimizer weight projection in BC and PPO"
+      ],
+      "timeout_bootstrap": "upstream V(s_t) retained as shared limitation",
+      "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+      "candidate_manifest_sha256": "fb85cc2b26af4f50034af88bf69a38089ff4b780db7688a360f3d5658849c80a",
+      "evaluation_is_final_acceptance": false,
+      "packages": {
+        "torch": "2.14.1",
+        "genesis-world": "1.4.4",
+        "rsl-rl-lib": "5.5.1",
+        "tensordict": "0.15.2"
+      },
+      "engine_dtype": "torch.float32",
+      "wrapper_dtype": "torch.float64",
+      "actor_class": "StableFlashResMLPModel",
+      "algorithm_class": "ProjectedFlashPPO",
+      "build_seconds": 8.939823833003175,
+      "pretraining_seconds_including_collection": 94.52228762500454,
+      "completed_training_episodes": 0,
+      "successful_training_episodes": 0,
+      "training_success_rate": null,
+      "checkpoint_sha256": "2d181e5c41a6fd3404b0e362852c58aeb61f855b5727db6bd0f5a3ee188d24b5",
+      "wall_seconds": 103.65980170799594
+    },
+    "summary": {
+      "denominator": 512,
+      "episodes_finished": 512,
+      "incomplete_episodes": 0,
+      "successes": 0,
+      "success_rate": 0.0,
+      "wilson_95_interval": [
+        0.0,
+        0.007446975722882739
+      ],
+      "point_estimate_at_least_99_percent": false,
+      "wilson_lower_at_least_99_percent": false,
+      "complete_evaluation": true,
+      "failure_counts": {
+        "fatal_collision": 508,
+        "out_of_bounds": 4
+      },
+      "final_settled_successes": 0,
+      "final_settled_rate": 0.0,
+      "final_settled_wilson_95_interval": [
+        0.0,
+        0.007446975722882739
+      ],
+      "success_then_failure": 0
+    },
+    "diagnostic": {
+      "median_episode_seconds": 19.6125,
+      "median_terminal_speed_m_s": 13.25328424108918,
+      "median_terminal_spin_rad_s": 14.458032365571759,
+      "median_remaining_fuel_fraction": 0.02755706781689706,
+      "fatal_episodes": 508,
+      "bounds_episodes": 4,
+      "timeout_episodes": 0
+    },
+    "expert_coverage": {
+      "transitions": 153600,
+      "collection_steps": 1200,
+      "low_altitude_samples_z_below_10m": 93566,
+      "pad_contact_observation_samples": 21590,
+      "completed_episodes": 128,
+      "completed_successes": 107,
+      "reward_min": -39.7932243347168,
+      "reward_max": 79.80908966064453,
+      "reward_mean": 6.19349479675293,
+      "observation_sha256": "d899da7f78bd4ba3335597060eb5449726c6c696a8ed89653dc85362fd1764f8",
+      "actions_sha256": "33dfc0562f6059b7a19a44f71cda4694c9f9fe509c7668f52f3cdc9d1d4b1022",
+      "truncated_return_tail_is_zero": true
+    },
+    "imitation": {
+      "all": {
+        "count": 153600,
+        "action_mse": [
+          0.024008609354496002,
+          0.02334456518292427,
+          0.010457059368491173,
+          0.13380418717861176,
+          0.0014355599414557219,
+          0.015265453606843948,
+          0.015880592167377472
+        ],
+        "ignition_disagreement_rate": 0.04460286458333333
+      },
+      "above_10m": {
+        "count": 60034,
+        "action_mse": [
+          0.006171508226543665,
+          0.005691479425877333,
+          0.0007294739480130374,
+          0.09929853677749634,
+          0.00254170224070549,
+          0.025429530069231987,
+          0.026583004742860794
+        ],
+        "ignition_disagreement_rate": 0.03044941199986674
+      },
+      "below_10m": {
+        "count": 93566,
+        "action_mse": [
+          0.03545328229665756,
+          0.03467117249965668,
+          0.01669849269092083,
+          0.15594379603862762,
+          0.0007258345722220838,
+          0.008743958547711372,
+          0.009013688191771507
+        ],
+        "ignition_disagreement_rate": 0.05368403052390826
+      },
+      "pad_contact": {
+        "count": 21590,
+        "action_mse": [
+          0.029615167528390884,
+          0.026870615780353546,
+          0.02552594058215618,
+          0.0009550385875627398,
+          0.0004502751398831606,
+          0.00043649598956108093,
+          0.0007072826265357435
+        ],
+        "ignition_disagreement_rate": 0.0
+      }
+    },
+    "change_vs_512_step_bc": {
+      "matched_episodes": 512,
+      "initial_states_equal": true,
+      "became_successful": 0,
+      "became_unsuccessful": 0,
+      "success_rate_delta_percentage_points": 0.0
+    },
+    "extra_teacher_data_accounted_separately": true
+  },
+  "oracle_channel_diagnostics": {
+    "not_a_ppo_success_rate": true,
+    "eligible_for_policy_selection": false,
+    "paired_episodes": 128,
+    "modes": {
+      "policy_teacher_ignition": {
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 0,
+          "success_rate": 0.0,
+          "wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "timeout": 40,
+            "fatal_collision": 88
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 0
+        },
+        "diagnostic": {
+          "median_episode_seconds": 25.275000000000002,
+          "median_terminal_speed_m_s": 8.879899678566673,
+          "median_terminal_spin_rad_s": 5.194150119895085,
+          "median_remaining_fuel_fraction": 0.025955218764206867,
+          "fatal_episodes": 88,
+          "bounds_episodes": 0,
+          "timeout_episodes": 40
+        },
+        "channel_sources": [
+          {
+            "index": 0,
+            "name": "finlet_x",
+            "source": "policy"
+          },
+          {
+            "index": 1,
+            "name": "finlet_y",
+            "source": "policy"
+          },
+          {
+            "index": 2,
+            "name": "finlet_yaw",
+            "source": "policy"
+          },
+          {
+            "index": 3,
+            "name": "ignition",
+            "source": "teacher"
+          },
+          {
+            "index": 4,
+            "name": "throttle",
+            "source": "policy"
+          },
+          {
+            "index": 5,
+            "name": "gimbal_x",
+            "source": "policy"
+          },
+          {
+            "index": 6,
+            "name": "gimbal_y",
+            "source": "policy"
+          }
+        ],
+        "report_sha256": "ca9da4b91e960592664e68efa85098de1bd5940c8435a3c424224a3202045fdf"
+      },
+      "teacher_policy_ignition": {
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 82,
+          "success_rate": 0.640625,
+          "wilson_95_interval": [
+            0.5545225368033344,
+            0.7185326942447414
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "fatal_collision": 46
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 52
+        },
+        "diagnostic": {
+          "median_episode_seconds": 23.1875,
+          "median_terminal_speed_m_s": 0.6610932711751619,
+          "median_terminal_spin_rad_s": 0.6086812673643391,
+          "median_remaining_fuel_fraction": 0.03258995221398867,
+          "fatal_episodes": 98,
+          "bounds_episodes": 0,
+          "timeout_episodes": 30
+        },
+        "channel_sources": [
+          {
+            "index": 0,
+            "name": "finlet_x",
+            "source": "teacher"
+          },
+          {
+            "index": 1,
+            "name": "finlet_y",
+            "source": "teacher"
+          },
+          {
+            "index": 2,
+            "name": "finlet_yaw",
+            "source": "teacher"
+          },
+          {
+            "index": 3,
+            "name": "ignition",
+            "source": "policy"
+          },
+          {
+            "index": 4,
+            "name": "throttle",
+            "source": "teacher"
+          },
+          {
+            "index": 5,
+            "name": "gimbal_x",
+            "source": "teacher"
+          },
+          {
+            "index": 6,
+            "name": "gimbal_y",
+            "source": "teacher"
+          }
+        ],
+        "report_sha256": "454fa753d1d07a74ea4c23fd85df302e5f1176a0ec9aaceef47dd9bfcb44ffbc"
+      },
+      "teacher": {
+        "summary": {
+          "denominator": 128,
+          "episodes_finished": 128,
+          "incomplete_episodes": 0,
+          "successes": 112,
+          "success_rate": 0.875,
+          "wilson_95_interval": [
+            0.8065737291824854,
+            0.9215735536123834
+          ],
+          "point_estimate_at_least_99_percent": false,
+          "wilson_lower_at_least_99_percent": false,
+          "complete_evaluation": true,
+          "failure_counts": {
+            "fatal_collision": 15,
+            "timeout": 1
+          },
+          "final_settled_successes": 0,
+          "final_settled_rate": 0.0,
+          "final_settled_wilson_95_interval": [
+            0.0,
+            0.029136956273508416
+          ],
+          "success_then_failure": 54
+        },
+        "diagnostic": {
+          "median_episode_seconds": 28.7125,
+          "median_terminal_speed_m_s": 0.3281479462404482,
+          "median_terminal_spin_rad_s": 0.23595156849502422,
+          "median_remaining_fuel_fraction": 0.033412882497302655,
+          "fatal_episodes": 69,
+          "bounds_episodes": 0,
+          "timeout_episodes": 59
+        },
+        "channel_sources": [
+          {
+            "index": 0,
+            "name": "finlet_x",
+            "source": "teacher"
+          },
+          {
+            "index": 1,
+            "name": "finlet_y",
+            "source": "teacher"
+          },
+          {
+            "index": 2,
+            "name": "finlet_yaw",
+            "source": "teacher"
+          },
+          {
+            "index": 3,
+            "name": "ignition",
+            "source": "teacher"
+          },
+          {
+            "index": 4,
+            "name": "throttle",
+            "source": "teacher"
+          },
+          {
+            "index": 5,
+            "name": "gimbal_x",
+            "source": "teacher"
+          },
+          {
+            "index": 6,
+            "name": "gimbal_y",
+            "source": "teacher"
+          }
+        ],
+        "report_sha256": "8f55fd7bec9e0a6cf289ecf997130ba924b8a90b4716b9cfe4e89b3d3c90017c"
+      }
+    }
+  },
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

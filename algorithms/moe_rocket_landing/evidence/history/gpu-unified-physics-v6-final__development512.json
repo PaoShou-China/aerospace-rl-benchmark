@@ -1,0 +1,146 @@
+{
+  "summary": {
+    "denominator": 512,
+    "episodes_finished": 512,
+    "incomplete_episodes": 0,
+    "successes": 428,
+    "success_rate": 0.8359375,
+    "wilson_95_interval": [
+      0.8013798695270152,
+      0.8654916936591729
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 84
+    },
+    "final_settled_successes": 3,
+    "final_settled_rate": 0.005859375,
+    "final_settled_wilson_95_interval": [
+      0.0019946757921860923,
+      0.017083780683944113
+    ],
+    "success_then_failure": 214
+  },
+  "cohorts": [
+    {
+      "seed": 1000007,
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 106,
+        "success_rate": 0.828125,
+        "wilson_95_interval": [
+          0.7534600319269827,
+          0.8836688405185272
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 22
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 59
+      },
+      "initial_state_sha256": "7c708f96ef98aa49df10e9409dc89709467d79159712a5e5d0f341fc37ca153b"
+    },
+    {
+      "seed": 2000007,
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 109,
+        "success_rate": 0.8515625,
+        "wilson_95_interval": [
+          0.7797727087736895,
+          0.9028653688464999
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 19
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.0078125,
+        "final_settled_wilson_95_interval": [
+          0.0013804318928742412,
+          0.04292625943886061
+        ],
+        "success_then_failure": 52
+      },
+      "initial_state_sha256": "efe2af6279c424cef5cf894fff38fa7ca1dc9541de597667000dff052a7a1de3"
+    },
+    {
+      "seed": 3000007,
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 102,
+        "success_rate": 0.796875,
+        "wilson_95_interval": [
+          0.7190073141485271,
+          0.8574426180640773
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 26
+        },
+        "final_settled_successes": 2,
+        "final_settled_rate": 0.015625,
+        "final_settled_wilson_95_interval": [
+          0.004295449710144082,
+          0.055180976679817195
+        ],
+        "success_then_failure": 50
+      },
+      "initial_state_sha256": "65776d24ee641177a7ed7fa14ce5208ae3567c35626e0637380e6727d3f69353"
+    },
+    {
+      "seed": 4000007,
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 111,
+        "success_rate": 0.8671875,
+        "wilson_95_interval": [
+          0.7975798330550461,
+          0.9153977146815961
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 17
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 53
+      },
+      "initial_state_sha256": "9894ccee2e74bf05aced5bf536535609b12644f50248c56c9d1bae12a0839724"
+    }
+  ],
+  "checkpoint_sha256": "e8df5fae67071eadf474037e9b9237013185a47be78a6e47f5feb7e220933489",
+  "sealed_test_used": false,
+  "physics_and_success_predicate_modified": false,
+  "evaluation_schedule": "four independent 128-env processes",
+  "wall_seconds": 784.8530386649072,
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

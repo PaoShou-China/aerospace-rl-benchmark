@@ -26,3 +26,7 @@ python scripts/eval.py rocket           # deterministic checkpoint evaluation
 python scripts/baseline_eval.py rocket  # classical baseline, official protocol
 python scripts/visualize.py rocket      # checkpoint replay / trajectory plot
 ```
+
+## Experiments
+
+- [MoE-Based Rocket Landing: Policy Learning and Feedback Repair](../../algorithms/moe_rocket_landing/README.md): a focused policy-learning and feedback-repair experiment, with a frozen model and evaluation records.

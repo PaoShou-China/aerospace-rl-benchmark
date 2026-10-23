@@ -1,0 +1,165 @@
+{
+  "training": {
+    "status": "completed",
+    "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+    "num_envs": 128,
+    "updates": 128,
+    "backend": "cpu",
+    "torch_threads": 4,
+    "original_budget": {
+      "num_envs": 1024,
+      "updates": 1000,
+      "online_transitions": 65536000
+    },
+    "online_transitions": 1048576,
+    "expert_transitions": 65536,
+    "full_upstream_budget": false,
+    "source_archive_sha256": "9043ffc4d10ce94ae9416b9f385a960928bf4c44fcee3b32d70b2e79a64c8ace",
+    "launcher_sha256": "32b38b3b73c19e6ba7b13364be1e572ddd927b24e48bdbc5ba694672d4af5f7e",
+    "local_algorithm_or_reward_fixes_applied": false,
+    "policy": "upstream direct PPO with upstream BC warm start",
+    "evaluation_is_final_acceptance": false,
+    "packages": {
+      "torch": "2.14.1",
+      "genesis-world": "1.4.4",
+      "rsl-rl-lib": "5.5.1",
+      "tensordict": "0.15.2"
+    },
+    "engine_dtype": "torch.float32",
+    "wrapper_dtype": "torch.float64",
+    "actor_class": "FlashResMLPModel",
+    "algorithm_class": "PPO",
+    "build_seconds": 13.528582041995833,
+    "pretraining_seconds_including_collection": 70.32411195800523,
+    "completed_training_episodes": 1368,
+    "successful_training_episodes": 0,
+    "training_success_rate": 0.0,
+    "checkpoint_sha256": "a0587cf58da081bf63ed84efb9c9ec2bc2057206eb8ba371662cdf7bbd26c638",
+    "wall_seconds": 574.1276862499944
+  },
+  "original_call": {
+    "num_envs": 1024,
+    "updates": 1000,
+    "seed": 7,
+    "backend": "gpu",
+    "resume": false,
+    "clean": true,
+    "algo": "ppo",
+    "init_std": [
+      0.05,
+      0.05,
+      0.05,
+      0.2,
+      0.2,
+      0.05,
+      0.05
+    ],
+    "num_steps_per_env": 64,
+    "lr_schedule": "fixed",
+    "learning_rate": 0.0003,
+    "gamma": 0.995,
+    "lam": 0.97,
+    "entropy_coef": 0.007,
+    "num_learning_epochs": 10,
+    "clip_param": 0.2,
+    "value_loss_coef": 1.0,
+    "desired_kl": 0.01,
+    "env_kwargs": {},
+    "bc_warmstart": {
+      "steps": 512,
+      "epochs": 100,
+      "batch_size": 8192,
+      "lr": 0.001,
+      "fit_critic": true
+    }
+  },
+  "bc_evaluation": {
+    "denominator": 512,
+    "episodes_finished": 512,
+    "incomplete_episodes": 0,
+    "successes": 0,
+    "success_rate": 0.0,
+    "wilson_95_interval": [
+      0.0,
+      0.007446975722882739
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 512
+    },
+    "final_settled_successes": 0,
+    "final_settled_rate": 0.0,
+    "final_settled_wilson_95_interval": [
+      0.0,
+      0.007446975722882739
+    ],
+    "success_then_failure": 0
+  },
+  "ppo_evaluation": {
+    "denominator": 512,
+    "episodes_finished": 512,
+    "incomplete_episodes": 0,
+    "successes": 0,
+    "success_rate": 0.0,
+    "wilson_95_interval": [
+      0.0,
+      0.007446975722882739
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 512
+    },
+    "final_settled_successes": 0,
+    "final_settled_rate": 0.0,
+    "final_settled_wilson_95_interval": [
+      0.0,
+      0.007446975722882739
+    ],
+    "success_then_failure": 0
+  },
+  "paired_initial_states_match_exactly": true,
+  "development_episodes_per_model": 512,
+  "bc_checkpoint_sha256": "6120906eff4b62cb7972265892cb81b025106f0c1cebbd81642cd005d941a0a8",
+  "ppo_checkpoint_sha256": "a0587cf58da081bf63ed84efb9c9ec2bc2057206eb8ba371662cdf7bbd26c638",
+  "source_manifest_sha256": "0c3fed66168a0c75541088298a199f6143f4eb09c7570f6006c288b7ff075a24",
+  "reports_sha256": {
+    "results/upstream-ppo-local-v1/bc-development.json": "4e07ee77468f6e18fd7420e7a2d85815d2c8cc2cf06489a2eec6a11ef9e81bb9",
+    "results/upstream-ppo-local-v1/ppo-development-seed1000007.json": "0fef6df7f1c532cd09633da54410859e3c372d15f1b2ccf8410d7a3ece3979ea",
+    "results/upstream-ppo-local-v1/ppo-development-seed2000007.json": "3f269bb479a7f87036238884b9a7ad401b0153838e2d333cc4b1b44b834b38e6",
+    "results/upstream-ppo-local-v1/ppo-development-seed3000007.json": "b133bbf61baa5c49645857ec7b9a5621cbdc6301cd644084b6e32014671a8e64",
+    "results/upstream-ppo-local-v1/ppo-development-seed4000007.json": "7455a09d7d29fd414d0408fc0f3c7ca1f149c4867ee74f63f28ea47b75109c6b",
+    "results/upstream-ppo-local-v1/ppo-development.json": "06b2fa5dce89cd222321bce1745851682daf9eb344bf75759dfd2d5c63c014a0",
+    "results/upstream-ppo-local-v1/run.json": "5626aa97d70c12a7f43b6491bde7ccd525963d528453bc63dd974cd29a51d69c"
+  },
+  "bc_metadata_corrections": [
+    {
+      "field": "online_training_transitions",
+      "previous": 1048576,
+      "corrected": 0,
+      "reason": "BC-only checkpoint precedes all PPO updates; previous field copied its source run planned budget. Episode observations and metrics unchanged.",
+      "original_report_sha256": "b4bbf4948722b079dd1f4372d10540954d2ad7b120a11bf77bc7ac89b35b8ee8"
+    }
+  ],
+  "diagnostics": {
+    "bc": {
+      "median_episode_seconds": 5.15,
+      "median_terminal_speed": 8.518613638333758,
+      "median_terminal_spin": 1.5103778656680593,
+      "median_remaining_fuel_fraction": 0.04738954723568867
+    },
+    "ppo": {
+      "median_episode_seconds": 19.425,
+      "median_terminal_speed": 12.45121944770129,
+      "median_terminal_spin": 7.356605105760784,
+      "median_remaining_fuel_fraction": 0.028645268586699142
+    }
+  },
+  "sealed_test_used": false,
+  "acceptance_passed": false,
+  "interpretation": "Original direct PPO, reduced local CPU budget; not the full default run or an author-supplied checkpoint.",
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

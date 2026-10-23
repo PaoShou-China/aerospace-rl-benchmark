@@ -1,0 +1,15 @@
+{
+  "parent_successes": 438,
+  "candidate_successes": 444,
+  "denominator": 512,
+  "gained": 24,
+  "lost": 18,
+  "net": 6,
+  "percentage_point_difference": 1.171875,
+  "paired_initial_states_identical": true,
+  "parent_outcomes_match_historical": true,
+  "mcnemar_exact_two_sided_p": 0.44079906734259566,
+  "fresh_parent_evaluation_transitions": 614400,
+  "fresh_parent_path": "results/local-counterfactual-repair-parent-reference-v1/development512.json",
+  "interpretation": "exploratory positive point estimate; no statistical evidence of improvement at 0.05"
+}

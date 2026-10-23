@@ -1,0 +1,225 @@
+{
+  "runs": {
+    "parent": {
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 438,
+        "success_rate": 0.85546875,
+        "wilson_95_interval": [
+          0.8223623276661127,
+          0.8832808380309003
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 71,
+          "timeout": 3
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 253
+      },
+      "new_training_transitions": 0,
+      "evaluation_transitions": 614400
+    },
+    "repair_v1": {
+      "denominator": 512,
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 444,
+        "success_rate": 0.8671875,
+        "wilson_95_interval": [
+          0.8350392877789226,
+          0.8938668394245854
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 67,
+          "timeout": 1
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 271
+      },
+      "same_initial_states": true,
+      "gained": 24,
+      "lost": 18,
+      "net": 6,
+      "gain_percentage_points": 1.171875,
+      "interventions": {
+        "triggered": 38,
+        "gained_triggered": 2,
+        "lost_triggered": 1,
+        "gained_untriggered": 22,
+        "lost_untriggered": 17,
+        "batch_coupling_prevents_independent_causal_interpretation": true
+      },
+      "new_training_transitions": 1920000,
+      "evaluation_transitions": 614400
+    },
+    "ppo_continuation": {
+      "denominator": 512,
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 406,
+        "success_rate": 0.79296875,
+        "wilson_95_interval": [
+          0.755753822741615,
+          0.8258202149207585
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 104,
+          "timeout": 2
+        },
+        "final_settled_successes": 3,
+        "final_settled_rate": 0.005859375,
+        "final_settled_wilson_95_interval": [
+          0.0019946757921860923,
+          0.017083780683944113
+        ],
+        "success_then_failure": 235
+      },
+      "same_initial_states": true,
+      "gained": 51,
+      "lost": 83,
+      "net": -32,
+      "gain_percentage_points": -6.25,
+      "new_training_transitions": 1920000,
+      "evaluation_transitions": 614400
+    },
+    "repair_transfer": {
+      "new_training_transitions": 1920000,
+      "inherited_first_round_training_transitions": 1920000,
+      "evaluation_transitions": 0,
+      "confirmation": {
+        "denominator": 96,
+        "parent_successes": 83,
+        "candidate_successes": 81,
+        "gained": 10,
+        "lost": 12,
+        "net": -2,
+        "all_initial_states_identical": true,
+        "environment_transitions": 230400,
+        "wall_seconds": 66.70632495899918,
+        "checkpoint_sha256": "475f433aea36a1405602bb3937401b2a82d40d758a3e3970574dd83bad9d4e92",
+        "new_training_initial_conditions": true,
+        "model_updated_from_confirmation": false
+      },
+      "development_run": false,
+      "development_skip_reason": "paired confirmation net <= 0",
+      "training_library_coverage": {
+        "covered_conditions": 128,
+        "conditions": 128,
+        "is_executable_policy_success_rate": false,
+        "uses_all_observed_program_outcomes": true
+      }
+    },
+    "repair_event": {
+      "new_training_transitions": 230400,
+      "inherited_training_transitions": 3840000,
+      "known_cumulative_training_transitions": 4070400,
+      "evaluation_transitions": 614400,
+      "confirmation": {
+        "denominator": 96,
+        "parent_successes": 72,
+        "candidate_successes": 77,
+        "gained": 17,
+        "lost": 12,
+        "net": 5,
+        "all_initial_states_identical": true,
+        "environment_transitions": 230400,
+        "wall_seconds": 57.81418279200443,
+        "checkpoint_sha256": "fa2cf260ea5d38c386236c50ccff04c30283abffd1831b5c34acde1bbaad4124",
+        "new_training_initial_conditions": true,
+        "model_updated_from_confirmation": false
+      },
+      "development_run": true,
+      "denominator": 512,
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 408,
+        "success_rate": 0.796875,
+        "wilson_95_interval": [
+          0.7598748962512072,
+          0.8294534619133311
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 104
+        },
+        "final_settled_successes": 3,
+        "final_settled_rate": 0.005859375,
+        "final_settled_wilson_95_interval": [
+          0.0019946757921860923,
+          0.017083780683944113
+        ],
+        "success_then_failure": 230
+      },
+      "same_initial_states": true,
+      "gained": 57,
+      "lost": 87,
+      "net": -30,
+      "gain_percentage_points": -5.859375,
+      "interventions": {
+        "triggered": 512,
+        "gained_triggered": 57,
+        "lost_triggered": 87,
+        "gained_untriggered": 0,
+        "lost_untriggered": 0,
+        "batch_coupling_prevents_independent_causal_interpretation": true
+      }
+    }
+  },
+  "total_new_training_transitions": 5990400,
+  "total_new_evaluation_transitions": 2457600,
+  "budget_unit": "control env.step transitions; original reset physics warmup unchanged",
+  "shared_parent_historical_training_cost_included": false,
+  "evaluation_backend": "cpu",
+  "development_protocol": "original four cohorts of 128 first episodes",
+  "sealed_test_used": false,
+  "development_point_estimate_reached_99_percent": false,
+  "sealed_test_99_percent_established": false,
+  "limitations": [
+    "Development is not a sealed final test and each method has one training run.",
+    "Original batch reset warmup can affect unmodified trajectories; success differences are fixed-batch outcomes, not independent per-episode causal effects.",
+    "Library coverage uses future observed outcomes and is not an executable selector.",
+    "Transfer and event policies inherit earlier repair experiments; they do not have equal cumulative cost to PPO.",
+    "Concurrent runs and differing physics thread counts do not support a wall-clock speedup claim."
+  ],
+  "evidence_sha256": {
+    "results/local-counterfactual-repair-parent-reference-v1/development512.json": "facf2ae698681a2c31118e72c459b80541a762efe868af09039b4f8ae2f437d9",
+    "results/local-counterfactual-repair-v1-run2/report.json": "b1ca91487496d2dbd26c7a36dfebd6e29236670b80f527611b35e1117207bab7",
+    "results/local-counterfactual-repair-v1-run2/development512.json": "dfa12a9477e71ddae8284d874a15d4a38741b2a9ce7d79eaf3ce61e7c8167580",
+    "results/local-selector-ppo-control-v1/development512.json": "2dc81871d836778cf466d593623c8d8ce5e6e74e8f0f9a4fb86ec8bf0a7a8ff0",
+    "results/local-repair-transfer-v1/report.json": "2faa07bdd17046e7230e14829c89e8c7110e81bfd8bf04b32389ae9037f96144",
+    "results/local-repair-transfer-v1/transfer_matrix.json": "596c0bbc83e7d80e0e1f0e03286a845a318894306ee743abbbe9caa3b7ec09a8",
+    "results/local-repair-event-v1/report.json": "7a3de5dbbfb9f488d97a07122edc7beb3e85d79542c0e7482fe314647b3c43fc",
+    "results/local-repair-event-v1/development512.json": "667a0e9cdbe1f59aa9f88f1cef514465b00527a01e7318190e4f0993a64c1785"
+  },
+  "total_new_environment_transitions": 8448000,
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

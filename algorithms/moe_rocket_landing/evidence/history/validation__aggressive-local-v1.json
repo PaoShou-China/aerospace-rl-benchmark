@@ -1,0 +1,1178 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-23T06:53:45.629230+00:00",
+  "scope": "Read-only extraction of completed local experiment evidence; no new training or evaluation was run for this handoff.",
+  "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+  "protocol": {
+    "backend": "cpu",
+    "genesis_dtype": "torch.float32",
+    "horizon_control_steps": 1200,
+    "episode_sampling": "first episode of each replica only",
+    "all_shared_initial_states_exactly_paired": true,
+    "primary_metric": "Original ever-success latch: at least one valid pad-contact success event during the first episode.",
+    "final_settled_metric": "Final pre-reset state still contacts pad with speed<0.02m/s, spin<0.02rad/s, tilt<0.1rad, and no fatal collision; not a guarantee of indefinite stability.",
+    "development_seeds": [
+      1000007,
+      2000007,
+      3000007,
+      4000007
+    ],
+    "development_used_for_model_selection": true,
+    "sealed_test_used": false,
+    "formal_99_percent_acceptance": false
+  },
+  "main_table": [
+    {
+      "id": "flash_dagger",
+      "label": "Flash + DAgger",
+      "method": "supervised DAgger; no PPO updates",
+      "evidence": "results/direct-dagger-flash-v1/round_02-development512.json",
+      "evidence_sha256": "342fa2a5fbd67658bd5c1037ec673ed317c7ebacceab9d5ec3fe9ef9a1f3c4bc",
+      "checkpoint": "results/direct-dagger-flash-v1/round_02.pt",
+      "checkpoint_sha256": "c58b15bcb8a06af40c9b71faa4d88760b330f87f55622b2a044110a7256582f7",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 133,
+        "success_rate": 0.259765625,
+        "wilson_95_interval": [
+          0.22367113196759586,
+          0.299438157149258
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 360,
+          "timeout": 16,
+          "out_of_bounds": 3
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.007446975722882739
+        ],
+        "success_then_failure": 48
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 35,
+            "success_rate": 0.2734375,
+            "wilson_95_interval": [
+              0.20366999780458017,
+              0.3564076855068533
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 88,
+              "timeout": 5
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 17
+          }
+        },
+        {
+          "seed": 2000007,
+          "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 34,
+            "success_rate": 0.265625,
+            "wilson_95_interval": [
+              0.19675501016357286,
+              0.3481529380896342
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 88,
+              "timeout": 5,
+              "out_of_bounds": 1
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 13
+          }
+        },
+        {
+          "seed": 3000007,
+          "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 31,
+            "success_rate": 0.2421875,
+            "wilson_95_interval": [
+              0.17618737999242146,
+              0.3232113630861063
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 90,
+              "timeout": 6,
+              "out_of_bounds": 1
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 8
+          }
+        },
+        {
+          "seed": 4000007,
+          "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 33,
+            "success_rate": 0.2578125,
+            "wilson_95_interval": [
+              0.18986902089941152,
+              0.3398691922955691
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 94,
+              "out_of_bounds": 1
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 10
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 307200,
+      "reported_expert_training_transitions": 307200,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    },
+    {
+      "id": "phase_r2",
+      "label": "\u5206\u9636\u6bb5 MoE + DAgger r2",
+      "method": "supervised DAgger; no PPO updates",
+      "evidence": "results/direct-phase-dagger-r2/development512.json",
+      "evidence_sha256": "908d8882960acbe79ed3a9f16e0c280be58ef1159de5a94f9366df177f04d268",
+      "checkpoint": "results/direct-phase-dagger-r2/epoch_160.pt",
+      "checkpoint_sha256": "a3f7f4c7d3fe1d3948bc3088c0b30acd8bb6693d91a38fe058a6fea128132458",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 337,
+        "success_rate": 0.658203125,
+        "wilson_95_interval": [
+          0.6160768849569956,
+          0.6979730953806861
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 175
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.001953125,
+        "final_settled_wilson_95_interval": [
+          0.00034485776154337486,
+          0.010979278212421853
+        ],
+        "success_then_failure": 184
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 94,
+            "success_rate": 0.734375,
+            "wilson_95_interval": [
+              0.6518470619103658,
+              0.8032449898364271
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 34
+            },
+            "final_settled_successes": 1,
+            "final_settled_rate": 0.0078125,
+            "final_settled_wilson_95_interval": [
+              0.0013804318928742412,
+              0.04292625943886061
+            ],
+            "success_then_failure": 51
+          }
+        },
+        {
+          "seed": 2000007,
+          "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 81,
+            "success_rate": 0.6328125,
+            "wilson_95_interval": [
+              0.5465700424986025,
+              0.7113154534912468
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 47
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 43
+          }
+        },
+        {
+          "seed": 3000007,
+          "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 75,
+            "success_rate": 0.5859375,
+            "wilson_95_interval": [
+              0.4993185914156349,
+              0.6675484942248558
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 53
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 43
+          }
+        },
+        {
+          "seed": 4000007,
+          "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 87,
+            "success_rate": 0.6796875,
+            "wilson_95_interval": [
+              0.5946341124452171,
+              0.7542697938939907
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 41
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 47
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 0,
+      "reported_expert_training_transitions": 269191,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    },
+    {
+      "id": "phase_r3",
+      "label": "\u5206\u9636\u6bb5 MoE + DAgger r3\uff08\u63a8\u8350\uff09",
+      "method": "supervised DAgger; no PPO updates",
+      "evidence": "results/direct-phase-dagger-r3/development512.json",
+      "evidence_sha256": "ccabbecb3180000a1c991aaf267ff3a935c57188c99414e7f79c28ed585e51e6",
+      "checkpoint": "results/direct-phase-dagger-r3/epoch_120.pt",
+      "checkpoint_sha256": "81e98f7602e8d14519ae2bf0be3d4e5c68a97805d54c97899c9cad485c5261a7",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 405,
+        "success_rate": 0.791015625,
+        "wilson_95_interval": [
+          0.7536951237380339,
+          0.824001753673257
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 107
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.001953125,
+        "final_settled_wilson_95_interval": [
+          0.00034485776154337486,
+          0.010979278212421853
+        ],
+        "success_then_failure": 243
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 100,
+            "success_rate": 0.78125,
+            "wilson_95_interval": [
+              0.7020157030455345,
+              0.8440947590506169
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 28
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 56
+          }
+        },
+        {
+          "seed": 2000007,
+          "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 99,
+            "success_rate": 0.7734375,
+            "wilson_95_interval": [
+              0.6935732116243923,
+              0.8373675154135328
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 29
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 57
+          }
+        },
+        {
+          "seed": 3000007,
+          "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 107,
+            "success_rate": 0.8359375,
+            "wilson_95_interval": [
+              0.7621819239629298,
+              0.8901166835408066
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 21
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 65
+          }
+        },
+        {
+          "seed": 4000007,
+          "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 99,
+            "success_rate": 0.7734375,
+            "wilson_95_interval": [
+              0.6935732116243923,
+              0.8373675154135328
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 29
+            },
+            "final_settled_successes": 1,
+            "final_settled_rate": 0.0078125,
+            "final_settled_wilson_95_interval": [
+              0.0013804318928742412,
+              0.04292625943886061
+            ],
+            "success_then_failure": 65
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 0,
+      "reported_expert_training_transitions": 269191,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    },
+    {
+      "id": "ppo_terminal_bc",
+      "label": "r3 + terminal-BC PPO",
+      "method": "additional terminal-expert PPO with offline BC regularization",
+      "evidence": "results/practical-ppo-moe-terminal-bc-v1/development512.json",
+      "evidence_sha256": "e1e5b0c51ec69f4840bd87f95292a0df165534516f8770c859fb06bcf35c1181",
+      "checkpoint": "results/practical-ppo-moe-terminal-bc-v1/checkpoint.pt",
+      "checkpoint_sha256": "b52202bad8d6d3c3896b5d4d999120302bac2ccce43eada9d749d4501960d9ca",
+      "summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 405,
+        "success_rate": 0.791015625,
+        "wilson_95_interval": [
+          0.7536951237380339,
+          0.824001753673257
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 107
+        },
+        "final_settled_successes": 2,
+        "final_settled_rate": 0.00390625,
+        "final_settled_wilson_95_interval": [
+          0.0010718890803936704,
+          0.014129407144654047
+        ],
+        "success_then_failure": 231
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 105,
+            "success_rate": 0.8203125,
+            "wilson_95_interval": [
+              0.7447837371324442,
+              0.8771754002548395
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 23
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 60
+          }
+        },
+        {
+          "seed": 2000007,
+          "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 93,
+            "success_rate": 0.7265625,
+            "wilson_95_interval": [
+              0.6435923144931466,
+              0.7963300021954198
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 35
+            },
+            "final_settled_successes": 1,
+            "final_settled_rate": 0.0078125,
+            "final_settled_wilson_95_interval": [
+              0.0013804318928742412,
+              0.04292625943886061
+            ],
+            "success_then_failure": 49
+          }
+        },
+        {
+          "seed": 3000007,
+          "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 102,
+            "success_rate": 0.796875,
+            "wilson_95_interval": [
+              0.7190073141485271,
+              0.8574426180640773
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 26
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 66
+          }
+        },
+        {
+          "seed": 4000007,
+          "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 105,
+            "success_rate": 0.8203125,
+            "wilson_95_interval": [
+              0.7447837371324442,
+              0.8771754002548395
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 23
+            },
+            "final_settled_successes": 1,
+            "final_settled_rate": 0.0078125,
+            "final_settled_wilson_95_interval": [
+              0.0013804318928742412,
+              0.04292625943886061
+            ],
+            "success_then_failure": 56
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 524288,
+      "reported_expert_training_transitions": 269191,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    },
+    {
+      "id": "phase_r4",
+      "label": "DAgger r4 / recovery-weight 2",
+      "method": "supervised DAgger; no PPO updates",
+      "evidence": "results/direct-phase-dagger-r4/eval_epoch_100.json",
+      "evidence_sha256": "e0e8f7c47b5491ab8ccb4bc94219be298087bec6c5929154f3cfe264f31e128e",
+      "checkpoint": "results/direct-phase-dagger-r4/epoch_100.pt",
+      "checkpoint_sha256": "674dbc848371d27b21904106ce17389dd0f9b86984c6392e509028c2b27c5c97",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 99,
+        "success_rate": 0.7734375,
+        "wilson_95_interval": [
+          0.6935732116243923,
+          0.8373675154135328
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 29
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.0078125,
+        "final_settled_wilson_95_interval": [
+          0.0013804318928742412,
+          0.04292625943886061
+        ],
+        "success_then_failure": 48
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 99,
+            "success_rate": 0.7734375,
+            "wilson_95_interval": [
+              0.6935732116243923,
+              0.8373675154135328
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 29
+            },
+            "final_settled_successes": 1,
+            "final_settled_rate": 0.0078125,
+            "final_settled_wilson_95_interval": [
+              0.0013804318928742412,
+              0.04292625943886061
+            ],
+            "success_then_failure": 48
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 0,
+      "reported_expert_training_transitions": 269191,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    },
+    {
+      "id": "terminal_polish",
+      "label": "terminal-polish",
+      "method": "supervised terminal refinement",
+      "evidence": "results/direct-phase-terminal-polish-v1/eval_epoch_160.json",
+      "evidence_sha256": "e815105c7a2b306c01cf3abc54724c778f0c331e62bd526ec286dda43c457824",
+      "checkpoint": "results/direct-phase-terminal-polish-v1/epoch_160.pt",
+      "checkpoint_sha256": "7de64d07deebe2248ff0f767c448d21b13376ac2f475b052dc8545b0c96728ce",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 96,
+        "success_rate": 0.75,
+        "wilson_95_interval": [
+          0.6684443704768313,
+          0.8169871513864144
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 32
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 61
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 96,
+            "success_rate": 0.75,
+            "wilson_95_interval": [
+              0.6684443704768313,
+              0.8169871513864144
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 32
+            },
+            "final_settled_successes": 0,
+            "final_settled_rate": 0.0,
+            "final_settled_wilson_95_interval": [
+              0.0,
+              0.029136956273508416
+            ],
+            "success_then_failure": 61
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 0,
+      "reported_expert_training_transitions": 269191,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    },
+    {
+      "id": "conditional_ignition",
+      "label": "conditional ignition",
+      "method": "supervised conditional-action architecture",
+      "evidence": "results/direct-conditional-ignition-v1/eval_epoch_100.json",
+      "evidence_sha256": "dc15197312f81579448b925662a0077208961ddf3946414a3cb0af91534300b2",
+      "checkpoint": "results/direct-conditional-ignition-v1/epoch_100.pt",
+      "checkpoint_sha256": "06223e0c0fd6c28bd6f1e9a86daf4dd94acf8d6a0c843c4d2549dbdcc3eb5b9f",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 94,
+        "success_rate": 0.734375,
+        "wilson_95_interval": [
+          0.6518470619103658,
+          0.8032449898364271
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 34
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.0078125,
+        "final_settled_wilson_95_interval": [
+          0.0013804318928742412,
+          0.04292625943886061
+        ],
+        "success_then_failure": 51
+      },
+      "cohorts": [
+        {
+          "seed": 1000007,
+          "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+          "summary": {
+            "denominator": 128,
+            "episodes_finished": 128,
+            "incomplete_episodes": 0,
+            "successes": 94,
+            "success_rate": 0.734375,
+            "wilson_95_interval": [
+              0.6518470619103658,
+              0.8032449898364271
+            ],
+            "point_estimate_at_least_99_percent": false,
+            "wilson_lower_at_least_99_percent": false,
+            "complete_evaluation": true,
+            "failure_counts": {
+              "fatal_collision": 34
+            },
+            "final_settled_successes": 1,
+            "final_settled_rate": 0.0078125,
+            "final_settled_wilson_95_interval": [
+              0.0013804318928742412,
+              0.04292625943886061
+            ],
+            "success_then_failure": 51
+          }
+        }
+      ],
+      "engine_dtype": "torch.float32",
+      "sealed_test_used": false,
+      "reported_online_training_transitions": 0,
+      "reported_expert_training_transitions": 269191,
+      "reported_online_field_caveat": "In the phase imitation reports this field counts PPO transitions only; zero does not mean no DAgger environment collection."
+    }
+  ],
+  "recommended": {
+    "run": "results/direct-phase-dagger-r3",
+    "checkpoint": "results/direct-phase-dagger-r3/epoch_120.pt",
+    "checkpoint_sha256": "81e98f7602e8d14519ae2bf0be3d4e5c68a97805d54c97899c9cad485c5261a7",
+    "source_model": "results/direct-phase-dagger-r3/source/src/common/rocket_phase_policy.py",
+    "source_model_sha256": "11f2dac4f7e312b2caefdd3e93d0f0b4966a7317dd37205ab32f4de13f08b3fe",
+    "source_manifest_sha256": "0c3fed66168a0c75541088298a199f6143f4eb09c7570f6006c288b7ff075a24",
+    "config": "results/direct-phase-dagger-r3/config.json",
+    "config_sha256": "58620c8f4cc912f51d90d10ecbb70b70002fd42dcd102628bf1e57a9edd975cd",
+    "dataset": "results/direct-phase-dagger-r3/aggregated_data.pt",
+    "dataset_sha256": "f6dfdca46ef95212051f509b521ba60458351c4b0517c4f02446b5f79b45f73e",
+    "labeled_samples": 614400,
+    "shared_teacher_dataset_samples": 153600,
+    "new_phase_dagger_environment_steps": 460800,
+    "teacher_executed_steps_in_data_lineage": 269191,
+    "student_executed_steps_in_data_lineage": 345209,
+    "teacher_executed_steps_in_new_phase_dagger": 115591,
+    "teacher_label_queries_in_data_lineage": 614400,
+    "ppo_updates": 0,
+    "evaluation_teacher_calls": 0,
+    "training_stages": [
+      {
+        "stage": "r1",
+        "status_evidence": "results/direct-phase-dagger-r1/baseline_status.json",
+        "completed_epochs": 240,
+        "labeled_training_samples": 307200,
+        "collection": {
+          "engine_dtype": "torch.float32",
+          "interactions": 153600,
+          "teacher_executed_steps": 76869,
+          "student_executed_steps": 76731,
+          "teacher_label_queries": 153600,
+          "seed": 7,
+          "teacher_mix": 0.5,
+          "mixed_collection_successes": 14,
+          "mixed_collection_episodes": 199
+        },
+        "warmstart": "results/direct-phase-experts-v1/epoch_60.pt",
+        "warmstart_sha256": "9c67b2d1366c28f69850e18112b765a289f69b467d3c1950222b6ee8f6a9e07a"
+      },
+      {
+        "stage": "r2",
+        "status_evidence": "results/direct-phase-dagger-r2/baseline_status.json",
+        "completed_epochs": 160,
+        "labeled_training_samples": 460800,
+        "collection": {
+          "engine_dtype": "torch.float32",
+          "interactions": 153600,
+          "teacher_executed_steps": 38722,
+          "student_executed_steps": 114878,
+          "teacher_label_queries": 153600,
+          "seed": 100007,
+          "teacher_mix": 0.25,
+          "mixed_collection_successes": 94,
+          "mixed_collection_episodes": 128
+        },
+        "warmstart": "results/direct-phase-dagger-r1/epoch_240.pt",
+        "warmstart_sha256": "03ecc3b6c095f28087bb18893a055b8e5bb6bfc5f711e774aceb1cec7ddf080b"
+      },
+      {
+        "stage": "r3",
+        "status_evidence": "results/direct-phase-dagger-r3/baseline_status.json",
+        "completed_epochs": 120,
+        "labeled_training_samples": 614400,
+        "collection": {
+          "engine_dtype": "torch.float32",
+          "interactions": 153600,
+          "teacher_executed_steps": 0,
+          "student_executed_steps": 153600,
+          "teacher_label_queries": 153600,
+          "seed": 200007,
+          "teacher_mix": 0.0,
+          "mixed_collection_successes": 80,
+          "mixed_collection_episodes": 132
+        },
+        "warmstart": "results/direct-phase-dagger-r2/epoch_160.pt",
+        "warmstart_sha256": "a3f7f4c7d3fe1d3948bc3088c0b30acd8bb6693d91a38fe058a6fea128132458"
+      }
+    ],
+    "epoch_counts_including_initial_bc": [
+      60,
+      240,
+      160,
+      120
+    ],
+    "budget_note": "Shared initial teacher data is charged once in this model lineage; this is not a total-project compute ledger. Repeated supervised epochs and all discarded branches are not equivalent to unique simulator transitions.",
+    "evaluation_command": "QD_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python scripts/rocket_phase_experiment.py evaluate --run-dir results/direct-phase-dagger-r3 --checkpoint epoch_120.pt --eval-envs 128 --eval-seeds 1000007 2000007 3000007 4000007 --torch-threads 1 --output results/r3-recheck-development512.json",
+    "training_entry": "scripts/rocket_phase_experiment.py",
+    "frozen_training_entry": "results/direct-phase-dagger-r3/candidate_launcher.py",
+    "reproduction_scope": "The command re-evaluates the saved artifact; no bit-exact retraining claim is made."
+  },
+  "ppo_terminal_bc": {
+    "status_evidence": "results/practical-ppo-moe-terminal-bc-v1/baseline_status.json",
+    "new_ppo_environment_steps": 524288,
+    "new_teacher_queries": 0,
+    "offline_bc": {
+      "dataset_path": "results/direct-phase-dagger-r3/aggregated_data.pt",
+      "dataset_sha256": "f6dfdca46ef95212051f509b521ba60458351c4b0517c4f02446b5f79b45f73e",
+      "source_labeled_samples": 614400,
+      "available_near_ground_rows": 297736,
+      "selected_unique_samples": 65536,
+      "batch_size": 1024,
+      "coefficient": 1.0,
+      "loss": "weighted continuous MSE [3,3,2,1,5,5] plus .08 ignition BCE",
+      "selection_seed": 7007,
+      "sampling_seed": 7007,
+      "new_teacher_queries": 0,
+      "repeated_samples_drawn": 149504
+    },
+    "paired_comparison": {
+      "baseline_path": "results/direct-phase-dagger-r3/development512.json",
+      "candidate_path": "results/practical-ppo-moe-terminal-bc-v1/development512.json",
+      "baseline_sha256": "ccabbecb3180000a1c991aaf267ff3a935c57188c99414e7f79c28ed585e51e6",
+      "candidate_sha256": "e1e5b0c51ec69f4840bd87f95292a0df165534516f8770c859fb06bcf35c1181",
+      "paired_initial_states_exactly_equal": true,
+      "paired_counts": {
+        "both_success": 346,
+        "baseline_only_success": 59,
+        "candidate_only_success": 59,
+        "both_failure": 48
+      },
+      "baseline_summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 405,
+        "success_rate": 0.791015625,
+        "wilson_95_interval": [
+          0.7536951237380339,
+          0.824001753673257
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 107
+        },
+        "final_settled_successes": 1,
+        "final_settled_rate": 0.001953125,
+        "final_settled_wilson_95_interval": [
+          0.00034485776154337486,
+          0.010979278212421853
+        ],
+        "success_then_failure": 243
+      },
+      "candidate_summary": {
+        "denominator": 512,
+        "episodes_finished": 512,
+        "incomplete_episodes": 0,
+        "successes": 405,
+        "success_rate": 0.791015625,
+        "wilson_95_interval": [
+          0.7536951237380339,
+          0.824001753673257
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 107
+        },
+        "final_settled_successes": 2,
+        "final_settled_rate": 0.00390625,
+        "final_settled_wilson_95_interval": [
+          0.0010718890803936704,
+          0.014129407144654047
+        ],
+        "success_then_failure": 231
+      },
+      "success_delta": 0,
+      "decision": "No improvement in original ever-success count at 512; keep r3 as default, preserve PPO candidate as alternative.",
+      "sealed_test_used": false,
+      "acceptance_passed": false
+    },
+    "training_success_early_termination": true,
+    "evaluation_termination": "unchanged upstream natural terminations and 1200-step horizon",
+    "attribution": "No aggregate ever-success improvement over r3 on paired 512; DAgger/architecture gains must not be attributed to PPO."
+  },
+  "cem": {
+    "status_evidence": "results/direct-phase-calibration-cem-v1/status.json",
+    "budget": {
+      "method": "parameter search, no PPO or neural-gradient update",
+      "training_trials": 10,
+      "scored_first_episodes": 1280,
+      "environment_steps_including_auto_reset_followups": 1536000,
+      "scored_first_episode_control_steps": 1242032,
+      "distinct_training_streams": 384,
+      "training_seed_bases": [
+        7,
+        100007,
+        200007
+      ],
+      "paired_initial_state_hashes": {
+        "7": [
+          "e8c9f66ecb5b0179033f980ce0493aa8b8e7b572d08128a3b0bc6a39da437b81"
+        ],
+        "100007": [
+          "e7078d85e615c30c8d783f5f6948c7318ae1a6afc6d730b3183b7ecee4d20087"
+        ],
+        "200007": [
+          "5051a2f0cf14ad8a873f900903a2cde1476b6bfcb386e542529c0232f8a47fa8"
+        ]
+      },
+      "teacher_calls": 0,
+      "ppo_updates": 0,
+      "development_rollouts": 0,
+      "sealed_test_rollouts": 0,
+      "selected_parameters": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "selected_checkpoint": "results/direct-phase-calibration-cem-v1/selected_checkpoint.pt",
+      "selected_checkpoint_sha256": "b8e1e34f284f5e441850378c77e16c2ce93a32b63da96559b89d868c1f42051e",
+      "original_checkpoint_sha256": "81e98f7602e8d14519ae2bf0be3d4e5c68a97805d54c97899c9cad485c5261a7",
+      "wall_seconds": 389.49729029100854,
+      "outcome": "Training candidate failed paired training confirmation; retain unchanged r3 policy.",
+      "active_experiment_processes": 0
+    },
+    "training_confirmation": {
+      "baseline": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 98,
+        "success_rate": 0.765625,
+        "wilson_95_interval": [
+          0.6851645688917714,
+          0.8306064230879273
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 30
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 53
+      },
+      "candidate": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 91,
+        "success_rate": 0.7109375,
+        "wilson_95_interval": [
+          0.6271668442501395,
+          0.7824160023219742
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 35,
+          "timeout": 2
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 53
+      },
+      "parameters": [
+        0.5913470387458801,
+        -0.15186604857444763,
+        -0.033452942967414856,
+        -0.06355596333742142
+      ]
+    },
+    "selected_parameters": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "development_evaluated": false,
+    "checkpoint_replacement_accepted": false,
+    "decision": "Training confirmation 91/128 versus baseline98/128 failed; retain unmodified r3. No development or sealed rollout was used."
+  },
+  "gpu_handoff": {
+    "status": "migration_in_progress_reported_by_parent",
+    "status_source": "parent-agent handoff request",
+    "remote_operations_performed_for_this_report": false,
+    "gpu_training_completion_evidence_in_this_report": false,
+    "gpu_speed_or_success_improvement_evidence_in_this_report": false
+  },
+  "research_status": {
+    "implemented_and_run": [
+      "DAgger-style relabeling and aggregation",
+      "phase-expert network",
+      "PPO reference-KL anchor and terminal offline-BC regularization",
+      "four-dimensional CEM output calibration search"
+    ],
+    "literature_reference_only": [
+      "LLM-style group-relative advantage ideas; no independent GRPO result in this table"
+    ],
+    "novel_algorithm_claim": false
+  },
+  "comparison_limits": [
+    "Budgets, architectures, training losses, seeds, and datasets differ; no equal-compute causal comparison.",
+    "128-only rows are development screens on the first shared cohort, not 512-episode confirmations.",
+    "Ever-success and final-settled rates measure different outcomes.",
+    "Results are selected on development streams; sealed final acceptance has not been run."
+  ],
+  "source_json_sha256": {
+    "results/direct-dagger-flash-v1/round_02-development512.json": "342fa2a5fbd67658bd5c1037ec673ed317c7ebacceab9d5ec3fe9ef9a1f3c4bc",
+    "results/direct-phase-dagger-r2/development512.json": "908d8882960acbe79ed3a9f16e0c280be58ef1159de5a94f9366df177f04d268",
+    "results/direct-phase-dagger-r3/development512.json": "ccabbecb3180000a1c991aaf267ff3a935c57188c99414e7f79c28ed585e51e6",
+    "results/practical-ppo-moe-terminal-bc-v1/development512.json": "e1e5b0c51ec69f4840bd87f95292a0df165534516f8770c859fb06bcf35c1181",
+    "results/direct-phase-dagger-r4/eval_epoch_100.json": "e0e8f7c47b5491ab8ccb4bc94219be298087bec6c5929154f3cfe264f31e128e",
+    "results/direct-phase-terminal-polish-v1/eval_epoch_160.json": "e815105c7a2b306c01cf3abc54724c778f0c331e62bd526ec286dda43c457824",
+    "results/direct-conditional-ignition-v1/eval_epoch_100.json": "dc15197312f81579448b925662a0077208961ddf3946414a3cb0af91534300b2",
+    "results/direct-phase-experts-v1/baseline_status.json": "4cef59baf298f92f7bed5f5b61e73123332c127c5afbaa354d849c8fd9414c78",
+    "results/direct-phase-dagger-r1/baseline_status.json": "ae00536eaa007865935aeb52ca2f07300f8fb113861b28fc720b39348ca15800",
+    "results/direct-phase-dagger-r2/baseline_status.json": "4176cb58ae341acf0943ad966885463edb3ca4bb7e6e30d3fbe2aeb2be8952d0",
+    "results/direct-phase-dagger-r3/baseline_status.json": "9aec24eb3480700172c5c54d3259123c4060ab0bf0f3fce4ae40869dc4b55693",
+    "results/direct-phase-dagger-r4/baseline_status.json": "90cd59052a8123a5715d7deba718c74713efbc2a5a5a3b243bd417e34ea1544b",
+    "results/practical-ppo-moe-terminal-bc-v1/baseline_status.json": "277a2190b5ca1e88e87d6ef5cdc9701e7c0129159b399f7dcd61cd9f75b8d6a7",
+    "results/practical-ppo-moe-terminal-bc-v1/paired-comparison512.json": "77e42eecfdea90588b85ffa7ae1e5ef7017775fe0ffe3d77aa46b43e6960b2c7",
+    "results/direct-phase-calibration-cem-v1/status.json": "9429b39f672319b1ad170c35933ab31d9f0bf4a1048f5fe3c9e55c0bbdb7871d",
+    "results/direct-phase-calibration-cem-v1/budget.json": "3799ec75dcb79a67af2186575c518c6802bae38d8d5c5db4aa58cc24c7a0d89a",
+    "results/direct-phase-calibration-cem-v1/manifest.json": "f820ffd032dad771151c5c0aa2c1798efc5b4f10c0c4b8c1b61c33559150b8cf"
+  },
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

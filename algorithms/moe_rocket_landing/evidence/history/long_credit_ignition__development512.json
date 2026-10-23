@@ -1,0 +1,238 @@
+{
+  "protocol": "upstream_source_first_episode_full_horizon_v1",
+  "evaluation_category": "development",
+  "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+  "run_dir": "results/local-ppo95-v1/long_credit_ignition",
+  "checkpoint": "results/local-ppo95-v1/long_credit_ignition/checkpoint.pt",
+  "checkpoint_sha256": "68543e8737fd53d6d1425084ed925364ec2451700b792c84516b94450088cb9a",
+  "engine_dtype": "torch.float32",
+  "config_sha256": "5525f6b8f0c82d9806733acf1b1c21b38117214b62f013cfe8e1379c79ec3f22",
+  "evaluation_config": {
+    "num_steps_per_env": 256,
+    "save_interval": 64,
+    "obs_groups": {
+      "actor": [
+        "policy"
+      ],
+      "critic": [
+        "policy"
+      ]
+    },
+    "actor": {
+      "class_name": "common.rocket_phase_policy:RocketPhaseModel",
+      "width": 256,
+      "activation": "swish",
+      "distribution_cfg": {
+        "class_name": "GaussianDistribution",
+        "init_std": [
+          0.003,
+          0.003,
+          0.003,
+          0.4,
+          0.04,
+          0.004,
+          0.004
+        ],
+        "std_type": "log"
+      }
+    },
+    "critic": {
+      "class_name": "common.rocket_phase_policy:RocketPhaseModel",
+      "width": 256,
+      "activation": "swish"
+    },
+    "algorithm": {
+      "class_name": "common.rocket_ppo_practical_support:MoEAnchoredPracticalPPO",
+      "learning_rate": 8e-05,
+      "num_learning_epochs": 4,
+      "num_mini_batches": 8,
+      "schedule": "fixed",
+      "desired_kl": 0.005,
+      "entropy_coef": 0.0,
+      "gamma": 0.999,
+      "lam": 1.0,
+      "clip_param": 0.2,
+      "value_loss_coef": 1.0,
+      "use_clipped_value_loss": false,
+      "max_grad_norm": 0.5,
+      "critic_learning_rate": 0.001,
+      "reference_kl_coef": 0.001,
+      "critic_warmup_updates": 2,
+      "max_update_kl": 0.05,
+      "hard_update_kl": true
+    },
+    "logger": "tensorboard",
+    "env_kwargs": {},
+    "difficulty": null
+  },
+  "backend": "cpu",
+  "full_upstream_budget": false,
+  "online_training_transitions": 786432,
+  "expert_training_transitions": 269191,
+  "run_planned_online_training_transitions": 786432,
+  "source_manifest_sha256": "0c3fed66168a0c75541088298a199f6143f4eb09c7570f6006c288b7ff075a24",
+  "launcher_sha256": "244104cbb0bf446b0f1bbfb91250428fd0d7c9494c6ac3fd1c3696eee4adf310",
+  "summary": {
+    "denominator": 512,
+    "episodes_finished": 512,
+    "incomplete_episodes": 0,
+    "successes": 424,
+    "success_rate": 0.828125,
+    "wilson_95_interval": [
+      0.7930328989697278,
+      0.8583300232121304
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 85,
+      "timeout": 3
+    },
+    "final_settled_successes": 0,
+    "final_settled_rate": 0.0,
+    "final_settled_wilson_95_interval": [
+      0.0,
+      0.007446975722882739
+    ],
+    "success_then_failure": 239
+  },
+  "cohorts": [
+    {
+      "seed": 1000007,
+      "initial_state_sha256": "7100a0725f0c58a93bb2c75217c720dcb3c5ced8fa3e0efba36b8f369553c5b8",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 106,
+        "success_rate": 0.828125,
+        "wilson_95_interval": [
+          0.7534600319269827,
+          0.8836688405185272
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 21,
+          "timeout": 1
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 62
+      }
+    },
+    {
+      "seed": 2000007,
+      "initial_state_sha256": "856ff2405847ca3dc64f1e9202484be9a5c14cab1167195fc61b2113766a858b",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 107,
+        "success_rate": 0.8359375,
+        "wilson_95_interval": [
+          0.7621819239629298,
+          0.8901166835408066
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 21
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 57
+      }
+    },
+    {
+      "seed": 3000007,
+      "initial_state_sha256": "60e50569cfe865aa9786dd3d43de10def11044d1aeafd1f4997fd4a6a55737c3",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 102,
+        "success_rate": 0.796875,
+        "wilson_95_interval": [
+          0.7190073141485271,
+          0.8574426180640773
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 25,
+          "timeout": 1
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 53
+      }
+    },
+    {
+      "seed": 4000007,
+      "initial_state_sha256": "53db90d4bb6bf075678e20dc6fd324d7c2b007ff10facc0a559360fba309d2bf",
+      "summary": {
+        "denominator": 128,
+        "episodes_finished": 128,
+        "incomplete_episodes": 0,
+        "successes": 109,
+        "success_rate": 0.8515625,
+        "wilson_95_interval": [
+          0.7797727087736895,
+          0.9028653688464999
+        ],
+        "point_estimate_at_least_99_percent": false,
+        "wilson_lower_at_least_99_percent": false,
+        "complete_evaluation": true,
+        "failure_counts": {
+          "fatal_collision": 18,
+          "timeout": 1
+        },
+        "final_settled_successes": 0,
+        "final_settled_rate": 0.0,
+        "final_settled_wilson_95_interval": [
+          0.0,
+          0.029136956273508416
+        ],
+        "success_then_failure": 67
+      }
+    }
+  ],
+  "sealed_test_used": false,
+  "acceptance_passed": false,
+  "wall_seconds": 215.70470933300385,
+  "practical_manifest_sha256": "87f7bf40125d7a68818b20efc01c96a0b5e9051420950e6e5d1d77e84e9bbb14",
+  "warmstart_sha256": "f75e410291be0942296b198328f412952919673e9bedcfd6bb9dc4dc392611a4",
+  "evaluation_parts": [
+    {
+      "path": "results/local-ppo95-v1/long_credit_ignition/screen128.json",
+      "sha256": "c6469325843be508e7298b58b9cebfc47553abfeafdfa69a1a59407110a52d7e"
+    },
+    {
+      "path": "results/local-ppo95-v1/long_credit_ignition/remaining384.json",
+      "sha256": "ed7969b2712ed97ba4de1b5132eca27a58ae267b084d1472c28360443a26cd3d"
+    }
+  ],
+  "paired_reference": "results/local-ppo95-v1/parent_reference/development.json",
+  "paired_improved": 57,
+  "paired_regressed": 65,
+  "paired_net_successes": -8,
+  "development_target_95_reached": false,
+  "release_note": "Summary export; per-episode arrays for historical alternatives are omitted. Candidate and parent outcomes are included separately."
+}

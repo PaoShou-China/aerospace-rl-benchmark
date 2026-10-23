@@ -1,0 +1,34 @@
+{
+  "anchor_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+  "source_run": "local-counterfactual-repair-v1-run2",
+  "core_sources": {
+    "phase_policy.py": {
+      "original_relative_path": "source/src/common/rocket_phase_policy.py",
+      "original_sha256": "11f2dac4f7e312b2caefdd3e93d0f0b4966a7317dd37205ab32f4de13f08b3fe"
+    },
+    "expert_router.py": {
+      "original_relative_path": "source/src/common/rocket_expert_selector.py",
+      "original_sha256": "9215b99dd641359619d126813ef22e9d95248553517b057402fba77a83a44b96"
+    },
+    "feedback_program.py": {
+      "original_relative_path": "source/src/common/rocket_repair_program.py",
+      "original_sha256": "273a9fb82449f4c63845c88e139a2106e2990414feebf23a7eea7de67ab7a768"
+    },
+    "repair_policy.py": {
+      "original_relative_path": "source/src/common/rocket_counterfactual_repair.py",
+      "original_sha256": "ec0062cf2bbdf2b10891c68fef3aeac18fb226af23cc94d1b418ded90653f3d9"
+    }
+  },
+  "checkpoint_sha256": "1d5fcc65a01271325673e764d80771e01db2ba6af61abadaadb70d9e102a38b5",
+  "packaging_changes": [
+    "Module import paths and relative artifact locations",
+    "Historical environment restored from the recorded Git commit",
+    "Added legacy-checkpoint loader and a direct evaluation CLI",
+    "Trainer accepts the self-contained checkpoint as the frozen-parent source",
+    "Preserved 150 m activation ceiling and matching retention-sample restriction"
+  ],
+  "packaging_is_new_training": false,
+  "package_name": "moe_rocket_landing",
+  "study_title": "MoE-Based Rocket Landing: Policy Learning and Feedback Repair",
+  "scope": "Measured policy, frozen weights, feedback-repair training from inherited parent, and evaluation; earlier expert training pipelines are documented but not bundled."
+}
