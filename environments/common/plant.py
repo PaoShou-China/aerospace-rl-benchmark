@@ -98,6 +98,12 @@ class TensorPlant:
         self.rng=TensorRandom(n,d,seed)
         self.command_width={'quadx':4,'fixedwing':4,'rocket':7}[vehicle]
         self.physics_steps=0
+        # world-frame wind velocity (n,3) float64; None = calm air. Aerodynamic
+        # terms (lifting surfaces, quadx body drag, rocket body drag) evaluate
+        # air-relative velocity v_air = v - wind, so None/wind=0 reproduces the
+        # calm-air dynamics bit-for-bit. The owning env updates the buffer once
+        # per control step (gusts are frozen across the physics substeps).
+        self.wind=None
         self.throttle=torch.zeros((n,4 if vehicle=='quadx' else 1),device=d,dtype=torch.float64)
         self.ground_contact=torch.zeros(n,device=d,dtype=torch.bool)
         self.pad_contact=torch.zeros(n,device=d,dtype=torch.bool)
@@ -154,6 +160,7 @@ class TensorPlant:
 
     def _air_velocity(self,ids,q):
         v=self.drone.get_links_vel(links_idx_local=ids,ref=gs.link_ref_frame.link_COM).to(torch.float64)
+        if self.wind is not None:v=v-self.wind[:,None,:]
         return inverse_rotate(q[:,None,:].expand(-1,len(ids),-1),v)
 
     def controller(self,command,mask):
@@ -185,7 +192,7 @@ class TensorPlant:
             self.force[:,self.prop_ids,2]=thrust
             self.torque[:,self.prop_ids,2]=thrust*(m['torque_coef']/m['thrust_coef'])*self.spin
             drag=self.params['drag_params']
-            vb_air=vb
+            vb_air=vb-(inverse_rotate(q,self.wind) if self.wind is not None else 0.)
             self.force[:,self.body_drag_id]=-.5*1.225*drag['drag_coef_xyz']*drag['drag_area_xyz']*vb_air.abs()*vb_air
             self.torque[:,0]=-drag['drag_coef_pqr']*wb.abs()*wb*(~self.last_contact)[:,None]
         else:

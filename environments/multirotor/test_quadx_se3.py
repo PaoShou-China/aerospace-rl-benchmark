@@ -2,7 +2,7 @@
 
 Covers
     T1  undisturbed benchmark hover + batch-size/device generality
-    T2  varied initial conditions (difficulty-1 spawn noise + injected
+    T2  varied initial conditions (manual spawn-noise DR knobs + injected
         positions/attitudes via plant.set_state, env code untouched)
     T3  action saturation: recoverable gust recovery, a 90 deg bank
         fall-and-catch whose transient saturates the rate-command window in
@@ -180,14 +180,16 @@ def test_hover():
 
 def test_varied_initial():
     print('T2: varied initial conditions')
-    # (a) difficulty-1 spawn noise through the env's static difficulty knob
-    env = QuadXHoverEnv(num_envs=1024, backend=BACKEND, seed=7, difficulty=1.0)
+    # (a) spawn noise via the env's manual domain-randomization knobs
+    env = QuadXHoverEnv(num_envs=1024, backend=BACKEND, seed=7)
+    env.spawn_xy_noise, env.spawn_z_noise = .5, .25
+    env.spawn_vel_noise, env.spawn_att_noise = .5, .35
     ctrl = QuadXSE3Baseline(env)
     ep0, sc0 = gpu_sum(env.completed_episodes), gpu_sum(env.completed_successes)
     st = run(env, ctrl, env.get_observations(), 400)
     episodes, success = episode_outcome(env, ep0, sc0)
-    sr = metrics_line('difficulty=1', episodes, success, st, sat_fractions(ctrl, 400, 1024))
-    assert sr >= 0.90, f'difficulty-1 hover success {sr:.3f} < 0.90'
+    sr = metrics_line('dr-noise', episodes, success, st, sat_fractions(ctrl, 400, 1024))
+    assert sr >= 0.90, f'dr-noise hover success {sr:.3f} < 0.90'
     assert st['steady_pos'] <= 0.20 and st['steady_att'] <= 0.20
     env.close()
 

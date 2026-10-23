@@ -125,51 +125,44 @@
 
 ---
 
-## 亮点三：静态难度是全库契约，不是 per-env 随机化
+## 亮点三：风扰是统一 Plant 钩子，不是 per-env 力补丁
 
-**断言**：8 个任务共享同一难度语义，且难度是可对照的实验变量。
+**断言**：3 个大气任务（QuadX-Hover、Fixedwing-Waypoints、Rocket-Landing）
+共享同一套风扰接入路径——气动力统一用**空速** `v_air = v - wind` 评估；
+静风（默认）与发表基准**逐位一致**。
 
 **机制与证据**
 
-- 统一构造参数：`difficulty=None`（基准）/ `difficulty=d∈[0,1]`（静态）；
-  每个 env 自带 `benchmark_difficulty`
-  与自己的难度映射（`_apply_difficulty`，或等价的构造期解析）
-  （各任务实现见
-  [quadx/env.py:37](../multirotor/env.py#L37)、
-  [fixedwing/env.py:51](../fixedwing/env.py#L51)、
-  [rocket/env.py:145](../rocket/env.py#L145)、
-  [satellite/env.py:115](../satellite/attitude_control/env.py#L115)、
-  [transfer/env.py:64](../satellite/orbit_transfer/env.py#L64)、
-  [docking/env.py:77](../satellite/rendezvous_docking/env.py#L77)）。
-- 难度轴（d=0 → d=1，均为“易 → 难”；d=1 即发表基准，quadx 例外——
-  其确定性 spawn 基准在 d=0，轴向右延伸为更难）：
-
-| 任务 | 旋钮 | d=0（易） → d=1（难） |
-|---|---|---|
-| QuadX-Hover | spawn 扰动 | 确定性 spawn（基准） → ±0.5 m xy / ±0.25 m z / ±0.5 m/s / ±0.35 rad |
-| Fixedwing | 航点壳层 | 最小半径 50 m → 20 m（最大 65 m 固定） |
-| Rocket-Landing | 初始条件 | xy ±2 m，z 440–450 m，euler ±0.05 → xy ±20 m，z 400–450 m，euler ±0.3 |
-| Satellite | 目标姿态 | 距 home ≤0.3 rad、无噪声 → 均匀 SO(3)、±0.001 噪声 |
-| Transfer | 初始偏心率 | 0.02 → 0.1 |
-| Docking | 初始距离/速度 | 15–30 m，0.1 m/s → 50–100 m，0.5 m/s |
-| Rendezvous | 初始距离 | 150–300 m → 800–1200 m（vmax 不变） |
-
-（与 [README.md:99-110](../README.md#L99-L110) 一致。）
+- `TensorPlant` 持有 `wind`（world 系 (n,3) float64，`None` = 静风）；
+  `_air_velocity` 在世界系减去风后再旋到体轴
+  （[plant.py](../environments/common/plant.py)），因此
+  fixedwing 升力面与 rocket 鳍/体阻力的气动项自动感知风；
+- QuadX 无升力面，其既有体阻力项的变量就叫 `vb_air`——接入前恒等于体轴
+  速度，接入后变为 `vb - R^T·wind`，静风时逐位回到原实现；
+- 风的生成统一走 `environments/common/disturbances.py` 的
+  `WindDisturbance`（定常风 + Dryden 阵风，MIL-F-8785C 低空成形滤波、
+  种子化 RNG 流），env 每个控制步更新一次 `plant.wind`（阵风在物理子步间
+  冻结），`reset_idx` 镜像重置滤波器状态；
+- 训练入口硬编码 `WIND` 常量（3 个大气任务：3 m/s 东向定常风 + 30%
+  moderate Dryden；卫星任务在真空中无风）。
 
 **不变式（这条最关键）**
 
-- 只调节**初始状态分布 / 任务参数分布**；成功判据、终止条件、reward 结构永不动，
-  因此任意训练难度下的评测仍与发表基准可比。
-- `difficulty=benchmark_difficulty` 时，同 seed 的首个 reset 及后续 step
-  与旧实现**逐位一致**（`None` 路径完全不进入难度分支）。
+- 静风路径完全不进入风分支：`wind=None` 时 `_air_velocity` 与 QuadX 阻力
+  项的字节码路径与旧实现一致，同 seed 的首个 reset 及后续 step **逐位一致**；
+- eval.py 构造 env 不传 kwargs（永远静风），因此训练带风、评测静风，
+  评测口径与发表基准可比。
 
-**对审稿人的意义**：难度不是“改题”，而是“改题面难度”；可以单独检验
-“训练分布变化”对最终策略的影响，而不用怀疑评测标准被偷偷放宽。
+**对审稿人的意义**：风扰不是"改 dynamics 的手写补丁"，而是把所有气动力
+改为对空速评估这一物理上正确的表述；可以单独检验"扰动鲁棒性"对策略的
+影响，而不用怀疑评测标准被偷偷放宽。
 
 **边界**
 
-- 难度旋钮是训练期分布选择器，**不声称**提升最终性能；它只是把难度变成可控变量。
-（课程学习机制已于 2026-10-22 移除。）
+- 阵风滤波每控制步推进一次，物理子步间冻结（Dryden 带宽远低于控制频率，
+  误差可忽略）；
+- `WindDisturbance` 的 RNG 在 CPU 上，每步产生一次 CPU→GPU 传输
+  （无 device 同步）；静风路径零开销。
 
 ---
 
@@ -387,8 +380,8 @@ python scripts/eval.py quadx --num-envs 16 --steps 400
 # 3) 查看一次训练的实验记录
 python -c "import json;r=json.load(open('results/quadx/run.json'));print(r['task']);print(r['transitions'], r['physics_step_calls'])"
 
-# 4) 定位课程契约的实现位置
-grep -n "benchmark_difficulty\|_apply_difficulty" environments/*/env.py
+# 4) 定位风扰钩子的实现位置
+grep -n "wind" environments/common/plant.py environments/common/disturbances.py | head -20
 
 # 5) 任一任务的经典基线（1024 envs / 2000 步 / seed 7，写 results/<task>/baseline.json）
 python scripts/baseline_eval.py quadx

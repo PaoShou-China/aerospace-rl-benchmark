@@ -60,12 +60,10 @@ Episode End
     Truncation: 1200 policy steps (30 s).
 
 Difficulty
-    Constructor kwarg `difficulty` (float in [0, 1]) modulates
-    only the initial-condition distribution; the pad, success
-    and fatal criteria and reward are untouched. d=0 -> d=1: horizontal
-    offset xy ±2 m -> ±20 m, altitude 440-450 m -> 400-450 m (span
-    shrinking with difficulty), initial euler ±0.05 -> ±0.3 rad; d=1 is
-    the published benchmark.
+    None. The initial-condition distribution is the upstream drop (xy ±20 m,
+    altitude 400-450 m, initial euler ±0.3 rad); the published benchmark.
+    An optional wind disturbance (steady_wind/dryden ctor kwargs) exists;
+    calm air is bit-for-bit with the benchmark.
 
 References
     - PyFlyt (J. K. Tai, github.com/jkuang421/PyFlyt), Rocket-Landing task

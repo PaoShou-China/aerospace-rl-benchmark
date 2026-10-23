@@ -107,19 +107,12 @@ def _rotor_axes_ref(num_cmgs):
 
 
 class SatelliteAttitudeEnv:
-    # Difficulty axis (0 easiest -> 1 hardest = the torchrl reference): the
-    # target attitude is pulled toward the start attitude as d drops (rotation
-    # angle cap 0.3 rad -> pi via slerp; at cap=pi the legacy uniform-SO(3)
-    # sampling code path runs untouched) and reset noise shrinks to zero.
-    # Success criteria (att/omega tolerances) are untouched.
-    target_angle_cap=math.pi # target rotation-angle cap [rad] (axis .3 -> pi)
-    benchmark_difficulty=1.
-    difficulty=None          # None = benchmark behavior (no cfg record)
+    target_angle_cap=math.pi # target rotation-angle cap [rad]
     # conventional controller: quaternion PD + singularity-robust damped CMG
     # steering, Schaub & Junkins (baselines.py; gimbal-rate commands)
     conventional_controller=SatelliteCMGBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4):
         if num_cmgs not in (4,6):raise ValueError('num_cmgs must be 4 or 6')
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
@@ -229,23 +222,8 @@ class SatelliteAttitudeEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        self._resolve_difficulty(difficulty)
 
         self.reset()
-
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
-
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the target-attitude/noise knobs."""
-        self.difficulty=d
-        self.target_angle_cap=.3+(math.pi-.3)*d
-        self.reset_noise_scale=.001*d
-        self.cfg['difficulty']=d
 
     def _rotor_axes(self,theta):
         """Rotor momentum directions r_i(theta) via Rodrigues rotation; g.r0=0."""
@@ -422,12 +400,6 @@ class SatelliteAttitudeEnv:
         s1=torch.sqrt(1-u[:,0]);s2=torch.sqrt(u[:,0])
         ang1=2*math.pi*u[:,1];ang2=2*math.pi*u[:,2]
         target=torch.stack((s1*ang1.sin(),s1*ang1.cos(),s2*ang2.sin(),s2*ang2.cos()),-1)
-        if self.target_angle_cap<math.pi:
-            # difficulty<1: pull the target toward the start attitude (identity
-            # quaternion [1,0,0,0]); at the benchmark cap=pi the legacy
-            # uniform-SO(3) sample passes through untouched
-            home=torch.zeros_like(target);home[:,0]=1.
-            target=quat_slerp(home,target,self.target_angle_cap/math.pi)
         self.target_quat.copy_(torch.where(mask[:,None],target,self.target_quat))
         noise=2*self.rng.uniform(7+self.num_gimbals,mask)-1
         qn=torch.zeros_like(self.q);qn[:,0]=1;qn=qn+self.reset_noise_scale*noise[:,:4]

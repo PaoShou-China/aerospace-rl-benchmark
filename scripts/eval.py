@@ -3,7 +3,7 @@
 Usage: python eval.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous
 Defaults: 1024 envs on GPU, seed 7, frozen deterministic policy (mean action,
 no exploration noise). The env configuration used at training time
-(env_kwargs + resolved difficulty) is restored from results/<task>/config.json.
+(env_kwargs) is restored from results/<task>/config.json.
 
 Unbiased episode accounting: the loop runs until EVERY replica has completed
 at least one full episode (safety-capped by --max-steps), so no in-flight
@@ -54,8 +54,6 @@ def main():
     torch.manual_seed(args.seed)
     # restore the exact env construction used at training time
     env_kwargs = dict(cfg.get('env_kwargs') or {})
-    if cfg.get('difficulty') is not None:
-        env_kwargs['difficulty'] = cfg['difficulty']
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed, **env_kwargs)
     if cfg.get('algo') == 'flash_sac':
         from algorithms.flashsac.flash_sac import FlashSACRunner

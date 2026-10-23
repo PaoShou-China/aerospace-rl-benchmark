@@ -36,8 +36,8 @@ verification conditions lives in
 | Rendezvous | `SpaceRendezvousEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 1000 steps ≈ 16.7 min | range < 10 m & speed < 0.5 m/s, keep-out respected |
 
 Per-task quantitative details (action/observation layouts, reward
-decompositions, termination conditions, spawn distributions, difficulty
-axes) live in the module docstring of each package:
+decompositions, termination conditions, spawn distributions, wind
+response) live in the module docstring of each package:
 [multirotor](multirotor/__init__.py),
 [fixedwing](fixedwing/__init__.py),
 [rocket](rocket/__init__.py),
@@ -160,33 +160,23 @@ ablation arms: [eval_docking_lqr.py](satellite/rendezvous_docking/eval_docking_l
   success flag.
 - Actions arrive on `env.device`; implicit host/device copies raise.
 
-## Static difficulty (0–1)
+## Wind disturbance
 
-Every environment exposes a static difficulty setting in `[0, 1]` (0
-easiest, 1 hardest). Only initial-state / task-parameter distributions are
-modulated; success criteria, terminations and reward structure are untouched,
-so evaluation stays comparable at any training difficulty.
+The three atmospheric vehicles (QuadX-Hover, Fixedwing-Waypoints,
+Rocket-Landing) accept an optional wind disturbance through two constructor
+kwargs:
 
-- `difficulty=None` (default): published benchmark behavior, bit-for-bit
-  (eval.py builds envs without kwargs and is unaffected).
-- `difficulty=d` (float): train at a static difficulty.
+- `steady_wind` (tuple, m/s): constant world-frame wind velocity.
+- `dryden` (0–1 scale of the severity presets) + `severity`
+  (`'light' | 'moderate' | 'severe'`): Dryden gust turbulence from
+  environments/common/disturbances.py, advancing once per control step.
 
-The per-task difficulty axes (d=0 → d=1):
-
-| Task | Knob | d=0 (easy) → d=1 (benchmark) |
-|---|---|---|
-| QuadX-Hover | spawn perturbations | deterministic spawn (benchmark) → ±0.5 m xy / ±0.25 m z, ±0.5 m/s, ±0.35 rad |
-| Fixedwing | waypoint shell | min radius 50 m → 20 m (max 65 m fixed) |
-| Rocket-Landing | initial conditions | xy ±2 m, z 440–450 m, euler ±0.05 → xy ±20 m, z 400–450 m, euler ±0.3 |
-| Satellite (CMG) | target attitude | ≤0.3 rad from home, no noise → uniform SO(3), ±0.001 noise |
-| Transfer | initial eccentricity | e0 0.02 → 0.1 |
-| Docking | spawn range/speed | 15–30 m, 0.1 m/s → 50–100 m, 0.5 m/s |
-| Rendezvous | spawn range | 150–300 m → 800–1200 m |
-
-All tasks place the published benchmark at d=1 except QuadX-Hover, whose
-deterministic-spawn benchmark is already the easiest variant (its axis
-extends toward harder spawn randomization). Train entries expose a single
-`DIFFICULTY` constant (`None` = benchmark / float = static).
+Aerodynamic terms evaluate air-relative velocity `v_air = v - wind`
+(lifting surfaces and body-drag laws), so the default calm air (`steady_wind=None,
+dryden=0`) reproduces the benchmark bit-for-bit and eval.py — which builds
+envs without kwargs — is unaffected. The train entries hard-code a `WIND`
+constant (3 m/s easterly steady + 30% moderate Dryden for the three
+atmospheric tasks); satellite tasks operate in vacuum and have no wind.
 
 ## Usage
 
@@ -285,8 +275,8 @@ environment docstring lists the specific source of its defaults.
 
 All future tasks follow the same per-task recipe (tensorized env + spec
 docstring → classical baseline registered in `algorithms/baselines/` →
-self-contained `train_<task>.py` with 1024 envs / seed 7 / `DIFFICULTY`
-constant → `results/<task>/` → README + difficulty-table update). No
+self-contained `train_<task>.py` with 1024 envs / seed 7 →
+`results/<task>/` → README update). No
 multi-agent tasks are planned — every task below is a single agent.
 
 ### Priority 1
@@ -322,16 +312,12 @@ multi-agent tasks are planned — every task below is a single agent.
 
 1. `environments/common/disturbances.py` — **done**: unified
    `WindDisturbance` (steady wind + Dryden gust, MIL-F-8785C low-altitude
-   shaping filters, seeded RNG stream); envs add the returned velocity to
-   the airflow term without touching their dynamics
+   shaping filters, seeded RNG stream); the atmospheric envs hand the
+   returned velocity to the plant, whose aerodynamic terms evaluate
+   v_air = v - wind (calm air is bit-for-bit with the benchmark)
 2. `algorithms/baselines/` — **done**: dict-based `BUILDERS` registry plus
    a `@register_baseline('<task>')` decorator; a new classical baseline is
    wired into `baseline_eval.py` with one line
-3. Difficulty-axis linkage — **done**: `environments/common/difficulty.py`
-   validates (task, difficulty) and builds the env kwargs; all seven train
-   entries now construct `ENV_KWARGS` through
-   `resolve_env_kwargs('<task>', DIFFICULTY)`, so a new task joins the
-   convention with one dict entry in `TASK_IDS`
 
 ### Cadence
 

@@ -39,12 +39,10 @@ Episode End
     Truncation: 400 policy steps (10 s).
 
 Difficulty
-    Constructor kwarg `difficulty` (float in [0, 1]) modulates only the
-    spawn distribution; terminations and reward are
-    untouched. d=0 (the deterministic-spawn benchmark, this task's easiest
-    variant) -> d=1: position xy ±0.5 m / z ±0.25 m, velocity ±0.5 m/s,
-    attitude ±0.35 rad. At d=0 the RNG is left untouched so the default
-    path stays bit-for-bit with the benchmark.
+    None. The benchmark spawn is deterministic; optional manual
+    domain-randomization knobs (spawn_*_noise attrs) and an optional wind
+    disturbance (steady_wind/dryden ctor kwargs) exist; calm air keeps the
+    default path bit-for-bit with the benchmark.
 
 References
     - PyFlyt (J. K. Tai, github.com/jkuang421/PyFlyt), QuadX-Hover task

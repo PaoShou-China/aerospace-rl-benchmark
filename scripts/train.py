@@ -7,9 +7,8 @@ control, low-thrust perigee-raising transfer, CWH docking / rendezvous).
 This is the small-config sweep entry (default 64 envs, 32-step rollouts,
 64x64 MLP, adaptive-KL schedule). For experiment runs use the self-contained
 per-task entries `train_<task>.py` instead -- they share
-algorithms/train_utils.py, ship the project-standard 1024-env configuration
-and expose the DIFFICULTY constant; this file passes no env kwargs (always
-benchmark difficulty).
+algorithms/train_utils.py and ship the project-standard 1024-env
+configuration; this file passes no env kwargs (always benchmark behavior).
 
 Usage: python train.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous [--num-envs 64] [--updates 1000]
 Defaults: GPU backend, seed 7, PPO config verified in the small-scale run.

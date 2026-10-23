@@ -62,12 +62,8 @@ Episode End
     Truncation: 500 steps (docking) / 1000 steps (rendezvous).
 
 Difficulty
-    Constructor kwarg `difficulty` (float in [0, 1]) modulates
-    only the reset distribution; dynamics, success criteria
-    and reward are untouched. d=0 -> d=1: docking spawn range 15-30 m,
-    |v0| <= 0.1 m/s -> 50-100 m, |v0| <= 0.5 m/s; rendezvous spawn range
-    150-300 m -> 800-1200 m (|v0| bound unchanged); d=1 is the published
-    benchmark.
+    None. The benchmark spawn distributions are fixed: docking 50-100 m,
+    |v0| <= 0.5 m/s; rendezvous 800-1200 m, |v0| <= 1 m/s.
 
 References
     - Supreeth, H. S. G. & Mehta, "SpaceGym: A Gymnasium-Based Benchmark

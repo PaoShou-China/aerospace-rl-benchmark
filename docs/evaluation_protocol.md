@@ -45,10 +45,10 @@ BC warm-start 数据源 = 各任务 `conventional_controller`（BC 采集器自�
   | rocket | ≥ 30% | v2 奖励重训中，基线 84.1% |
 
   达到阈值记为**已收敛**；未达到记为**未收敛（not converged）**并原样报告，不得以"仍在上升"等叙事替代。阈值修订需在第 5 节登记。
-- **评测间隔**：训练过程每 200 updates 保存一次 `model_*.pt`（rsl-rl save_interval），仅在训练结束后对最终 checkpoint 做一次确定性评测（eval.py，冻结 config.json 里的 difficulty）；训练中不做验证集模型选择。
+- **评测间隔**：训练过程每 200 updates 保存一次 `model_*.pt`（rsl-rl save_interval），仅在训练结束后对最终 checkpoint 做一次确定性评测（eval.py，冻结 config.json 里的 env_kwargs）；训练中不做验证集模型选择。
 - **种子与区间**：正式实验每任务 **3 seeds {7, 13, 21}** 训练；报告 mean 与 [min, max] 区间，不报单 seed 结果。
 - **Held-out 测试集**：训练/验证只用 seed 7/13/21 的 IC 流；最终泛化评测用 eval.py `--seed 101`（未在训练中出现的 RNG 流），每任务只跑一次，只报不改。基线（baseline_eval.py）同样补测 seed 101，保证同分布可比。
-- **报告口径**：成功率必须注明①训练口径还是确定性评测口径②步数窗口（rocket 的 700 步与 2000 步口径差异巨大，报告默认 2000 步/官方 reset 分布）③难度 d。
+- **报告口径**：成功率必须注明①训练口径还是确定性评测口径②步数窗口（rocket 的 700 步与 2000 步口径差异巨大，报告默认 2000 步/官方 reset 分布）③是否带风扰（训练可带风，评测恒为静风基准）。
 
 ## 4. 成本与并行性能的报告口径（学习成本 ≠ 并行性能）
 

@@ -41,11 +41,9 @@ Episode End
     Truncation: 3600 policy steps (120 s).
 
 Difficulty
-    Constructor kwarg `difficulty` (float in [0, 1]) modulates
-    only the waypoint placement distribution; dynamics,
-    terminations and reward are untouched. d=0 -> d=1: minimum waypoint
-    shell radius 50 m -> 20 m (max radius fixed at 65 m); d=1 is the
-    published benchmark.
+    None. Waypoints spawn on the 20-65 m shell (the published benchmark).
+    An optional wind disturbance (steady_wind/dryden ctor kwargs) exists;
+    calm air is bit-for-bit with the benchmark.
 
 References
     - PyFlyt (J. K. Tai, github.com/jkuang421/PyFlyt), Fixedwing-Waypoints

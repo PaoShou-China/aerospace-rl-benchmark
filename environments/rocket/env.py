@@ -114,20 +114,18 @@ def rocket_shaping(position,previous_position,vel_z,previous_vel_z,rpy,body_omeg
 
 
 class RocketLandingEnv:
-    # Difficulty axis (0 easiest -> 1 hardest = the upstream ICs): the reset
-    # ranges narrow toward the nominal drop as d drops; at d=1 the upstream
-    # xy +/-20 m, z [400,450], euler +/-0.3 rad are restored bit-for-bit.
-    # Success criteria (pad contact thresholds) are untouched.
-    ic_xy_half=20.           # spawn xy half-range [m] (axis 20 -> 2)
-    ic_z_min=400.            # spawn z lower bound [m] (axis 400 -> 440, span 50 fixed)
-    ic_euler_half=.3         # spawn euler per-axis half-range [rad] (axis .3 -> .05)
-    benchmark_difficulty=1.
-    difficulty=None          # None = benchmark behavior (no cfg record)
+    # Upstream ICs (unchanged): xy +/-20 m, z [400,450], euler +/-0.3 rad.
+    # Success criteria (pad contact thresholds) are untouched. Wind is
+    # optional via the steady_wind/dryden ctor kwargs; calm air reproduces
+    # the benchmark bit-for-bit.
+    ic_xy_half=20.           # spawn xy half-range [m]
+    ic_z_min=400.            # spawn z lower bound [m] (span 50 fixed)
+    ic_euler_half=.3         # spawn euler per-axis half-range [rad]
     # conventional controller: ZEM/ZEV powered-descent guidance + TVC/fin attitude
     # PD (baselines.py; reuses the env's raw 7-dim action convention)
     conventional_controller=RocketPDGBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate'):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'rocket','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -183,24 +181,25 @@ class RocketLandingEnv:
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
-        self._resolve_difficulty(difficulty)
+        self._init_wind(num_envs,seed,steady_wind,dryden,severity)
 
         self.reset()
 
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+    def _init_wind(self,n,seed,steady_wind,dryden,severity):
+        """Optional wind disturbance (environments/common/disturbances.py).
 
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the initial-condition knobs."""
-        self.difficulty=d
-        self.ic_xy_half=2.+18.*d
-        self.ic_z_min=440.-40.*d
-        self.ic_euler_half=.05+.25*d
-        self.cfg['difficulty']=d
+        Calm air (default) leaves the plant dynamics bit-for-bit unchanged;
+        with wind configured, the gust filters advance once per control step
+        and the fin/body aerodynamic terms evaluate v_air = v - wind.
+        """
+        self._wind=None
+        if steady_wind is not None or dryden>0.:
+            from environments.common.disturbances import WindDisturbance
+            self._wind=WindDisturbance(n,self.device,seed,steady_wind=steady_wind,
+                                       dryden=dryden,severity=severity,dt=1./self.agent_hz)
+            self.plant.wind=torch.zeros((n,3),device=self.device,dtype=torch.float64)
+            self.cfg['wind']=dict(steady_wind=list(steady_wind) if steady_wind is not None else None,
+                                  dryden=dryden,severity=severity)
 
     def _scale_actions(self,actions):
         raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
@@ -216,6 +215,7 @@ class RocketLandingEnv:
         # L231-233). No extra env-level reshaping.
         command=physical.clone()
         self.action.copy_(command)
+        if self._wind is not None:self.plant.wind.copy_(self._wind.step())
         self.reward.fill_(0.)
         self.touch_flag.fill_(False)
         self.count+=1
@@ -351,8 +351,6 @@ class RocketLandingEnv:
         [400, 450], euler orn uniform in +/-0.3 rad/axis, vz = -100 m/s, no
         angular velocity. The upstream random linear/angular velocities are
         dead code there ("randoimize_drop" typo) and are not reproduced.
-        The difficulty axis (see the class block) shrinks the same ranges
-        toward the nominal drop: xy +/-2 m, z [440, 450], euler +/-0.05 rad.
         """
         mask=envs_idx
         p,q,v,w=self.plant.state()
@@ -380,6 +378,7 @@ class RocketLandingEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        if self._wind is not None:self._wind.reset(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

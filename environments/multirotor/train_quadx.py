@@ -8,8 +8,8 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_quadx.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
-DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
-float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
+WIND configures the wind disturbance passed to the env ctor (steady_wind,
+dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 """
 import sys
 from pathlib import Path
@@ -18,7 +18,6 @@ _ROOT = Path(__file__).resolve().parents[1]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
 from environments.multirotor import QuadXHoverEnv
 
 TASK = 'quadx'
@@ -42,10 +41,9 @@ INIT_STD = 1.0
 NUM_STEPS_PER_ENV = 100
 NUM_LEARNING_EPOCHS = 5
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('quadx', DIFFICULTY)   # validated against environments/common/difficulty.py
+# Wind disturbance (environments/common/disturbances.py): 3 m/s easterly
+# steady wind + 30% moderate Dryden gusts. None = calm air (benchmark).
+WIND = dict(steady_wind=(3., 0., 0.), dryden=.3, severity='moderate')
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before
@@ -59,4 +57,4 @@ if __name__ == '__main__':
                  entropy_coef=ENTROPY_COEF, init_std=INIT_STD,
                  num_steps_per_env=NUM_STEPS_PER_ENV,
                  num_learning_epochs=NUM_LEARNING_EPOCHS,
-                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)
+                 env_kwargs=WIND, bc_warmstart=BC_WARMSTART)

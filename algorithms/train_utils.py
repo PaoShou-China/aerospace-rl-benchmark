@@ -93,8 +93,8 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     """Train one task end-to-end and write checkpoint.pt / run.json / config.json.
 
     env_kwargs: extra keyword arguments forwarded to the env constructor
-    (e.g. rendezvous's static spawn difficulty); None leaves every other
-    task entry's call signature unchanged.
+    (e.g. the atmospheric tasks' wind disturbance config); None leaves
+    every other task entry's call signature unchanged.
 
     lr_decay_updates: optional exponential lr half-life in updates (opt-in;
     None keeps the constant lr the other task entries use).
@@ -342,8 +342,6 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     cfg['env_kwargs'] = dict(env_kwargs) if env_kwargs else {}
     if isinstance(bc_warmstart, dict):
         cfg['bc_warmstart'] = bc_warmstart
-    # the env's resolved difficulty (eval.py freezes evaluation at this level)
-    cfg['difficulty'] = getattr(env, 'difficulty', None)
     (out / 'config.json').write_text(json.dumps(cfg, indent=2))
     print(json.dumps(report, indent=2), flush=True)
     env.close()

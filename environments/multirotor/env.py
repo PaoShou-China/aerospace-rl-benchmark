@@ -25,22 +25,21 @@ def hover_shaping(position,rpy,body_omega):
 
 
 class QuadXHoverEnv:
-    # Difficulty axis (0 easiest = the deterministic-spawn benchmark -> 1
-    # hardest): reset perturbations grow with d (domain randomization). At
-    # d=0 no random numbers are drawn, so the reset
-    # state and RNG stream match the legacy benchmark bit-for-bit. Success
-    # criteria (ground contact, bounds, step limit) are untouched.
-    spawn_xy_noise=0.        # spawn xy-offset radius [m] (axis 0 -> .5)
-    spawn_z_noise=0.         # spawn z-offset half-range [m] (axis 0 -> .25)
-    spawn_vel_noise=0.       # spawn |v0| per-axis half-range [m/s] (axis 0 -> .5)
-    spawn_att_noise=0.       # spawn per-axis euler half-range [rad] (axis 0 -> .35)
-    benchmark_difficulty=0.
-    difficulty=None          # None = benchmark behavior (no cfg record)
+    # Spawn-noise attrs are manual domain-randomization knobs (all zero in the
+    # benchmark, where no random numbers are drawn and the reset matches the
+    # legacy deterministic spawn exactly). Wind is optional via the
+    # steady_wind/dryden ctor kwargs; calm air reproduces the benchmark
+    # bit-for-bit.
+    spawn_xy_noise=0.        # spawn xy-offset radius [m] (manual DR knob)
+    spawn_z_noise=0.         # spawn z-offset half-range [m] (manual DR knob)
+    spawn_vel_noise=0.       # spawn |v0| per-axis half-range [m/s] (manual DR knob)
+    spawn_att_noise=0.       # spawn per-axis euler half-range [rad] (manual DR knob)
+    bounds_radius=3.         # out-of-bounds radius [m]
     # conventional controller: SE(3) geometric hover control, Lee et al. 2010
     # (baselines.py; reuses the env's rate+collective action convention)
     conventional_controller=QuadXSE3Baseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate'):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'quadx','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -86,25 +85,25 @@ class QuadXHoverEnv:
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
-        self._resolve_difficulty(difficulty)
+        self._init_wind(num_envs,seed,steady_wind,dryden,severity)
 
         self.reset()
 
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+    def _init_wind(self,n,seed,steady_wind,dryden,severity):
+        """Optional wind disturbance (environments/common/disturbances.py).
 
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the spawn-perturbation knobs."""
-        self.difficulty=d
-        self.spawn_xy_noise=.5*d
-        self.spawn_z_noise=.25*d
-        self.spawn_vel_noise=.5*d
-        self.spawn_att_noise=.35*d
-        self.cfg['difficulty']=d
+        Calm air (default) leaves the plant dynamics bit-for-bit unchanged;
+        with wind configured, the gust filters advance once per control step
+        and the plant aerodynamic terms evaluate v_air = v - wind.
+        """
+        self._wind=None
+        if steady_wind is not None or dryden>0.:
+            from environments.common.disturbances import WindDisturbance
+            self._wind=WindDisturbance(n,self.device,seed,steady_wind=steady_wind,
+                                       dryden=dryden,severity=severity,dt=1./self.agent_hz)
+            self.plant.wind=torch.zeros((n,3),device=self.device,dtype=torch.float64)
+            self.cfg['wind']=dict(steady_wind=list(steady_wind) if steady_wind is not None else None,
+                                  dryden=dryden,severity=severity)
 
     def _scale_actions(self,actions):
         raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
@@ -116,6 +115,7 @@ class QuadXHoverEnv:
         physical=self._scale_actions(actions)
         self.action.copy_(physical)
         command=physical.clone()
+        if self._wind is not None:self.plant.wind.copy_(self._wind.step())
         self.reward.fill_(-.1)
         self.count+=1
         for _ in range(self.inner_steps):
@@ -124,7 +124,7 @@ class QuadXHoverEnv:
             self.plant.controller(command,active)
             for _ in range(2):self.plant.physics_step(command,active)
             p,rpy,v,wb,vb=self._observe(active)
-            collision=self.plant.ground_contact;bounds=p.norm(dim=-1)>3
+            collision=self.plant.ground_contact;bounds=p.norm(dim=-1)>self.bounds_radius
             reward=torch.where(collision|bounds,-100.,self.reward)+hover_shaping(p,rpy,wb)
             term=collision|bounds
             self.reward.copy_(torch.where(active,reward,self.reward))
@@ -201,9 +201,9 @@ class QuadXHoverEnv:
         spawn=torch.zeros_like(p);spawn[:,2]=1.
         rotation=torch.zeros_like(q);rotation[:,0]=1
         velocity=torch.zeros_like(v);omega=torch.zeros_like(w)
-        # difficulty>0 perturbs the spawn (position ring + z, velocity, attitude);
-        # all knobs are 0 at the benchmark difficulty, where no random numbers
-        # are drawn and the reset matches the legacy deterministic spawn exactly
+        # spawn noise attrs are manual domain-randomization knobs (all zero in
+        # the benchmark, where no random numbers are drawn and the reset
+        # matches the legacy deterministic spawn exactly)
         if self.spawn_xy_noise>0. or self.spawn_z_noise>0.:
             u=self.plant.rng.uniform(3,mask)
             rad=self.spawn_xy_noise*u[:,0];ang=2*math.pi*u[:,1]
@@ -228,6 +228,7 @@ class QuadXHoverEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        if self._wind is not None:self._wind.reset(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

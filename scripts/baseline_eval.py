@@ -2,7 +2,7 @@
 
 Usage: python baseline_eval.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous
 Defaults mirror eval.py: 1024 envs, seed 7, same env construction (if
-results/<task>/config.json exists, its env_kwargs / difficulty are restored),
+results/<task>/config.json exists, its env_kwargs are restored),
 same success accounting from the env's completed-episode counters.  Each
 baseline reads only the 'policy' observation group.
 
@@ -56,8 +56,6 @@ def main():
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     env_kwargs = dict(cfg.get('env_kwargs') or {})
     env_kwargs.pop('curriculum', None)
-    if cfg.get('difficulty') is not None:
-        env_kwargs['difficulty'] = cfg['difficulty']
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed, **env_kwargs)
     controller = build_baseline(args.vehicle, env)
 

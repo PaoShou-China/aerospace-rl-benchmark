@@ -54,20 +54,11 @@ from algorithms.baselines.baselines import TransferGaussBaseline
 
 
 class LowThrustTransferEnv:
-    # Difficulty axis (0 easiest -> 1 hardest = the reference orbit): the
-    # initial eccentricity shrinks with d, which shrinks the required perigee
-    # raise (rp = a(1-e)); the reward/success criterion (terminal R > 0) is
-    # untouched and ra0/rp0 are re-derived per episode from the actual state.
-    # At d=1 the reference e=0.1 and its derived reference radii are restored
-    # bit-for-bit.
-    ecc0_min=.02             # axis: ecc0 .02 -> .1
-    benchmark_difficulty=1.
-    difficulty=None          # None = benchmark behavior (no cfg record)
     # conventional controller: Gauss planetary-equation tangential-thrust perigee
     # raising (baselines.py; greedy coast/burn decision on the policy obs)
     conventional_controller=TransferGaussBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
@@ -132,27 +123,8 @@ class LowThrustTransferEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        self._resolve_difficulty(difficulty)
 
         self.reset()
-
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
-
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the initial-orbit eccentricity."""
-        self.difficulty=d
-        self.ecc0=self.ecc0_min+(0.1-self.ecc0_min)*d
-        # derived reference radii/speed follow the eccentricity (declared obs
-        # bounds only; values are returned raw)
-        self.ra_ref=self.sma0*(1+self.ecc0)
-        self.rp_ref=self.sma0*(1-self.ecc0)
-        self.vel_ref=math.sqrt(self.mu*(2/self.rp_ref-1/self.sma0))
-        self.cfg['difficulty']=d
 
     def _kepler_to_cartesian(self,mean_anomaly):
         """Perifocal -> GCRF state for the fixed (a,e,i,raan,argp) and given M."""

@@ -53,18 +53,14 @@ WAYPOINT_MIN_ALTITUDE = 20.0
 
 
 class FixedwingWaypointsEnv:
-    # Difficulty axis (0 easiest -> 1 hardest = the benchmark shell): at d=0
-    # waypoints only spawn on large circles (min radius 50 m), at d=1 the full
-    # benchmark 20-65 m shell is restored bit-for-bit. Success criteria
-    # (capture radius, crash/OOB, step limit) are untouched.
-    waypoint_min_radius=WAYPOINT_MIN_RADIUS  # axis 50 -> WAYPOINT_MIN_RADIUS (20)
-    benchmark_difficulty=1.
-    difficulty=None          # None = benchmark behavior (no cfg record)
+    waypoint_min_radius=WAYPOINT_MIN_RADIUS
+    # Wind is optional via the steady_wind/dryden ctor kwargs; calm air
+    # reproduces the benchmark bit-for-bit.
     # conventional controller: L1 lateral guidance + TECS (baselines.py, tuned on
     # train/dev ICs; params in algorithms/baselines/fixedwing_autopilot.json)
     conventional_controller=FixedwingAutopilotBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate'):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'fixedwing','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -107,22 +103,25 @@ class FixedwingWaypointsEnv:
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
-        self._resolve_difficulty(difficulty)
+        self._init_wind(num_envs,seed,steady_wind,dryden,severity)
 
         self.reset()
 
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
+    def _init_wind(self,n,seed,steady_wind,dryden,severity):
+        """Optional wind disturbance (environments/common/disturbances.py).
 
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the waypoint-shell knob."""
-        self.difficulty=d
-        self.waypoint_min_radius=50.+(WAYPOINT_MIN_RADIUS-50.)*d
-        self.cfg['difficulty']=d
+        Calm air (default) leaves the plant dynamics bit-for-bit unchanged;
+        with wind configured, the gust filters advance once per control step
+        and the lifting surfaces evaluate v_air = v - wind.
+        """
+        self._wind=None
+        if steady_wind is not None or dryden>0.:
+            from environments.common.disturbances import WindDisturbance
+            self._wind=WindDisturbance(n,self.device,seed,steady_wind=steady_wind,
+                                       dryden=dryden,severity=severity,dt=1./self.agent_hz)
+            self.plant.wind=torch.zeros((n,3),device=self.device,dtype=torch.float64)
+            self.cfg['wind']=dict(steady_wind=list(steady_wind) if steady_wind is not None else None,
+                                  dryden=dryden,severity=severity)
 
     def _scale_actions(self,actions):
         raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
@@ -142,6 +141,7 @@ class FixedwingWaypointsEnv:
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
         physical=self._scale_actions(actions)
         self.action.copy_(physical)
+        if self._wind is not None:self.plant.wind.copy_(self._wind.step())
         command=physical.clone();command[:,3]=command[:,3]/2+.5
         old_potential=self._potential()
         self.count+=1
@@ -272,6 +272,7 @@ class FixedwingWaypointsEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        if self._wind is not None:self._wind.reset(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

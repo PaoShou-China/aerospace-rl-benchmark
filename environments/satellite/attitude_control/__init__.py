@@ -56,12 +56,8 @@ Episode End
     gimbal configurations with vanishing momentum authority.
 
 Difficulty
-    Constructor kwarg `difficulty` (float in [0, 1]) modulates
-    only the target-attitude distribution and observation noise;
-    dynamics, tolerances and reward are untouched. d=0 -> d=1:
-    target attitude within a 0.3 rad cap of the momentum-neutral home
-    quaternion, no noise -> uniform SO(3) target, ±0.001 observation
-    noise; d=1 is the published benchmark.
+    None. The target attitude is sampled uniformly on SO(3) with ±0.001
+    observation noise (the published benchmark).
 
 References
     - torchrl SatelliteEnv (pytorch/rl, MIT), task reference for reward

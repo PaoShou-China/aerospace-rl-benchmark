@@ -98,8 +98,6 @@ def build_env(task):
     cfg = json.loads((out / 'config.json').read_text()) if (out / 'config.json').exists() else {}
     env_kwargs = dict(cfg.get('env_kwargs') or {})
     env_kwargs.pop('curriculum', None)
-    if cfg.get('difficulty') is not None:
-        env_kwargs['difficulty'] = cfg['difficulty']
     return ENVS[task](num_envs=1, backend='cpu', seed=7, **env_kwargs), cfg
 
 

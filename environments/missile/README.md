@@ -26,7 +26,7 @@ what is planned.
 | Deep-dive harnesses | `missile/eval_missile_*.py` | scenario grids, per-scenario breakdowns |
 | Generic-entry registration | `scripts/train.py`, `scripts/eval.py`, `scripts/baseline_eval.py`, `scripts/sweep_tune.py` | task id + env class |
 | Results directory | `results/missile/` | `run.json`, `baseline.json`, harness reports |
-| Documentation | `missile/README.md` (replace this placeholder), root `README.md` tables | task summary, run commands, difficulty axis |
+| Documentation | `missile/README.md` (replace this placeholder), root `README.md` tables | task summary, run commands |
 
 ## 2. Algorithm
 
@@ -45,7 +45,7 @@ what is planned.
 
 | Piece | Location | Role |
 |---|---|---|
-| Training entry | `missile/train_missile.py` | self-contained constants (no CLI), standard 1024-env config, `DIFFICULTY` constant |
+| Training entry | `missile/train_missile.py` | self-contained constants (no CLI), standard 1024-env config |
 | Classical baseline | register in `algorithms/baselines/baselines.py` | e.g. proportional navigation / augmented PN, same action convention |
 | Baseline-driven warm start | via `bc_warmstart.py` | expert data from the PN/APN baseline controller |
 | Benchmark run + report | `results/missile/`, `results/summary.md` | PPO vs FlashSAC vs classical baseline under the official eval protocol |
