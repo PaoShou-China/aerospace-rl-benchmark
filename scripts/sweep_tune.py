@@ -65,16 +65,22 @@ PPO_CANDIDATES = {
         ('base', {}),
         ('lr1e3', dict(learning_rate=1e-3)),
         ('ent005', dict(entropy_coef=0.005)),
+        ('gust06', {'env': dict(dryden=.6)}),
+        ('gust10', {'env': dict(dryden=1.)}),
     ],
     'fixedwing': [
         ('base', {}),
         ('lr1e3', dict(learning_rate=1e-3)),
         ('ent003', dict(entropy_coef=0.003)),
+        ('gust06', {'env': dict(dryden=.6)}),
+        ('gust10', {'env': dict(dryden=1.)}),
     ],
     'rocket': [
         ('base', {}),
         ('lr1e3', dict(learning_rate=1e-3)),
         ('gamma999', dict(gamma=0.999)),
+        ('gust06', {'env': dict(dryden=.6)}),
+        ('gust10', {'env': dict(dryden=1.)}),
     ],
     'satellite': [
         ('base', {}),
@@ -113,7 +119,9 @@ FS_CANDIDATES = [
     ('nstep3', dict(n_step=3)),
 ]
 
-# Production env classes / kwargs (mirror each train_*.py).
+# Production env classes / kwargs (mirror each train_*.py, including the
+# hard-coded WIND config of the atmospheric tasks; sweeps override dryden via
+# the candidates' 'env' key below).
 from environments.multirotor import QuadXHoverEnv            # noqa: E402
 from environments.fixedwing import FixedwingWaypointsEnv  # noqa: E402
 from environments.rocket import RocketLandingEnv        # noqa: E402
@@ -121,10 +129,11 @@ from environments.satellite.attitude_control import SatelliteAttitudeEnv  # noqa
 from environments.satellite.orbit_transfer import LowThrustTransferEnv  # noqa: E402
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv  # noqa: E402
 
+_GUST = dict(steady_wind=None, dryden=.3, severity='moderate')
 ENVS = {
-    'quadx': (QuadXHoverEnv, {}),
-    'fixedwing': (FixedwingWaypointsEnv, {}),
-    'rocket': (RocketLandingEnv, {}),
+    'quadx': (QuadXHoverEnv, dict(_GUST)),
+    'fixedwing': (FixedwingWaypointsEnv, dict(_GUST)),
+    'rocket': (RocketLandingEnv, dict(_GUST)),
     'satellite': (SatelliteAttitudeEnv, {}),
     'transfer': (LowThrustTransferEnv, {}),
     'docking': (SpaceDockingEnv, {}),
@@ -168,9 +177,11 @@ def run_one(task, env_cls, env_kwargs, algo, name, overrides, updates, out_root)
         kw.update(PPO_BASE[task])
     else:
         kw.setdefault('gamma', FS_BASE_GAMMA[task])
+    env_kw = dict(env_kwargs)
+    env_kw.update(kw.pop('env', {}))   # candidate 'env' key overrides env kwargs (wind tuning)
     report = run_training(task, env_cls, num_envs=NUM_ENVS, updates=updates, seed=SEED,
                           backend=BACKEND, resume=False, clean=True, out_dir=out,
-                          algo=algo, env_kwargs=dict(env_kwargs) or None,
+                          algo=algo, env_kwargs=env_kw or None,
                           bc_warmstart=BC_WARMSTART if algo == 'ppo' else None,
                           **kw)
     total, tail = _sr(report)
