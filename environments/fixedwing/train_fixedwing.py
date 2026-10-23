@@ -67,9 +67,9 @@ NUM_STEPS_PER_ENV = 64
 NUM_LEARNING_EPOCHS = 10
 ENTROPY_COEF = 0.0
 VALUE_LOSS_COEF = 0.5
-# Wind disturbance (environments/common/disturbances.py): 3 m/s easterly
-# steady wind + 30% moderate Dryden gusts. None = calm air (benchmark).
-WIND = dict(steady_wind=(3., 0., 0.), dryden=.3, severity='moderate')
+# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
+# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
+WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.

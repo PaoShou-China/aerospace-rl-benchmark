@@ -143,8 +143,8 @@
   `WindDisturbance`（定常风 + Dryden 阵风，MIL-F-8785C 低空成形滤波、
   种子化 RNG 流），env 每个控制步更新一次 `plant.wind`（阵风在物理子步间
   冻结），`reset_idx` 镜像重置滤波器状态；
-- 训练入口硬编码 `WIND` 常量（3 个大气任务：3 m/s 东向定常风 + 30%
-  moderate Dryden；卫星任务在真空中无风）。
+- 训练入口硬编码 `WIND` 常量（3 个大气任务：纯 Dryden 阵风，零均值，
+  30% moderate 档；卫星任务在真空中无风）。
 
 **不变式（这条最关键）**
 

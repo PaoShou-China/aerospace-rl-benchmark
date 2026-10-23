@@ -175,7 +175,7 @@ Aerodynamic terms evaluate air-relative velocity `v_air = v - wind`
 (lifting surfaces and body-drag laws), so the default calm air (`steady_wind=None,
 dryden=0`) reproduces the benchmark bit-for-bit and eval.py — which builds
 envs without kwargs — is unaffected. The train entries hard-code a `WIND`
-constant (3 m/s easterly steady + 30% moderate Dryden for the three
+constant (pure Dryden gusts at 30% of the moderate preset for the three
 atmospheric tasks); satellite tasks operate in vacuum and have no wind.
 
 ## Usage

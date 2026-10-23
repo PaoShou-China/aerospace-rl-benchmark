@@ -75,9 +75,9 @@ RESUME = False           # upstream-aligned task rewrite (2026-10-20): old
                          # so training restarts from scratch
 CLEAN = True             # wipe results/rocket before this fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Wind disturbance (environments/common/disturbances.py): 3 m/s easterly
-# steady wind + 30% moderate Dryden gusts. None = calm air (benchmark).
-WIND = dict(steady_wind=(3., 0., 0.), dryden=.3, severity='moderate')
+# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
+# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
+WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 # reward (2026-10-22): the redesigned shaping (impact-speed potential, off-axis
 # cost, first-touch bonus, success +100) is now the env's ONLY implementation --
 # the verbatim-upstream arm was deleted from rocket/env.py after the

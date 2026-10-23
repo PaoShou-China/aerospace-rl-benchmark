@@ -41,9 +41,9 @@ INIT_STD = 1.0
 NUM_STEPS_PER_ENV = 100
 NUM_LEARNING_EPOCHS = 5
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Wind disturbance (environments/common/disturbances.py): 3 m/s easterly
-# steady wind + 30% moderate Dryden gusts. None = calm air (benchmark).
-WIND = dict(steady_wind=(3., 0., 0.), dryden=.3, severity='moderate')
+# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
+# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
+WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before
