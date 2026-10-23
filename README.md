@@ -38,50 +38,54 @@ verification conditions lives in
 Per-task quantitative details (action/observation layouts, reward
 decompositions, termination conditions, spawn distributions, difficulty
 axes) live in the module docstring of each package:
-[src/quadx](src/quadx/__init__.py),
-[src/fixedwing](src/fixedwing/__init__.py),
-[src/rocket](src/rocket/__init__.py),
-[src/satellite](src/satellite/__init__.py),
-[src/transfer](src/transfer/__init__.py),
-[src/docking](src/docking/__init__.py) (covers both docking and
-rendezvous).
+[multirotor](multirotor/__init__.py),
+[fixedwing](fixedwing/__init__.py),
+[rocket](rocket/__init__.py),
+[satellite/attitude_control](satellite/attitude_control/__init__.py),
+[satellite/orbit_transfer](satellite/orbit_transfer/__init__.py),
+[satellite/rendezvous_docking](satellite/rendezvous_docking/__init__.py)
+(covers both docking and rendezvous).
 
 ## Package layout
 
+The repository is split into an **environments** part and an **algorithms**
+part, each internally subdivided; generic entry points live in `scripts/`.
+
 ```
-src/
-├── common/              # shared device-resident machinery
-│   ├── plant.py         # TensorPlant (vehicle physics, contacts, warmup),
-│   │                    #   TensorRandom (per-replica counter RNG streams)
-│   ├── dynamics.py      # batched SI-unit QuadX model + quaternion/euler helpers
-│   ├── aerodynamics.py  # batched lifting-surface model (incl. stall)
-│   ├── consistency.py   # frozen reference assets, URDF inertial parsing,
-│   │                    #   hash manifests, serializable plant contract
-│   ├── train_utils.py   # shared run_training() for the per-task entries
-│   ├── flash_sac.py     # FlashSAC (arXiv:2604.04539) on the batched protocol
-│   ├── ppo_flashnet.py  # FlashSAC-trunk networks for the PPO A/B arm
-│   ├── baselines.py     # classical GNC baselines, one per task
-│   ├── fixedwing_autopilot.json # serialized L1+TECS autopilot parameters
-│   ├── original_backend.py  # headless-Genesis backend for frozen PyFlyt code
-│   └── original_batch.py    # shared-scene batching of the frozen NumPy path
-├── quadx/               # QuadX-Hover (rotary-wing station keeping)
-├── fixedwing/           # Fixedwing-Waypoints (aerodynamic navigation)
-├── rocket/              # Rocket-Landing (propulsive vertical landing)
-├── satellite/           # CMG attitude control (pure tensor)
-├── transfer/            # low-thrust orbit raising (pure tensor)
-├── docking/             # CWH docking + rendezvous (pure tensor)
-└── original_pyflyt/     # vendored PyFlyt vehicle URDF/YAML models
-scripts/                 # training / evaluation / visualization entry points
-├── train.py             # rsl-rl PPO entry point for all 7 real tasks
-├── train_<task>.py      # self-contained per-task entries (hard-coded params)
-├── sweep_tune.py        # small hyperparameter sweep harness
-├── eval.py              # deterministic evaluation of trained checkpoints
-├── baseline_eval.py     # evaluation of the classical baselines
-├── eval_docking_lqr.py / eval_fixedwing_autopilot.py /
-│   eval_rendezvous_baseline.py / rocket_pdg_test.py / test_quadx_se3.py
-│                        # per-task deep-dive harnesses
-├── summarize.py         # aggregate results/ into a summary table
-└── visualize.py         # checkpoint replay / trajectory visualization
+environments/             # ── everything that defines a task ──
+├── multirotor/           # QuadX-Hover (rotary-wing station keeping)
+├── fixedwing/            # Fixedwing-Waypoints (aerodynamic navigation)
+├── rocket/               # Rocket-Landing (propulsive vertical landing)
+├── satellite/            # spacecraft tasks, grouped by mission phase
+│   ├── attitude_control/     # CMG attitude control (pure tensor)
+│   ├── orbit_transfer/       # low-thrust orbit raising (pure tensor)
+│   └── rendezvous_docking/   # CWH docking + rendezvous (pure tensor)
+├── missile/              # development placeholder (no environment yet)
+└── common/               # env-side shared machinery
+    ├── plant.py            # TensorPlant/TensorRandom (physics, contacts, RNG)
+    ├── dynamics.py         # batched SI-unit rigid-body model + quat helpers
+    ├── aerodynamics.py     # batched lifting-surface model (incl. stall)
+    ├── consistency.py      # frozen-reference assets, URDF inertial parsing
+    ├── original_backend.py # headless-Genesis backend for frozen PyFlyt code
+    ├── original_batch.py   # shared-scene batching of the frozen NumPy path
+    └── original_pyflyt/    # vendored PyFlyt vehicle URDF/YAML models + source
+algorithms/               # ── everything that produces actions (learned or not) ──
+├── train_utils.py        # shared run_training() for the per-task entries
+├── ppo/ppo_flashnet.py   # FlashSAC-trunk networks for the PPO A/B arm
+├── flashsac/flash_sac.py # FlashSAC (arXiv:2604.04539) on the batched protocol
+├── warmstart/bc_warmstart.py  # behavior-cloning warm start from baselines
+└── baselines/            # classical (non-learned) GNC baselines, one per task
+    ├── baselines.py        #   PN/PDG/LQR/autopilot/... controllers
+    └── fixedwing_autopilot.json  # serialized L1+TECS autopilot parameters
+scripts/                  # generic training / evaluation entry points
+├── train.py              # rsl-rl PPO entry point for all 7 real tasks
+├── eval.py               # deterministic evaluation of trained checkpoints
+├── baseline_eval.py      # evaluation of the classical baselines
+├── sweep_tune.py         # small hyperparameter sweep harness
+├── summarize.py          # aggregate results/ into a summary table
+└── visualize.py          # checkpoint replay / trajectory visualization
+environments/<category>/train_<task>.py  # self-contained per-task entries
+environments/<category>/eval_* / *_test.py  # per-task deep-dive harnesses
 docs/technical-highlights.md  # reviewer-oriented infrastructure write-up
 ```
 
@@ -94,18 +98,18 @@ entries treat them uniformly.
 
 ## Algorithms
 
-Training entries support two algorithms through `src/common/train_utils.py`,
+Training entries support two algorithms through `algorithms/train_utils.py`,
 sharing the identical warmup-cosine learning-rate schedule (peak 1e-3 →
 1.5e-4, warmup 1e-6 × total updates) so cross-algorithm comparisons are not
 schedule artifacts:
 
 - **PPO** ([rsl-rl](https://github.com/leggedrobotics/rsl_rl)): the default
   on-policy arm. Optionally with the **FlashSAC trunk**
-  (`src/common/ppo_flashnet.py`, `arch='flash_residual'`): input
+  (`algorithms/ppo/ppo_flashnet.py`, `arch='flash_residual'`): input
   UnitBatchNorm → residual unit-norm blocks → UnitRMSNorm, norm-control
   semantics replicated on the PPO update path — architecture-matched against
   FlashSAC (the plain MLP trunk is kept as the A/B comparison arm).
-- **FlashSAC** (`src/common/flash_sac.py`): a faithful port of FlashSAC
+- **FlashSAC** (`algorithms/flashsac/flash_sac.py`): a faithful port of FlashSAC
   (Kim et al., 2026, arXiv:2604.04539) to the batched GPU environment
   protocol — off-policy SAC with explicit weight/feature/gradient norm
   control and sharply reduced gradient updates compensated by larger models.
@@ -116,7 +120,7 @@ counts and device-side completion metrics in `results/<task>/run.json`.
 ## Classical (non-learned) baselines
 
 Each task is paired with a classical GNC baseline
-([src/common/baselines.py](src/common/baselines.py)) so learned results have a
+([algorithms/baselines/baselines.py](algorithms/baselines/baselines.py)) so learned results have a
 non-learning reference on the same env, reward and success bar. Every
 controller reads only the `'policy'` observation group, takes env constants
 at construction, never touches internal state buffers, and leaves env
@@ -138,11 +142,11 @@ These are honest references, not strawmen: the fixedwing and rocket
 baselines retain documented residual failures (out-of-bound endgame limit
 cycles, authority-saturated braking transients) that RL is expected to
 attack. Task-specific deep-dive harnesses with per-scenario breakdowns and
-ablation arms: [eval_docking_lqr.py](scripts/eval_docking_lqr.py),
-[eval_fixedwing_autopilot.py](scripts/eval_fixedwing_autopilot.py),
-[eval_rendezvous_baseline.py](scripts/eval_rendezvous_baseline.py),
-[rocket_pdg_test.py](scripts/rocket_pdg_test.py),
-[test_quadx_se3.py](scripts/test_quadx_se3.py).
+ablation arms: [eval_docking_lqr.py](satellite/rendezvous_docking/eval_docking_lqr.py),
+[eval_fixedwing_autopilot.py](fixedwing/eval_fixedwing_autopilot.py),
+[eval_rendezvous_baseline.py](satellite/rendezvous_docking/eval_rendezvous_baseline.py),
+[rocket_pdg_test.py](rocket/rocket_pdg_test.py),
+[test_quadx_se3.py](multirotor/test_quadx_se3.py).
 
 ## Conventions
 
@@ -190,9 +194,11 @@ Per-task entries (all parameters hard-coded in the file — edit constants,
 no CLI arguments):
 
 ```bash
-python scripts/train_quadx.py          # train_fixedwing.py | train_rocket.py
-                                       # train_satellite.py | train_transfer.py
-                                       # train_docking.py   | train_rendezvous.py
+python multirotor/train_quadx.py        # fixedwing/train_fixedwing.py
+python rocket/train_rocket.py           #   | satellite/attitude_control/train_satellite.py
+                                        #   | satellite/orbit_transfer/train_transfer.py
+                                        #   | satellite/rendezvous_docking/train_docking.py
+                                        #   | satellite/rendezvous_docking/train_rendezvous.py
 ```
 
 The original CLI aggregator still works for quick sweeps:
@@ -207,10 +213,12 @@ Evaluation and baselines:
 ```bash
 python scripts/eval.py quadx                     # deterministic checkpoint evaluation
 python scripts/baseline_eval.py quadx            # classical baseline, any of the 7 tasks
-python scripts/eval_docking_lqr.py               # per-task deep-dive harnesses:
-python scripts/eval_fixedwing_autopilot.py       #   scenario grids, ablation arms,
-python scripts/eval_rendezvous_baseline.py       #   per-scenario breakdown reports
-python scripts/rocket_pdg_test.py
+# per-task deep-dive harnesses live in their category directories
+# (see the per-category READMEs):
+python satellite/rendezvous_docking/eval_docking_lqr.py
+python fixedwing/eval_fixedwing_autopilot.py    #   scenario grids, ablation arms,
+python satellite/rendezvous_docking/eval_rendezvous_baseline.py  #   per-scenario breakdown reports
+python rocket/rocket_pdg_test.py
 ```
 
 Results land in `results/<task>/` (`run.json` for training runs,
@@ -229,18 +237,18 @@ environment docstring lists the specific source of its defaults.
    QuadX-Hover, Fixedwing-Waypoints and Rocket-Landing (PyFlyt 0.29.0).
 2. TorchRL contributors. *SatelliteEnv*. pytorch/rl (MIT) — reference for
    the CMG attitude-control task's reward weights, tolerances and reset
-   distribution (`src/satellite`).
+   distribution (`satellite/attitude_control`).
 3. Casas, R., Carro, A. & Sanchez-Esguevillas, J. "Low-Thrust Orbital
    Transfer using Dynamics-Agnostic Reinforcement Learning"
    (arXiv:2211.08272, IEEE) and its companion code
    github.com/zampanteymedio/gym-satellite-trajectory — the
    `PerigeeRaisingEnv` task reproduced parameter-for-parameter
-   (`src/transfer`).
+   (`satellite/orbit_transfer`).
 4. Supreeth, H. S. G. & Mehta, V. "SpaceGym: A Gymnasium-Based Benchmark
    for Deep Reinforcement Learning in Spacecraft Proximity Operations",
    CVPR 2026 Workshop on AI4Space (CC BY 4.0) — the docking and rendezvous
    benchmark's dynamics, task table and reward weights, reproduced from
-   the paper's Section 3 (`src/docking`).
+   the paper's Section 3 (`satellite/rendezvous_docking`).
 
 **Dynamics and GNC background**
 
@@ -270,5 +278,5 @@ environment docstring lists the specific source of its defaults.
 11. Legged Robotics group, ETH Zürich. *rsl_rl*.
     github.com/leggedrobotics/rsl_rl — PPO training backend.
 12. Kim et al. (2026). *FlashSAC* (arXiv:2604.04539, RSS'26) — the
-    norm-controlled off-policy algorithm ported in `src/common/flash_sac.py`
+    norm-controlled off-policy algorithm ported in `algorithms/flashsac/flash_sac.py`
     and mirrored by the PPO trunk arm.

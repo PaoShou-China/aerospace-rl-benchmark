@@ -14,25 +14,21 @@ import argparse
 import json
 import sys
 import time
-import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent.parent / 'src'
-_pkg = types.ModuleType('pyflyt_genesis')
-_pkg.__path__ = [str(_src)]
-sys.modules['pyflyt_genesis'] = _pkg
-sys.path.insert(0, str(_src))
+_ROOT = Path(__file__).resolve().parents[1]  # repo root
+sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import torch
 
-from pyflyt_genesis.quadx import QuadXHoverEnv
-from pyflyt_genesis.fixedwing import FixedwingWaypointsEnv
-from pyflyt_genesis.rocket import RocketLandingEnv
-from pyflyt_genesis.satellite import SatelliteAttitudeEnv
-from pyflyt_genesis.transfer import LowThrustTransferEnv
-from pyflyt_genesis.docking import SpaceDockingEnv, SpaceRendezvousEnv
+from environments.multirotor import QuadXHoverEnv
+from environments.fixedwing import FixedwingWaypointsEnv
+from environments.rocket import RocketLandingEnv
+from environments.satellite.attitude_control import SatelliteAttitudeEnv
+from environments.satellite.orbit_transfer import LowThrustTransferEnv
+from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
-from common.baselines import build_baseline
+from algorithms.baselines.baselines import build_baseline
 
 ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,

@@ -5,13 +5,13 @@
 ## 1. 成功定义与终止优先级（已冻结进代码）
 
 - 终止优先级：**违约 > 成功**。回合终步若同时满足目标状态与任一失败条件，记为失败（terminated），不计入 `completed_successes`，不发放终端奖励。
-- 该优先级在 `src/docking/env.py` 的 `_CWHBase.step` 实现（`success = goal & ~violation`）。修复动机：rendezvous 的 keep-out 球（5 m）位于目标球（10 m）内部，旧行为允许"低速冲进 keep-out"被同时记为 success + terminated，成功率不可解释。
+- 该优先级在 `satellite/rendezvous_docking/env.py` 的 `_CWHBase.step` 实现（`success = goal & ~violation`）。修复动机：rendezvous 的 keep-out 球（5 m）位于目标球（10 m）内部，旧行为允许"低速冲进 keep-out"被同时记为 success + terminated，成功率不可解释。
 - docking 无 keep-out，语义变化仅可能出现在"燃料恰好在捕获步耗尽"的边角（基线最大燃料 0.912 kg < 2 kg 预算，不受影响）。
 - 语义修正后复测：rendezvous 官方基线 1024/1024 = 100% 不变（hold 点 9 m 在 keep-out 外）。**语义修正前的 RL 训练成功率（rendezvous 1.5% 等）与新口径不可直接比较，正式实验一律用新口径重跑。**
 
 ## 2. 传统控制器（BC 数据源）审计
 
-BC warm-start 数据源 = 各任务 `nominal_controller`（BC 采集器自建控制器实例直接驱动，env 的 info 不含 nominal 动作）。各控制器均在训练/验证初始条件上调参并冻结后才开始采集 BC 数据，冻结状态如下：
+BC warm-start 数据源 = 各任务 `conventional_controller`（BC 采集器自建控制器实例直接驱动，env 的 info 不含控制器动作）。各控制器均在训练/验证初始条件上调参并冻结后才开始采集 BC 数据，冻结状态如下：
 
 | 任务 | 控制器 | train 场景成功率 | dev/test | 状态 | BC 决策 |
 |---|---|---|---|---|---|

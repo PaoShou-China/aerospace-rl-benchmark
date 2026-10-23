@@ -40,19 +40,19 @@
 **机制与证据**
 
 - 原版代码路径不依赖环境里安装的 PyFlyt：桥接直接导入仓库内的冻结副本
-  `src/original_pyflyt`
-  （[original_backend.py:198-209](../src/common/original_backend.py#L198-L209)）。
+  `environments/common/original_pyflyt`
+  （[original_backend.py:198-209](../environments/common/original_backend.py#L198-L209)）。
 - `verify_installed_reference()` 校验**已安装**的 `PyFlyt==0.29.0`：
   版本号，以及清单中源码文件与 URDF/YAML 资产的 SHA-256；任一不符立即抛错
-  （[consistency.py:19-32](../src/common/consistency.py#L19-L32)）。
-- `contract()` 对仓库内 `src/common/assets/reference_*` 做哈希校验，并把车辆、
+  （[consistency.py:19-32](../environments/common/consistency.py#L19-L32)）。
+- `contract()` 对仓库内 `environments/common/assets/reference_*` 做哈希校验，并把车辆、
   `dt`、控制抽取比、坐标系约定、噪声/风设置序列化成一个 `plant_id`
-  （[consistency.py:56-71](../src/common/consistency.py#L56-L71)）。
+  （[consistency.py:56-71](../environments/common/consistency.py#L56-L71)）。
 - 惯量不是手写常数：`asset_inertials()` 解析参考 URDF 供张量动力学使用
-  （[consistency.py:35-53](../src/common/consistency.py#L35-L53)、
-  [dynamics.py:25-27](../src/common/dynamics.py#L25-L27)）；
+  （[consistency.py:35-53](../environments/common/consistency.py#L35-L53)、
+  [dynamics.py:25-27](../environments/common/dynamics.py#L25-L27)）；
   同一套惯量经 `inertial_basis()` 做“主轴 → 作者轴”旋转后喂给 Genesis 刚体
-  （[plant.py:136](../src/common/plant.py#L136)）。
+  （[plant.py:136](../environments/common/plant.py#L136)）。
 
 **对审稿人的意义**：可以区分“代码复现了任务定义”与“代码碰巧能跑”；
 参考版本、资产哈希与惯量来源都可核查。
@@ -62,11 +62,11 @@
 - 两个校验函数目前**没有被训练/评测入口调用**；本开发环境也未安装 PyFlyt，
   因此哈希复验命令需先安装 0.29.0 才能执行。
 - 覆盖范围不同：`verify_installed_reference()` 校验**已安装包**，
-  不校验仓库内的 `src/original_pyflyt` 冻结副本；`contract()` 校验仓库内参考资产。
+  不校验仓库内的 `environments/common/original_pyflyt` 冻结副本；`contract()` 校验仓库内参考资产。
   两者不能互相替代。
 - 哈希一致 **不等于** 物理一致。Genesis 兼容后端在模块首行即声明
   “API compatibility backend, not a claim of bitwise physics equivalence”
-  （[original_backend.py:1-5](../src/common/original_backend.py#L1-L5)）。
+  （[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
 
 ---
 
@@ -88,30 +88,30 @@
 2. **张量 plant 路径**（quadx / fixedwing / rocket）
    - `TensorPlant` 统一承载几何、作动（rate-PID mixer、升力面、助推器/燃料）、
      物理步进、接触检查与 reset/warmup；reward/终止/观测仍留在各 env
-     （[plant.py:1-9](../src/common/plant.py#L1-L9)）。
+     （[plant.py:1-9](../environments/common/plant.py#L1-L9)）。
    - `TensorRandom` 为每个副本维护独立计数器随机流；文档明确其与上游
      **分布兼容、但非 NumPy PCG64 位流兼容**
-     （[plant.py:23-30](../src/common/plant.py#L23-L30)）。
+     （[plant.py:23-30](../environments/common/plant.py#L23-L30)）。
    - 作动器、接触、气动均为张量化层，观测/奖励/重置沿用同一协议。
    - 积分器选择被显式记录并给出实测理由：显式 Euler 会让着陆接触抖动到
      ~0.1 m/s，越过 0.02 m/s 的判定阈值，因此保留 Genesis 默认的
      `approximate_implicitfast`
-     （[original_backend.py:50-58](../src/common/original_backend.py#L50-L58)）。
+     （[original_backend.py:50-58](../environments/common/original_backend.py#L50-L58)）。
      这类“参数背后有测量”的记录，比参数本身更有审稿价值。
 
 3. **原版代码桥接**（仅 quadx / fixedwing / rocket）：`OriginalTaskBatch` 用一个
    Genesis scene 托管 N 个副本，Python 侧仍是**未修改的** PyFlyt
    task/controller/aero 对象
-   （[original_batch.py:1-7](../src/common/original_batch.py#L1-L7)、
-   [original_batch.py:71-78](../src/common/original_batch.py#L71-L78)）。
+   （[original_batch.py:1-7](../environments/common/original_batch.py#L1-L7)、
+   [original_batch.py:71-78](../environments/common/original_batch.py#L71-L78)）。
    - 选择性重置时，非参与副本的物理状态通过
      `scene.get_state()` / `scene.reset(state=..., envs_idx=...)` 精确回滚，
      其 Aviary 观测到的物理时间不变
-     （[original_batch.py:113-143](../src/common/original_batch.py#L113-L143)）。
+     （[original_batch.py:113-143](../environments/common/original_batch.py#L113-L143)）。
    - 接触信息在状态回滚**之前**读取，避免缓存被清除后丢失
-     （[original_batch.py:130-141](../src/common/original_batch.py#L130-L141)）。
+     （[original_batch.py:130-141](../environments/common/original_batch.py#L130-L141)）。
    - `loadURDF` 校验所有副本加载同名 URDF，避免混批
-     （[original_batch.py:50-59](../src/common/original_batch.py#L50-L59)）。
+     （[original_batch.py:50-59](../environments/common/original_batch.py#L50-L59)）。
 
 **对审稿人的意义**：5 个无引擎任务与 3 个引擎任务共享同一套协议，可分别验证；
 3 个大气任务还能做“原版实现/张量化实现”的交叉校验，而不是只能相信单一实现。
@@ -135,12 +135,12 @@
   每个 env 自带 `benchmark_difficulty`
   与自己的难度映射（`_apply_difficulty`，或等价的构造期解析）
   （各任务实现见
-  [quadx/env.py:37](../src/quadx/env.py#L37)、
-  [fixedwing/env.py:51](../src/fixedwing/env.py#L51)、
-  [rocket/env.py:145](../src/rocket/env.py#L145)、
-  [satellite/env.py:115](../src/satellite/env.py#L115)、
-  [transfer/env.py:64](../src/transfer/env.py#L64)、
-  [docking/env.py:77](../src/docking/env.py#L77)）。
+  [quadx/env.py:37](../multirotor/env.py#L37)、
+  [fixedwing/env.py:51](../fixedwing/env.py#L51)、
+  [rocket/env.py:145](../rocket/env.py#L145)、
+  [satellite/env.py:115](../satellite/attitude_control/env.py#L115)、
+  [transfer/env.py:64](../satellite/orbit_transfer/env.py#L64)、
+  [docking/env.py:77](../satellite/rendezvous_docking/env.py#L77)）。
 - 难度轴（d=0 → d=1，均为“易 → 难”；d=1 即发表基准，quadx 例外——
   其确定性 spawn 基准在 d=0，轴向右延伸为更难）：
 
@@ -183,28 +183,28 @@
   特征、梯度范数控制；101-bin 分布式 ensemble critic；tanh-Gaussian actor；
   温度自调；zeta 噪声重复；return-RMS 奖励归一化；低 UTD 快训；EMA target。
   与官方实现的偏差被逐条列出，且声明“none algorithmic”
-  （[flash_sac.py:1-38](../src/common/flash_sac.py#L1-L38)）。
+  （[flash_sac.py:1-38](../algorithms/flashsac/flash_sac.py#L1-L38)）。
   回放缓冲是设备常驻环形缓冲，循环内无 gym、无 CPU 往返
-  （[flash_sac.py:348](../src/common/flash_sac.py#L348)）。
+  （[flash_sac.py:348](../algorithms/flashsac/flash_sac.py#L348)）。
 - **PPO + FlashSAC trunk 架构匹配臂**：让 PPO 使用与 FlashSAC 相同的残差 trunk，
   并把三处**算法性**偏差写在模块文档里（状态无关高斯、标量 critic、
   每个优化步后首前向才重归一化）
-  （[ppo_flashnet.py:1-28](../src/common/ppo_flashnet.py#L1-L28)）。
+  （[ppo_flashnet.py:1-28](../algorithms/ppo/ppo_flashnet.py#L1-L28)）。
 - **负结果记录**：该文件明确记录了“BatchNorm + GAE 自举”的失败机制——
   批统计让 critic 输入归一化非平稳，而 GAE 目标又要通过 critic 自举，
   形成反馈回路压平价值面；同一 trunk 在**离线平稳数据**上反而比 MLP 好 3 倍，
   因此问题在耦合而非架构，故 critic 在 on-policy 任务上关闭 BN
-  （[ppo_flashnet.py:80-101](../src/common/ppo_flashnet.py#L80-L101)）。
+  （[ppo_flashnet.py:80-101](../algorithms/ppo/ppo_flashnet.py#L80-L101)）。
   这类“已排除的解释”对审稿人比调参日志有用。
 - **跨算法同一 LR 调度**：PPO 侧复用 FlashSAC 的 `_warmup_cosine_decay` 公式、
   同一 warmup 比例与 peak→end 跨度；由于 rsl-rl 在 `schedule='fixed'` 下
   永不重设 lr，代码直接写 `optimizer.param_groups`
-  （[train_utils.py:216-230](../src/common/train_utils.py#L216-L230)）。
+  （[train_utils.py:216-230](../algorithms/train_utils.py#L216-L230)）。
 - **其他受控旋钮**：指数衰减、`lr_sigma_coupling`（令 lr ∝ σ，保持每步策略漂移率恒定）、
   `sigma_pin`（重钉探索方差）、`freeze_obs_norm`（冻结 warm start 的观测归一化），
   均为 opt-in 且互斥关系显式检查
-  （[train_utils.py:96-150](../src/common/train_utils.py#L96-L150)、
-  [train_utils.py:246-270](../src/common/train_utils.py#L246-L270)）。
+  （[train_utils.py:96-150](../algorithms/train_utils.py#L96-L150)、
+  [train_utils.py:246-270](../algorithms/train_utils.py#L246-L270)）。
 - **docking 双因子定位（lr 迁移失败 × 架构负结果）与输出层零初始化**：
   一次"trunk 0% vs MLP 94%"的表面对照被排查出两层混淆，最终用
   2×2 配置矩阵把责任拆干净（全部 1024 envs / seed 7 / 其余配置逐项一致，
@@ -220,7 +220,7 @@
   ① **lr 5e-5 是全局毒药**：10-21 的 web 对齐把该 lr 写入入口后，docking
   在任何架构/envs 下都不再成功——论文超参不跨 batch/任务尺度迁移，
   这条负结果已写回入口注释
-  （[train_docking.py:71-82](../scripts/train_docking.py#L71-L82)）。
+  （[train_docking.py:71-82](../satellite/rendezvous_docking/train_docking.py#L71-L82)）。
   ② **架构效应在有效 lr 下依然为真**：同配置（1024 envs, 3e-4）MLP 77.9%
   vs trunk 0.0%。tensorboard 证据链：trunk 默认初始化的初始策略严重非中性
   （iter-0 return −342.7，MLP +22.6）；`Policy/mean_std` 与熵两臂几乎重合
@@ -228,8 +228,8 @@
   尖峰至 127 并重塑价值面，trunk 平坦收敛于 ~0.9，归一化栈
   （RMSNorm/权重重归一化）把 1 m 捕获悬崖平滑掉，形成"无捕获数据 →
   critic 学不到悬崖 → 无指向捕获的梯度"的自锁。③ **输出层零初始化**
-  （[train_docking.py:26-47](../scripts/train_docking.py#L26-L47)，先例
-  [train_rocket.py:49-65](../scripts/train_rocket.py#L49-L65)）把初始策略修成
+  （[train_docking.py:26-47](../satellite/rendezvous_docking/train_docking.py#L26-L47)，先例
+  [train_rocket.py:49-65](../rocket/train_rocket.py#L49-L65)）把初始策略修成
   零推力中性悬停（iter-0 return +59.8），捕获行为被短暂发现
   （iter ~835 success 0.25）但守不住——它修的是起点问题，不是架构问题；
   trunk 在 docking 上保持为记录在案的负结果，MLP 是该任务的可用臂。
@@ -254,10 +254,10 @@
 - `run.json` 记录：任务配置（显式设置难度/课程时含对应字段）、算法、迭代数、
   总 transitions、wall time、逐副本 `completed_episodes` / `completed_successes`、
   真实 `physics_step_calls`、完成 episode 的设备端指标，以及一条数值不等价声明
-  （[train_utils.py:276-286](../src/common/train_utils.py#L276-L286)）。
+  （[train_utils.py:276-286](../algorithms/train_utils.py#L276-L286)）。
 - `config.json` 在交给 runner 前做深拷贝，避免 `OnPolicyRunner` 原地修改配置
   导致落盘的不是真实训练配置
-  （[train_utils.py:178-180](../src/common/train_utils.py#L178-L180)）。
+  （[train_utils.py:178-180](../algorithms/train_utils.py#L178-L180)）。
 - `eval.py` 使用冻结的确定性策略（均值动作、无探索噪声），
   成功/回报由环境自身在设备端累计，结果写入 `eval.json`
   （[eval.py:1-7](../scripts/eval.py#L1-L7)、[eval.py:66-90](../scripts/eval.py#L66-L90)）。
@@ -286,14 +286,14 @@
 
 **机制与证据**
 
-- 统一契约：所有基线实现于 [baselines.py](../src/common/baselines.py)
+- 统一契约：所有基线实现于 [baselines.py](../algorithms/baselines/baselines.py)
   （`QuadXSE3Baseline` … `RendezvousTwoImpulseBaseline`，
-  [baselines.py:156-1494](../src/common/baselines.py#L156-L1494)），工厂入口
+  [baselines.py:156-1494](../algorithms/baselines/baselines.py#L156-L1494)），工厂入口
   `build_baseline(vehicle, env)`
-  （[baselines.py:1495](../src/common/baselines.py#L1495)）。每个控制器
+  （[baselines.py:1495](../algorithms/baselines/baselines.py#L1495)）。每个控制器
   **只读 `'policy'` 观测组**、构造时读取环境常数（质量、推力权限、CMG 几何、
   名义轨道——即经典 GNC 设计者本会掌握的模型知识），**不读任何内部状态缓冲**，
-  不改环境语义（[baselines.py:1-26](../src/common/baselines.py#L1-L26)）。
+  不改环境语义（[baselines.py:1-26](../algorithms/baselines/baselines.py#L1-L26)）。
 - 统一评测协议：[baseline_eval.py](../scripts/baseline_eval.py) 以与 `eval.py` 相同的
   环境构造与成功计数口径（1024 envs / 2000 步 / seed 7）评测任意任务的基线，
   结果写 `results/<task>/baseline.json`，控制器信息标记为
@@ -305,15 +305,15 @@
   （fixedwing）、ZEM/PN 动力下降制导（rocket）、四元数 PD+奇异鲁棒
   CMG 阻尼伪逆（satellite）、Gauss 方程切向制导（transfer）、
   精确辛离散化 CWH-LQR（docking）、递归重解两脉冲 CWH 制导
-  （rendezvous）（[baselines.py:12-23](../src/common/baselines.py#L12-L23)）。
+  （rendezvous）（[baselines.py:12-23](../algorithms/baselines/baselines.py#L12-L23)）。
 - **基线的参考战绩**（官方 `baseline_eval` 口径）：docking / satellite /
   transfer / rendezvous / quadx 100%；fixedwing ~74.6%（train 分布，
   3700 步窗口，残余为失速约束下最小转弯半径 > 捕获球导致的 OOB 终局
   极限环，记录于
-  [eval_fixedwing_autopilot.py](../scripts/eval_fixedwing_autopilot.py)）；
+  [eval_fixedwing_autopilot.py](../fixedwing/eval_fixedwing_autopilot.py)）；
   rocket 66.8%（2000 步窗口，失败约一半为着垫后反弹二次接触、
   一半为制动段权限饱和，记录于
-  [rocket_pdg_test.py](../scripts/rocket_pdg_test.py) 的场景分解）。
+  [rocket_pdg_test.py](../rocket/rocket_pdg_test.py) 的场景分解）。
 - **对照方向的双向证据**：基线并非天花板——RL 在 transfer 上达到约
   2 倍基线终端分（PPO ≈ +20.6 km vs 基线 ≈ +11 km 当量）；基线也并非
   稻草人——satellite 的动量中性 home 修复后，经典 CMG 基线在 RL 此前
@@ -340,9 +340,9 @@
 审稿人最容易被“复现”二字误导，以下边界均为显式设计声明：
 
 1. **不声称与 PyFlyt/Bullet 逐位物理等价**。Genesis 后端是 API 兼容层，
-   引擎数值不同（[original_backend.py:1-5](../src/common/original_backend.py#L1-L5)）。
+   引擎数值不同（[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
 2. **不声称 NumPy 随机位流一致**。`TensorRandom` 与上游分布兼容，
-   但位流不同（[plant.py:23-30](../src/common/plant.py#L23-L30)）。
+   但位流不同（[plant.py:23-30](../environments/common/plant.py#L23-L30)）。
 3. **不声称课程提升性能**。课程只改初始/任务参数分布，成功判据不变。
 4. **不声称原版代码桥接是高性能路径**。它是正确性优先的 host 端桥接。
 5. **不声称算法等价**。PPO+FlashNet 与 FlashSAC 的偏差已在模块文档中列明；
@@ -357,15 +357,15 @@
 
 | 主张 | 状态 | 证据/复验方式 |
 |---|---|---|
-| 上游 PyFlyt 0.29.0 源码与资产可哈希校验 | 已实现；**未自动接线**；需安装 PyFlyt 0.29.0 | `PYTHONPATH=src python -c "from common.consistency import verify_installed_reference as v; print(v())"` |
-| `plant_id` 受控对象证书 | 已实现；**未被入口调用** | `contract()`，[consistency.py:56-71](../src/common/consistency.py#L56-L71) |
-| 张量 plant 惯量取自参考 URDF | 已接线 | [dynamics.py:25-27](../src/common/dynamics.py#L25-L27) |
-| 未激活副本不消耗随机数/不推进状态 | 设计保证 + 代码路径 | [plant.py:1-9](../src/common/plant.py#L1-L9) |
+| 上游 PyFlyt 0.29.0 源码与资产可哈希校验 | 已实现；**未自动接线**；需安装 PyFlyt 0.29.0 | `PYTHONPATH=src python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"` |
+| `plant_id` 受控对象证书 | 已实现；**未被入口调用** | `contract()`，[consistency.py:56-71](../environments/common/consistency.py#L56-L71) |
+| 张量 plant 惯量取自参考 URDF | 已接线 | [dynamics.py:25-27](../environments/common/dynamics.py#L25-L27) |
+| 未激活副本不消耗随机数/不推进状态 | 设计保证 + 代码路径 | [plant.py:1-9](../environments/common/plant.py#L1-L9) |
 | 基准难度逐位复现 | 已验证（8 任务，同 seed 首个 reset 及 3 步后状态） | 临时复核脚本未随仓库保留 |
-| 课程难度写入 `run.json` | 已接线（静态难度；课程机制已移除） | [train_utils.py:276-286](../src/common/train_utils.py#L276-L286) |
+| 课程难度写入 `run.json` | 已接线（静态难度；课程机制已移除） | [train_utils.py:276-286](../algorithms/train_utils.py#L276-L286) |
 | 评测始终在基准难度 | 已保证（eval 不传 kwargs） | [eval.py:54](../scripts/eval.py#L54) |
-| 双算法共用同一 LR 调度 | 已接线（opt-in `lr_cosine`） | [train_utils.py:216-230](../src/common/train_utils.py#L216-L230) |
-| 每任务一个经典基线、只读 policy 观测 | 已实现 + 官方口径实测 | `python scripts/baseline_eval.py <task>`，[baselines.py:1495](../src/common/baselines.py#L1495) |
+| 双算法共用同一 LR 调度 | 已接线（opt-in `lr_cosine`） | [train_utils.py:216-230](../algorithms/train_utils.py#L216-L230) |
+| 每任务一个经典基线、只读 policy 观测 | 已实现 + 官方口径实测 | `python scripts/baseline_eval.py <task>`，[baselines.py:1495](../algorithms/baselines/baselines.py#L1495) |
 | 与上游物理逐位等价 | **不声称** | 见 Non-claims 第 1 条 |
 
 > 说明：两张“已实现但未接线”的审计原语（哈希校验、plant_id）保留为可选工具，
@@ -379,7 +379,7 @@
 ```bash
 # 1) 基准哈希校验（需先安装 PyFlyt 0.29.0；本仓库开发环境未安装）
 PYTHONPATH=src python -c \
-  "from common.consistency import verify_installed_reference as v; print(v())"
+  "from environments.common.consistency import verify_installed_reference as v; print(v())"
 
 # 2) 默认路径 = 基准难度；确定性评测（以 quadx 为例）
 python scripts/eval.py quadx --num-envs 16 --steps 400
@@ -388,7 +388,7 @@ python scripts/eval.py quadx --num-envs 16 --steps 400
 python -c "import json;r=json.load(open('results/quadx/run.json'));print(r['task']);print(r['transitions'], r['physics_step_calls'])"
 
 # 4) 定位课程契约的实现位置
-grep -n "benchmark_difficulty\|_apply_difficulty" src/*/env.py
+grep -n "benchmark_difficulty\|_apply_difficulty" environments/*/env.py
 
 # 5) 任一任务的经典基线（1024 envs / 2000 步 / seed 7，写 results/<task>/baseline.json）
 python scripts/baseline_eval.py quadx
@@ -400,15 +400,15 @@ python scripts/baseline_eval.py quadx
 
 | 能力 | 文件 |
 |---|---|
-| 基准哈希校验、URDF 惯量解析、`plant_id` | [src/common/consistency.py](../src/common/consistency.py) |
-| 纯张量 plant、逐副本随机流 | [src/common/plant.py](../src/common/plant.py) |
-| Genesis 兼容后端（BulletClient API） | [src/common/original_backend.py](../src/common/original_backend.py) |
-| 原版任务共享场景批处理 | [src/common/original_batch.py](../src/common/original_batch.py) |
-| FlashSAC 移植 | [src/common/flash_sac.py](../src/common/flash_sac.py) |
-| PPO 架构匹配臂与负结果记录 | [src/common/ppo_flashnet.py](../src/common/ppo_flashnet.py) |
-| 训练/记录管线、LR 调度对齐 | [src/common/train_utils.py](../src/common/train_utils.py) |
-| 8 任务经典基线库 | [src/common/baselines.py](../src/common/baselines.py) |
+| 基准哈希校验、URDF 惯量解析、`plant_id` | [environments/common/consistency.py](../environments/common/consistency.py) |
+| 纯张量 plant、逐副本随机流 | [environments/common/plant.py](../environments/common/plant.py) |
+| Genesis 兼容后端（BulletClient API） | [environments/common/original_backend.py](../environments/common/original_backend.py) |
+| 原版任务共享场景批处理 | [environments/common/original_batch.py](../environments/common/original_batch.py) |
+| FlashSAC 移植 | [algorithms/flashsac/flash_sac.py](../algorithms/flashsac/flash_sac.py) |
+| PPO 架构匹配臂与负结果记录 | [algorithms/ppo/ppo_flashnet.py](../algorithms/ppo/ppo_flashnet.py) |
+| 训练/记录管线、LR 调度对齐 | [algorithms/train_utils.py](../algorithms/train_utils.py) |
+| 8 任务经典基线库 | [algorithms/baselines/baselines.py](../algorithms/baselines/baselines.py) |
 | 基线统一评测入口 | [baseline_eval.py](../scripts/baseline_eval.py) |
-| 基线专项 harness（场景网格/消融） | [eval_docking_lqr.py](../scripts/eval_docking_lqr.py)、[eval_fixedwing_autopilot.py](../scripts/eval_fixedwing_autopilot.py)、[eval_rendezvous_baseline.py](../scripts/eval_rendezvous_baseline.py)、[rocket_pdg_test.py](../scripts/rocket_pdg_test.py)、[test_quadx_se3.py](../scripts/test_quadx_se3.py) |
+| 基线专项 harness（场景网格/消融） | [eval_docking_lqr.py](../satellite/rendezvous_docking/eval_docking_lqr.py)、[eval_fixedwing_autopilot.py](../fixedwing/eval_fixedwing_autopilot.py)、[eval_rendezvous_baseline.py](../satellite/rendezvous_docking/eval_rendezvous_baseline.py)、[rocket_pdg_test.py](../rocket/rocket_pdg_test.py)、[test_quadx_se3.py](../multirotor/test_quadx_se3.py) |
 | 确定性评测 | [eval.py](../scripts/eval.py) |
 | 任务难度轴与使用约定 | [README.md](../README.md) |

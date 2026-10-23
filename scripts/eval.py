@@ -14,24 +14,20 @@ import argparse
 import json
 import sys
 import time
-import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent.parent / 'src'
-_pkg = types.ModuleType('pyflyt_genesis')
-_pkg.__path__ = [str(_src)]
-sys.modules['pyflyt_genesis'] = _pkg
-sys.path.insert(0, str(_src))  # exposes `common` for the FlashSAC runner
+_ROOT = Path(__file__).resolve().parents[1]  # repo root
+sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from pyflyt_genesis.quadx import QuadXHoverEnv
-from pyflyt_genesis.fixedwing import FixedwingWaypointsEnv
-from pyflyt_genesis.rocket import RocketLandingEnv
-from pyflyt_genesis.satellite import SatelliteAttitudeEnv
-from pyflyt_genesis.transfer import LowThrustTransferEnv
-from pyflyt_genesis.docking import SpaceDockingEnv, SpaceRendezvousEnv
+from environments.multirotor import QuadXHoverEnv
+from environments.fixedwing import FixedwingWaypointsEnv
+from environments.rocket import RocketLandingEnv
+from environments.satellite.attitude_control import SatelliteAttitudeEnv
+from environments.satellite.orbit_transfer import LowThrustTransferEnv
+from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
 ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
@@ -62,7 +58,7 @@ def main():
         env_kwargs['difficulty'] = cfg['difficulty']
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed, **env_kwargs)
     if cfg.get('algo') == 'flash_sac':
-        from common.flash_sac import FlashSACRunner
+        from algorithms.flashsac.flash_sac import FlashSACRunner
         runner = FlashSACRunner(env, cfg, log_dir='/tmp/eval_tb', device=str(env.device))
         runner.load(str(ckpt))
         policy = runner.deterministic_action

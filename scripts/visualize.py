@@ -59,32 +59,28 @@ import argparse
 import json
 import math
 import sys
-import types
 from pathlib import Path
 
-_src = Path(__file__).resolve().parent.parent / 'src'
-_pkg = types.ModuleType('pyflyt_genesis')
-_pkg.__path__ = [str(_src)]
-sys.modules['pyflyt_genesis'] = _pkg
-sys.path.insert(0, str(_src))
+_ROOT = Path(__file__).resolve().parents[1]  # repo root
+sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import numpy as np
 import torch
 import genesis as gs
 
-from pyflyt_genesis.quadx import QuadXHoverEnv
-from pyflyt_genesis.fixedwing import FixedwingWaypointsEnv
-from pyflyt_genesis.rocket import RocketLandingEnv
-from pyflyt_genesis.satellite import SatelliteAttitudeEnv
-from pyflyt_genesis.transfer import LowThrustTransferEnv
-from pyflyt_genesis.docking import SpaceDockingEnv, SpaceRendezvousEnv
+from environments.multirotor import QuadXHoverEnv
+from environments.fixedwing import FixedwingWaypointsEnv
+from environments.rocket import RocketLandingEnv
+from environments.satellite.attitude_control import SatelliteAttitudeEnv
+from environments.satellite.orbit_transfer import LowThrustTransferEnv
+from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
-from common.baselines import build_baseline
+from algorithms.baselines.baselines import build_baseline
 
 ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
         'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
-MODELS = Path(__file__).resolve().parent.parent / 'src' / 'original_pyflyt' / 'models'
+MODELS = Path(__file__).resolve().parent.parent / 'environments' / 'common' / 'original_pyflyt' / 'models'
 TRAIL_MARKERS = 256
 ORBIT_POINTS = 96
 HIDDEN = np.array((0., 0., -1e5))  # park spot for unused trail markers
@@ -131,7 +127,7 @@ class _CkptPolicy:
         if isinstance(dist.get('init_std'), list):
             dist['init_std'] = _JsonStd(dist['init_std'])
         if cfg.get('algo') == 'flash_sac':
-            from common.flash_sac import FlashSACRunner
+            from algorithms.flashsac.flash_sac import FlashSACRunner
             runner = FlashSACRunner(env, cfg, log_dir='/tmp/vis_tb', device=str(env.device))
             runner.load(str(ckpt))
             self._fn = runner.deterministic_action
@@ -404,34 +400,24 @@ def build_scene(task, extras, first):
     ents = {}
     p0 = first['pos']
     if task == 'quadx':
-        # Contrast-first engineering look: dark slate ground so the red cf2x
-        # body reads clearly; the drone is ~9 cm across, so everything below
-        # is sized to that scale. All extra geometry (nose arrow, prop disks,
-        # motor mounts) is display-only: collision=False, scene never stepped.
+        # PyFlyt-style visualization (mirrors PyFlyt 0.29 quadx_envs): plain
+        # grey ground, the cf2x URDF loaded as-is with no added geometry, an
+        # opaque solid green sphere at the hover point (radius = goal reach
+        # distance / 4, exactly PyFlyt's waypoint_handler scaling), and a
+        # fixed camera at PyFlyt's debug-view angles (yaw 30, pitch -30).
+        # The drone is ~9 cm across, so cameraDistance is scaled down from
+        # PyFlyt's interactive 5 m to keep the vehicle readable.
         scene.add_entity(gs.morphs.Plane(),
-                         surface=gs.surfaces.Plastic(color=(.20, .22, .26, 1.)))
+                         surface=gs.surfaces.Plastic(color=(.55, .55, .55, 1.)))
         ents['body'] = _urdf(scene, MODELS / 'vehicles/cf2x/cf2x.urdf')
-        ents['goal'] = _marker(scene, .028, (.9, .2, .2, .22), extras['target'])
+        ents['goal'] = _marker(scene, .035, (0., 1., 0., 1.), extras['target'])
         ents['attach'] = []
-        def _attach(ent, pos, quat=(1., 0., 0., 0.)):
-            ents['attach'].append((ent, np.asarray(pos, float), tuple(quat)))
-        # nose arrow: bright yellow bar along body +x (the PyFlyt forward
-        # axis), half-buried in the top cover so it reads as attached while
-        # still protruding well ahead of the frame
-        _attach(_box(scene, (.078, .02, .02), (.98, .85, .1, 1.)), (.059, 0., .02))
-        # motor mounts + translucent prop disks at the four arm tips
-        # (props are at local (+-.028, +-.028); disks replace blades that are
-        # unreadable at this scale; purely visual, no physics)
-        for sx in (1., -1.):
-            for sy in (1., -1.):
-                _attach(_cyl(scene, .008, .016, (.15, .16, .18, 1.)),
-                        (sx * .028, sy * .028, .004))
-                _attach(_cyl(scene, .022, .004, (.25, .75, .95, .22)),
-                        (sx * .028, sy * .028, .021))
-        # close follow camera matched to the drone scale: frame height
-        # ~0.7 m at the hover point, body + arms + goal sphere all readable
         t = np.asarray(extras['target'], dtype=float)
-        cam = scene.add_camera(res=(640, 480), pos=tuple(t + np.array((-.42, -.42, .26))),
+        yaw, pitch, dist = math.radians(30.), math.radians(-30.), 0.85
+        off = np.array((dist * math.cos(pitch) * math.cos(yaw),
+                        -dist * math.cos(pitch) * math.sin(yaw),
+                        -dist * math.sin(pitch)))
+        cam = scene.add_camera(res=(960, 540), pos=tuple(t + off),
                                lookat=tuple(t), fov=40, far=50)
     elif task == 'fixedwing':
         scene.add_entity(gs.morphs.Plane())
@@ -672,18 +658,9 @@ def render(task, frames, extras, out_path, fps):
             _update_trail(trail, path)
         p = np.asarray(f['pos'], dtype=float)
         if task == 'quadx':
-            # rigid display attachments (nose arrow, prop disks) follow the
-            # recorded body attitude AND position (unlike the satellite bus,
-            # the quadx body is not at the frame origin)
-            q = np.asarray(f['quat'], float)
-            for ent, lp, lq in ents['attach']:
-                ent.set_pos(tuple(map(float, p + _quat_rot(q, lp))))
-                ent.set_quat(tuple(map(float, _quat_mul_np(q, lq))))
-            # close follow matched to the ~9 cm drone: offset scaled down from
-            # the legacy (-9, -9, 5) so the vehicle never shrinks to a dot
-            # while still drifting with tilt/translation (no clipping: the
-            # episode is bounded to |p| < 3 m, well inside far=50)
-            _follow(cam, p, (-.42, -.42, .26))
+            # PyFlyt-style: the URDF renders as-is (no display attachments),
+            # camera fixed at the debug-view pose (yaw 30, pitch -30 over the
+            # hover point) instead of following the body
             rgb_frames.append(cam.render(rgb=True, force_render=True)[0])
             continue
         if space:

@@ -29,9 +29,9 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / 'src'))
+sys.path.insert(0, str(REPO))
 
-from common.train_utils import run_training  # noqa: E402
+from algorithms.train_utils import run_training  # noqa: E402
 
 NUM_ENVS = 1024
 SEED = 7
@@ -114,12 +114,12 @@ FS_CANDIDATES = [
 ]
 
 # Production env classes / kwargs (mirror each train_*.py).
-from pyflyt_genesis.quadx import QuadXHoverEnv            # noqa: E402
-from pyflyt_genesis.fixedwing import FixedwingWaypointsEnv  # noqa: E402
-from pyflyt_genesis.rocket import RocketLandingEnv        # noqa: E402
-from pyflyt_genesis.satellite import SatelliteAttitudeEnv  # noqa: E402
-from pyflyt_genesis.transfer import LowThrustTransferEnv  # noqa: E402
-from pyflyt_genesis.docking import SpaceDockingEnv, SpaceRendezvousEnv  # noqa: E402
+from environments.multirotor import QuadXHoverEnv            # noqa: E402
+from environments.fixedwing import FixedwingWaypointsEnv  # noqa: E402
+from environments.rocket import RocketLandingEnv        # noqa: E402
+from environments.satellite.attitude_control import SatelliteAttitudeEnv  # noqa: E402
+from environments.satellite.orbit_transfer import LowThrustTransferEnv  # noqa: E402
+from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv  # noqa: E402
 
 ENVS = {
     'quadx': (QuadXHoverEnv, {}),
@@ -132,8 +132,18 @@ ENVS = {
 }
 # docking/rocket production entries zero-init the policy output head via
 # module-level patches; importing the train module applies them identically.
-import train_docking   # noqa: E402,F401  (applies FlashResMLPModel zero-head patch)
-import train_rocket    # noqa: E402,F401  (applies MLP/FlashRes zero-head patches)
+# The entries live in their category directories, so load them by file path.
+import importlib.util
+def _load_entry(name, rel):
+    spec = importlib.util.spec_from_file_location(name, REPO / rel)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+train_docking = _load_entry('train_docking',   # noqa: E402,F401  (applies FlashResMLPModel zero-head patch)
+                            'environments/satellite/rendezvous_docking/train_docking.py')
+train_rocket = _load_entry('train_rocket',     # noqa: E402,F401  (applies MLP/FlashRes zero-head patches)
+                           'environments/rocket/train_rocket.py')
 PPO_BASE['rocket']['init_std'] = train_rocket.INIT_STD
 
 SMOKE = bool(__import__('os').environ.get('SWEEP_SMOKE'))

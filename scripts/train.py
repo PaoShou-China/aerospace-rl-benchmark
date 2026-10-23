@@ -7,7 +7,7 @@ control, low-thrust perigee-raising transfer, CWH docking / rendezvous).
 This is the small-config sweep entry (default 64 envs, 32-step rollouts,
 64x64 MLP, adaptive-KL schedule). For experiment runs use the self-contained
 per-task entries `train_<task>.py` instead -- they share
-src/common/train_utils.py, ship the project-standard 1024-env configuration
+algorithms/train_utils.py, ship the project-standard 1024-env configuration
 and expose the DIFFICULTY constant; this file passes no env kwargs (always
 benchmark difficulty).
 
@@ -19,25 +19,20 @@ import copy
 import json
 import sys
 import time
-import types
 from pathlib import Path
 
-# src/ is the pyflyt_genesis package root: env subpackages keep their relative
-# imports and the frozen original_pyflyt sources keep their absolute ones.
-_src = Path(__file__).resolve().parent.parent / 'src'
-_pkg = types.ModuleType('pyflyt_genesis')
-_pkg.__path__ = [str(_src)]
-sys.modules['pyflyt_genesis'] = _pkg
+_ROOT = Path(__file__).resolve().parents[1]  # repo root
+sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from pyflyt_genesis.quadx import QuadXHoverEnv
-from pyflyt_genesis.fixedwing import FixedwingWaypointsEnv
-from pyflyt_genesis.rocket import RocketLandingEnv
-from pyflyt_genesis.satellite import SatelliteAttitudeEnv
-from pyflyt_genesis.transfer import LowThrustTransferEnv
-from pyflyt_genesis.docking import SpaceDockingEnv, SpaceRendezvousEnv
+from environments.multirotor import QuadXHoverEnv
+from environments.fixedwing import FixedwingWaypointsEnv
+from environments.rocket import RocketLandingEnv
+from environments.satellite.attitude_control import SatelliteAttitudeEnv
+from environments.satellite.orbit_transfer import LowThrustTransferEnv
+from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
 ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
