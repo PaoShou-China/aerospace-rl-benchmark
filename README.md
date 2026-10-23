@@ -280,3 +280,61 @@ environment docstring lists the specific source of its defaults.
 12. Kim et al. (2026). *FlashSAC* (arXiv:2604.04539, RSS'26) — the
     norm-controlled off-policy algorithm ported in `algorithms/flashsac/flash_sac.py`
     and mirrored by the PPO trunk arm.
+
+## Roadmap: planned control tasks
+
+All future tasks follow the same per-task recipe (tensorized env + spec
+docstring → classical baseline registered in `algorithms/baselines/` →
+self-contained `train_<task>.py` with 1024 envs / seed 7 / `DIFFICULTY`
+constant → `results/<task>/` → README + difficulty-table update). No
+multi-agent tasks are planned — every task below is a single agent.
+
+### Priority 1
+
+| Category | Task | Environment notes | Classical baseline | Interest |
+|---|---|---|---|---|
+| missile | Intercept | point-mass + aero, maneuvering target (weave/barrel roll), RK4 1 ms, terminal-velocity constraint | PN / APN | first missile env, activates the `missile/` placeholder |
+| rocket | Droneship Landing | Rocket-Landing + 6-DOF moving pad (sea-wave spectrum), 10 m height offset | PDG + lag-compensated retargeting | moving touchdown target |
+| satellite | Docking-Fault | Docking + actuator failures (stuck/dead thruster) + measurement noise | LQR + control reallocation | fault injection, safe RL |
+| fixedwing | Autoland | glide-slope tracking + crosswind + flare, runway-contact criteria | glide-slope guidance + TECS (reuse existing autopilot) | baseline already exists |
+| multirotor | Slung Payload | QuadX + cable-suspended pendulum load; action must damp swing | SE(3) + swing-angle damping | underactuated coupling |
+
+### Priority 2
+
+| Category | Task | Environment notes | Classical baseline | Interest |
+|---|---|---|---|---|
+| fixedwing | Terrain Following | DEM sampling, radar-altimeter local observations | TF-lateral guidance + terrain matching | local observations, obstacle avoidance |
+| satellite | Inspection | CWH + field-of-view constraint, coverage-rate reward | ZEM/PN fly-around law | long horizon, coverage-shaped reward |
+| rocket | RTB Boost-back | ascent + 180° flip + landing, ~90 s | gravity turn + two-phase PDG | long-horizon reward shaping |
+| missile | HGV Glide | hypersonic glide phase, heat-flux / load-factor corridor | BTT corridor guidance | constraint satisfaction |
+| multirotor | Racing Gate | gate sequence, time penalty + speed cap | minimum-time trajectory tracking | aggressive flight, extends `test_quadx_se3` |
+
+### Priority 3
+
+| Category | Task | Environment notes | Classical baseline | Interest |
+|---|---|---|---|---|
+| satellite | GEO Station-keeping | perturbed two-body (J2 + sun/moon), ±0.05° deadband | impulsive corrections (Euler–Hill setpoint) | very low control budget |
+| rocket | Ascent to Orbit | gravity turn + dynamic-pressure / heat-flux limits, orbit-insertion accuracy | linear-tangent guidance | completes launch → orbit → transfer → rendezvous chain |
+| satellite | Detumble & Capture | tumbling non-cooperative target, contact dynamics | angular-momentum matching + attitude sync | contact-rich manipulation |
+| multirotor | Precision Landing | moving cart pad + simulated vision latency | MPC-style trajectory tracking | latency-robust observation |
+
+### Shared infrastructure (enabling work, single-agent only) — landed
+
+1. `environments/common/disturbances.py` — **done**: unified
+   `WindDisturbance` (steady wind + Dryden gust, MIL-F-8785C low-altitude
+   shaping filters, seeded RNG stream); envs add the returned velocity to
+   the airflow term without touching their dynamics
+2. `algorithms/baselines/` — **done**: dict-based `BUILDERS` registry plus
+   a `@register_baseline('<task>')` decorator; a new classical baseline is
+   wired into `baseline_eval.py` with one line
+3. Difficulty-axis linkage — **done**: `environments/common/difficulty.py`
+   validates (task, difficulty) and builds the env kwargs; all seven train
+   entries now construct `ENV_KWARGS` through
+   `resolve_env_kwargs('<task>', DIFFICULTY)`, so a new task joins the
+   convention with one dict entry in `TASK_IDS`
+
+### Cadence
+
+Batch 1 (parallel, independent): missile Intercept + Droneship Landing +
+Docking-Fault. Batch 2: Autoland + Slung Payload. Later batches follow the
+priority order above as infrastructure lands.

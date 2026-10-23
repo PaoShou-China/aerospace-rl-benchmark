@@ -21,6 +21,7 @@ _ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
+from environments.common.difficulty import resolve_env_kwargs
 from environments.satellite.rendezvous_docking import SpaceDockingEnv
 
 # Zero-init the final linear head of FlashResMLPModel (actor mean head and
@@ -84,7 +85,7 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/fla
 # Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
 # = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
 DIFFICULTY = None
-ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
+ENV_KWARGS = resolve_env_kwargs('docking', DIFFICULTY)   # validated against environments/common/difficulty.py
 
 # Architecture A/B (user decision 2026-10-22: docking keeps BOTH arms). CAUTION
 # (measured 2026-10-22): the archived 94% MLP reference predates the 1024-env

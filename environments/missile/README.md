@@ -53,4 +53,6 @@ what is planned.
 ## Honesty note
 
 No environment, result or claim exists yet — nothing in this file should be
-read as a benchmark number.
+read as a benchmark number. The missile Intercept task and the full
+task-extension plan are tracked in the root `README.md` under
+**Roadmap: planned control tasks**.

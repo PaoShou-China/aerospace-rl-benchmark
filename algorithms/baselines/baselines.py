@@ -1472,9 +1472,33 @@ BUILDERS = {
 }
 
 
+def register_baseline(vehicle):
+    """Class decorator: wire a Baseline subclass into the registry.
+
+    A new task's classical baseline becomes available to ``baseline_eval``,
+    ``build_baseline`` and the BC warm start with exactly one line::
+
+        @register_baseline('missile')
+        class MissilePNBaseline(Baseline): ...
+
+    (the seven shipped entries below register explicitly at definition
+    time, keeping the BUILDERS dict as the single source of truth).
+    """
+    def deco(cls):
+        if vehicle in BUILDERS:
+            raise KeyError(f"baseline for task {vehicle!r} already registered")
+        BUILDERS[vehicle] = cls
+        return cls
+    return deco
+
+
 def build_baseline(vehicle, env):
     """Instantiate the classical baseline for a task name."""
-    return BUILDERS[vehicle](env)
+    try:
+        return BUILDERS[vehicle](env)
+    except KeyError:
+        raise KeyError(f'no classical baseline registered for task '
+                       f'{vehicle!r}; known: {sorted(BUILDERS)}') from None
 
 
 # The classical baselines double as the conventional (expert) policies for the BC

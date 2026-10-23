@@ -20,6 +20,7 @@ _ROOT = Path(__file__).resolve().parents[1]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
+from environments.common.difficulty import resolve_env_kwargs
 from environments.rocket import RocketLandingEnv
 
 # Zero-init the last linear layer of every MLPModel (actor mean head and critic
@@ -86,7 +87,7 @@ DIFFICULTY = None
 # axis farming the absolute holding term (+0.3/(||p_xy||+0.1) -> +1810 of the
 # +1471 mean episode return), burn the 5% fuel in ~305 steps, then hit the pad
 # at ~40 m/s (fatal, touch_speed 41.7, success_rate 0 across all 1000 updates).
-ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
+ENV_KWARGS = resolve_env_kwargs('rocket', DIFFICULTY)   # validated against environments/common/difficulty.py
 
 
 class _JsonStd(list):

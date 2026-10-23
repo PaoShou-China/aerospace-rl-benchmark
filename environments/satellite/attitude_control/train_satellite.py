@@ -20,6 +20,7 @@ _ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
+from environments.common.difficulty import resolve_env_kwargs
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
 
 TASK = 'satellite'
@@ -165,7 +166,7 @@ LR_SCHEDULE = 'fixed'
 # Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
 # = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
 DIFFICULTY = None
-ENV_KWARGS = {} if DIFFICULTY is None else {'difficulty': DIFFICULTY}
+ENV_KWARGS = resolve_env_kwargs('satellite', DIFFICULTY)   # validated against environments/common/difficulty.py
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
