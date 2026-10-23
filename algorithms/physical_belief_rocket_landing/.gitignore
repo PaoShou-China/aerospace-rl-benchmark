@@ -1,0 +1,15 @@
+runs/
+.cache/
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+artifacts/**/*.pt
+
+# Published experiment assets.
+!artifacts/policy.pt
+!artifacts/continuation.pt
+!artifacts/parent/parent.pt
+!vendor/benchmark_source.tar.gz
+!results/
+!results/*.json

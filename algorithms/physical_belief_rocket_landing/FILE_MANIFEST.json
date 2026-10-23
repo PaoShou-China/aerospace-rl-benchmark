@@ -1,0 +1,169 @@
+{
+  "files": [
+    {
+      "path": ".gitignore",
+      "bytes": 238,
+      "sha256": "3a67aabe5a4ba7024769c56e87c32c45b161e0e34930f85536283a89aff06a6c"
+    },
+    {
+      "path": "NOTICE.md",
+      "bytes": 1244,
+      "sha256": "6713cf4d6791fc9a5bf49b6b67729bd74825a3f3a8f3698815c3b08b95b92414"
+    },
+    {
+      "path": "README.md",
+      "bytes": 13739,
+      "sha256": "46b21e6433d35072a16fb3cac618cfe22d456640f7c6e2f2c2dbfba884a4e71c"
+    },
+    {
+      "path": "README.zh-CN.md",
+      "bytes": 11668,
+      "sha256": "e14732205899c9394440cc9c8dd8bfd33822d6374a8d0b3237cbf29937b08c88"
+    },
+    {
+      "path": "__init__.py",
+      "bytes": 96,
+      "sha256": "62e2781cc0e2331086b0f23052a4485255b000b9861827eb7b167bb761a93c8e"
+    },
+    {
+      "path": "artifacts/continuation.pt",
+      "bytes": 7441662,
+      "sha256": "5e83ca6b8d0343d3e2db716f72b99a409612cea8a43462df8def6218a5670277"
+    },
+    {
+      "path": "artifacts/parent/config.json",
+      "bytes": 896,
+      "sha256": "58620c8f4cc912f51d90d10ecbb70b70002fd42dcd102628bf1e57a9edd975cd"
+    },
+    {
+      "path": "artifacts/parent/parent.pt",
+      "bytes": 2212430,
+      "sha256": "36439bfeb91b5a8bba1d4fd212ef5addd9712eca41f7cd7bb9d8c217211fb424"
+    },
+    {
+      "path": "artifacts/policy.pt",
+      "bytes": 7442046,
+      "sha256": "e8df5fae67071eadf474037e9b9237013185a47be78a6e47f5feb7e220933489"
+    },
+    {
+      "path": "configs/rocket_landing.json",
+      "bytes": 601,
+      "sha256": "453a861e9da5b0217b315ee809fb23b40d961083a10649b6a422c8de59f8c619"
+    },
+    {
+      "path": "core/__init__.py",
+      "bytes": 69,
+      "sha256": "b5c625a7808ee4567e62005b7c544ef76c5fd59a55a567510a652fbf2e497fec"
+    },
+    {
+      "path": "core/rocket_direct_support.py",
+      "bytes": 7996,
+      "sha256": "8d63da36bb04021fb310b0b5f35de504180c5b86133af9de189de4808ffd2dfd"
+    },
+    {
+      "path": "core/rocket_flash_ppo.py",
+      "bytes": 6714,
+      "sha256": "c350963319d230eb396b221692c90ee5e99464585c047007a63d45832f8d59fc"
+    },
+    {
+      "path": "core/rocket_phase_policy.py",
+      "bytes": 2792,
+      "sha256": "11f2dac4f7e312b2caefdd3e93d0f0b4966a7317dd37205ab32f4de13f08b3fe"
+    },
+    {
+      "path": "core/rocket_physical_core.py",
+      "bytes": 16200,
+      "sha256": "a096e8b83fa7249c8f66e7c701840891a41afb31b23b83aa31f1d6b21cb12f5e"
+    },
+    {
+      "path": "core/rocket_ppo_practical_support.py",
+      "bytes": 23096,
+      "sha256": "629267f52ed597bec45f84fc4abeecf78b5b75a02f389e5ff46a70f0c8e7d576"
+    },
+    {
+      "path": "core/rocket_reward_candidates.py",
+      "bytes": 9251,
+      "sha256": "3d5d7f3cb2d358a1acea1f6b7427647d311375950536e35cbb9e249844300e53"
+    },
+    {
+      "path": "core/rocket_unified_physics.py",
+      "bytes": 16632,
+      "sha256": "711a2ad957d24a02b9aaae717eb1b3eeade9ae12dabf18b6874030d4cea54b16"
+    },
+    {
+      "path": "docs/PACKAGING.md",
+      "bytes": 1474,
+      "sha256": "75aeaeacb473928ac745d5f11b8c27f9f2a87b8a6815b238a6d72995b1be4428"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 3105,
+      "sha256": "206301fb7bcae6b4e124c8f66370e53f3eea46fb3e1f5c49560e1ad146e98adc"
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 197,
+      "sha256": "cbfa2d1968247ad742fadb398bb7f04177b911a4061a4fbd2986e6bbcb75ae4f"
+    },
+    {
+      "path": "results/comparison.json",
+      "bytes": 1923,
+      "sha256": "c782ca4a2142a7b532f47ede9570754af44271855193d6f06094774de9aa7633"
+    },
+    {
+      "path": "results/dagger_evaluation.json",
+      "bytes": 493104,
+      "sha256": "938a29b60e346f6b04391da011ae9c1ddd3fa99d72e3feb9b6370414362efae5"
+    },
+    {
+      "path": "results/integration_check.json",
+      "bytes": 853,
+      "sha256": "bbacadc9ba5c36cf72ddabc3a8ad328de9347ab51fd0fdafe90fc8472161b7d5"
+    },
+    {
+      "path": "results/packaging_check.json",
+      "bytes": 641,
+      "sha256": "25b7dc4677dfcb888c63120f94fc6a2700cf118e733fca12690a313bfced418d"
+    },
+    {
+      "path": "results/physical_belief_evaluation.json",
+      "bytes": 405660,
+      "sha256": "4338819811fcd3dff27e4ead6729527280b00593f7fabf46d7cbf4d5b8d998fd"
+    },
+    {
+      "path": "results/training_manifest.json",
+      "bytes": 4047,
+      "sha256": "30787ac356ed8a0f1448d999c07a2113ffc25bb17496c305995aaf1af6773815"
+    },
+    {
+      "path": "scripts/episode_metrics.py",
+      "bytes": 2519,
+      "sha256": "88272e4794361e08f483ffe1bbe32135edd432e66f3ab123e180403593442310"
+    },
+    {
+      "path": "scripts/evaluate.py",
+      "bytes": 15235,
+      "sha256": "b62bebb1795b0f24bdabb722ee64a4adf2d8b49a47124c2b607c8f04eca53674"
+    },
+    {
+      "path": "scripts/run.py",
+      "bytes": 5532,
+      "sha256": "7cb8413b73bf0206a1e67e9e2caef394054a304fc6fc95ba37e51424bafd255e"
+    },
+    {
+      "path": "scripts/snapshot.py",
+      "bytes": 2604,
+      "sha256": "ce97b2b4ded964f24669458bd449ebe128eb4f96791c9f1b40e9e8e5c83cd88f"
+    },
+    {
+      "path": "scripts/train.py",
+      "bytes": 29027,
+      "sha256": "89b5182afed244614a30202e84fd19dfaa951ccae33f3973062907982aceeb25"
+    },
+    {
+      "path": "vendor/benchmark_source.tar.gz",
+      "bytes": 358377,
+      "sha256": "dfc67c8db21ce866a01974263ff91450f756aa5970bfff57b385b0b240a9f0ff"
+    }
+  ]
+}

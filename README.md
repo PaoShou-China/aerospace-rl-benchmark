@@ -117,6 +117,12 @@ schedule artifacts:
 Every run records task configuration, real transition counts, physical-step
 counts and device-side completion metrics in `results/<task>/run.json`.
 
+[Physical-Belief Control for Rocket Landing](algorithms/physical_belief_rocket_landing/README.md)
+is a self-contained, task-specific PPO policy that combines online dynamics
+identification, differentiable physics, and action optimization. Its module
+includes English and Chinese technical reports, training and evaluation entry
+points, checkpoints, and recorded results.
+
 ## Classical (non-learned) baselines
 
 Each task is paired with a classical GNC baseline
