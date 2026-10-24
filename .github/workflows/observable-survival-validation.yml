@@ -1,0 +1,64 @@
+name: Observable survival prototype validation
+on:
+  push:
+    branches: ['experiment/observable-survival-rocket-v1']
+    paths:
+      - 'algorithms/observable_survival_rocket/**'
+      - '.github/workflows/observable-survival-validation.yml'
+permissions:
+  contents: read
+jobs:
+  cpu-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      PYOPENGL_PLATFORM: egl
+      EGL_PLATFORM: surfaceless
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU test dependencies
+        run: |
+          python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy scipy pytest rsl-rl-lib==5.5.1 tensordict==0.15.2
+      - name: Algebra and actual-source integration tests
+        run: |
+          set -o pipefail
+          mkdir -p validation
+          python -m pytest algorithms/observable_survival_rocket/tests -q -ra --junitxml=validation/tests.xml 2>&1 | tee validation/tests.log
+      - name: Synthetic probe (not a benchmark)
+        run: |
+          python algorithms/observable_survival_rocket/synthetic_probe.py --out validation/synthetic_probe.json
+      - name: Prepare isolated source overlay without training
+        run: |
+          python algorithms/observable_survival_rocket/prepare_experiment.py --repo . --out /tmp/observable-survival-validation
+          cp /tmp/observable-survival-validation/preparation.json validation/
+          python -m compileall -q /tmp/observable-survival-validation/bundle
+      - name: Install actual simulator and headless software EGL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri libosmesa6
+          python -m pip install genesis-world==1.4.4 PyYAML==6.0.3
+          python -c "import ctypes; ctypes.CDLL('libEGL.so.1'); from OpenGL import EGL; print('EGL library import passed')"
+      - name: Actual Genesis CPU training smoke (16 transitions, not performance)
+        timeout-minutes: 9
+        run: |
+          python algorithms/observable_survival_rocket/ci_genesis_smoke.py --prepared /tmp/observable-survival-validation --evidence validation
+      - name: Package inspected sources and test evidence
+        if: always()
+        run: |
+          mkdir -p validation
+          git rev-parse HEAD > validation/source_commit.txt
+          python -m pip freeze > validation/dependencies.txt
+          tar czf validation/inspected-sources.tar.gz algorithms/observable_survival_rocket algorithms/physical_belief_rocket_landing
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: observable-survival-cpu-validation
+          path: validation/
+          retention-days: 7
