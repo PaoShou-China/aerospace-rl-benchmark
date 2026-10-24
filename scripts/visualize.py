@@ -410,20 +410,20 @@ def build_scene(task, extras, first):
     ents = {}
     p0 = first['pos']
     if task == 'quadx':
-        # PyFlyt-style visualization (mirrors PyFlyt 0.29 quadx_envs): plain
-        # grey ground, the cf2x URDF loaded as-is with no added geometry, an
-        # opaque solid green sphere at the hover point (radius = goal reach
-        # distance / 4, exactly PyFlyt's waypoint_handler scaling), and a
-        # fixed camera at PyFlyt's debug-view angles (yaw 30, pitch -30).
-        # The drone is ~9 cm across, so cameraDistance is scaled down from
-        # PyFlyt's interactive 5 m to keep the vehicle readable.
+        # Show all waypoints and frame the recorded flight as well as the
+        # route; the old close-up hover camera misses waypoint navigation.
         scene.add_entity(gs.morphs.Plane(),
                          surface=gs.surfaces.Plastic(color=(.55, .55, .55, 1.)))
         ents['body'] = _urdf(scene, MODELS / 'vehicles/cf2x/cf2x.urdf')
-        ents['goal'] = _marker(scene, .035, (0., 1., 0., 1.), extras['target'])
+        ents['wps'] = [_marker(scene, .05, (0., 1., 0., 1.), t)
+                       for t in extras['targets']]
+        ents['trail'] = _trail(scene, .015, (.2, .4, .9, .8))
         ents['attach'] = []
-        t = np.asarray(extras['target'], dtype=float)
-        yaw, pitch, dist = math.radians(30.), math.radians(-30.), 0.85
+        points = np.asarray(extras['view_points'], dtype=float)
+        t = (points.min(axis=0) + points.max(axis=0)) * .5
+        radius = np.linalg.norm(points - t, axis=1).max()
+        yaw, pitch = math.radians(30.), math.radians(-30.)
+        dist = max(2., 1.2 * radius / math.sin(math.radians(20.)))
         off = np.array((dist * math.cos(pitch) * math.cos(yaw),
                         -dist * math.cos(pitch) * math.sin(yaw),
                         -dist * math.sin(pitch)))
@@ -616,6 +616,9 @@ def build_scene(task, extras, first):
 
 
 def render(task, frames, extras, out_path, fps):
+    if task == 'quadx':
+        extras['view_points'] = np.concatenate(
+            (np.asarray(extras['targets']), np.asarray([f['pos'] for f in frames])), axis=0)
     scene, ents, cam = build_scene(task, extras, frames[0])
     trail = ents.get('trail')
     path = []
@@ -679,9 +682,7 @@ def render(task, frames, extras, out_path, fps):
             _update_trail(trail, path)
         p = np.asarray(f['pos'], dtype=float)
         if task == 'quadx':
-            # PyFlyt-style: the URDF renders as-is (no display attachments),
-            # camera fixed at the debug-view pose (yaw 30, pitch -30 over the
-            # hover point) instead of following the body
+            # Fixed overview camera keeps all waypoints and the flight visible.
             rgb_frames.append(cam.render(rgb=True, force_render=True)[0])
             continue
         if space:
@@ -832,8 +833,38 @@ def render(task, frames, extras, out_path, fps):
             _follow(cam, p, (-9, -9, 5))
             rgb_frames.append(cam.render(rgb=True, force_render=True)[0])
     scene.destroy()
-    import imageio
-    imageio.mimsave(out_path, rgb_frames, fps=fps, codec='libx264', quality=8)
+    if sys.platform == 'win32':
+        # Genesis can leave the Windows console stderr handle invalid.
+        # Explicit streams avoid imageio-ffmpeg's inherited stderr handle.
+        import subprocess
+        import tempfile
+        import imageio_ffmpeg
+        height, width = rgb_frames[0].shape[:2]
+        command = [imageio_ffmpeg.get_ffmpeg_exe(), '-y', '-f', 'rawvideo',
+                   '-vcodec', 'rawvideo', '-pix_fmt', 'rgb24',
+                   '-s', f'{width}x{height}', '-r', str(fps), '-i', '-',
+                   '-an', '-vcodec', 'libx264', '-crf', '18',
+                   '-vf', 'pad=ceil(iw/16)*16:ceil(ih/16)*16',
+                   '-pix_fmt', 'yuv420p', str(out_path)]
+        with tempfile.TemporaryFile() as log:
+            with subprocess.Popen(command, stdin=subprocess.PIPE,
+                                  stdout=subprocess.DEVNULL, stderr=log,
+                                  creationflags=subprocess.CREATE_NO_WINDOW) as process:
+                try:
+                    for frame in rgb_frames:
+                        process.stdin.write(np.asarray(frame, dtype=np.uint8).tobytes())
+                except BrokenPipeError:
+                    pass  # Report the encoder diagnostics below.
+                finally:
+                    process.stdin.close()
+                code = process.wait()
+            if code:
+                log.seek(0)
+                raise RuntimeError(f'FFmpeg failed ({code}): '
+                                   + log.read().decode('utf-8', errors='replace'))
+    else:
+        import imageio
+        imageio.mimsave(out_path, rgb_frames, fps=fps, codec='libx264', quality=8)
 
 
 def main():
