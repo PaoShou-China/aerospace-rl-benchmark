@@ -52,3 +52,29 @@ def test_actual_actor_forward_backward_and_memory_shape():
     loss.backward()
     grads=[p.grad for p in actor.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+def test_published_checkpoint_transfer_and_auxiliary_loss():
+    checkpoint_path=SOURCE.parent/'artifacts/policy.pt'
+    if not checkpoint_path.exists():
+        pytest.skip('published weights missing')
+    data=torch.load(checkpoint_path,map_location='cpu',weights_only=False)
+    import json,copy
+    phase=importlib.import_module(prefix+'.rocket_phase_policy')
+    obs=torch.zeros(2,30); obs[:,6]=1.; obs[:,12]=6.; obs[:,25]=.05
+    cfg=json.loads((SOURCE.parent/'artifacts/parent/config.json').read_text())
+    params=copy.deepcopy(cfg['actor']); params.pop('class_name')
+    std=params.get('distribution_cfg',{}).get('init_std')
+    if isinstance(std,list): params['distribution_cfg']['init_std']=torch.tensor(std)
+    policy=phase.RocketPhaseModel({'policy':obs},cfg['obs_groups'],'actor',7,**params)
+    actor=Actor(policy,horizon=2,iterations=1,knots=1,tail_steps=1)
+    copied=parent.initialize_from_published(actor,data['actor'])
+    assert copied
+    state=physics.observation_state(obs)
+    memory=actor.initial_memory(2,'cpu')
+    action=torch.zeros(2,7); action[:,3]=1.; action[:,4]=-.4
+    output=actor(obs,memory,state,action,torch.ones(2,dtype=torch.bool),create_graph=True)
+    loss=actor.prediction_loss(output['belief'],action,obs,torch.ones(2,dtype=torch.bool))
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert all(torch.isfinite(p.grad).all() for p in actor.parameters() if p.grad is not None)

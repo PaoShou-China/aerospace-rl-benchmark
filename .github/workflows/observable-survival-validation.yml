@@ -36,6 +36,12 @@ jobs:
           python algorithms/observable_survival_rocket/prepare_experiment.py --repo . --out /tmp/observable-survival-validation
           cp /tmp/observable-survival-validation/preparation.json validation/
           python -m compileall -q /tmp/observable-survival-validation/bundle
+      - name: Install actual simulator for bounded CPU smoke
+        run: python -m pip install genesis-world==1.4.4 PyYAML==6.0.3
+      - name: Actual Genesis CPU training smoke (16 transitions, not performance)
+        timeout-minutes: 9
+        run: |
+          python algorithms/observable_survival_rocket/ci_genesis_smoke.py --prepared /tmp/observable-survival-validation --evidence validation
       - name: Package inspected sources and test evidence
         if: always()
         run: |

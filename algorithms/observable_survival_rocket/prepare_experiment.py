@@ -58,6 +58,39 @@ def patch_train(text):
         '    parser.add_argument("--tail-weight", type=float, default=.15)\n'
         '    parser.add_argument("--disable-observable-update", action="store_true")\n'
         '    args = parser.parse_args()\n', 'new options')
+    text = replace_once(text, '    args = parser.parse_args()\n',
+        '    parser.add_argument("--additional-transitions", type=int)\n'
+        '    args = parser.parse_args()\n'
+        '    if args.additional_transitions is not None:\n'
+        '        if args.total_transitions is not None:\n'
+        '            parser.error("additional-transitions and total-transitions are exclusive")\n'
+        '        if args.additional_transitions <= 0 or args.additional_transitions % args.num_envs:\n'
+        '            parser.error("additional transition budget must be positive and divisible by num-envs")\n',
+        'additional interaction budget')
+    marker = '        remaining_transitions = transition_target-status["new_environment_transitions"]\n'
+    text = replace_once(text, marker,
+        '        if args.additional_transitions is not None:\n'
+        '            transition_target = status["new_environment_transitions"] + args.additional_transitions\n'
+        '            status["planned_environment_transitions"] = transition_target\n' + marker,
+        'lineage-aware interaction target')
+    text = replace_once(text, "            if args.architecture == 'confidence_sequence':\n",
+        "            if args.architecture in ('confidence_sequence', 'observable_survival'):\n",
+        'initial physical authority')
+    marker = '        baseline.write_json(out/"manifest.json", manifest)\n'
+    metadata = '''        if args.architecture == 'observable_survival':
+            manifest['components'] = [
+                'causal recurrent context', 'Joseph-form full-covariance effective-parameter belief',
+                'local physical sensitivities', '25-point moment-matching cubature',
+                'six-DOF flight', 'three-leg contact surrogate',
+                'learned sequence optimizer', 'two ignition branches',
+                'fixed engine-off settling continuation', 'final hybrid likelihood PPO',
+                'actual-executed-action prediction loss', 'original evaluation plus sampled terminal dwell']
+            manifest['belief_is_calibrated_probability'] = False
+            manifest['contact_parameters_identified'] = False
+            manifest['state_estimation_covariance_propagated'] = False
+            manifest['tail_is_safety_certificate'] = False
+'''
+    text = replace_once(text, marker, metadata+marker, 'accurate architecture metadata')
     return text
 
 
@@ -69,6 +102,11 @@ def patch_run(text):
     text = replace_once(text, "    if args.resume is not None:\n        config['resume'] = str(args.resume)\n",
         "    if args.resume is not None:\n        config.pop('initialize_from', None)\n        config['resume'] = str(args.resume)\n",
         'resume precedence')
+    if "    parent = package_path(config['parent'])\n" in text:
+        text = replace_once(text, "    parent = package_path(config['parent'])\n",
+            '    if args.total_transitions is not None:\n'
+            '        config.pop("additional_transitions", None)\n'
+            "    parent = package_path(config['parent'])\n", 'explicit total-budget override')
     return text
 
 
@@ -152,6 +190,7 @@ def prepare(repo: Path, out: Path) -> Path:
                'no_solver':dict(base,updates=256,rollout=32,ablation='no_solver'),
                'confidence_control':dict(base,architecture='confidence_sequence',updates=256,rollout=32)}
     for name, cfg in configs.items():
+        cfg['additional_transitions'] = cfg['updates'] * cfg['rollout'] * cfg['num_envs']
         (out/f'{name}.json').write_text(json.dumps(cfg,indent=2)+'\n')
     provenance = {'base_commit':BASE_COMMIT,'remote_training_has_run':False,
                   'reference_environment_archive_changed':False,
