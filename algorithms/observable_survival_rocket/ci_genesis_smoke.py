@@ -8,6 +8,7 @@ from pathlib import Path
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -32,9 +33,20 @@ def run(prepared: Path, evidence: Path):
                  '--config',str(config),'--out',str(output),'--skip-evaluation']
         env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
         with (evidence/'genesis_smoke.log').open('w') as log:
-            process=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,env=env,timeout=480)
-        if process.returncode:
-            raise RuntimeError(f'CPU smoke exited {process.returncode}; see genesis_smoke.log')
+            process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,
+                                     env=env,start_new_session=True)
+            try:
+                code=process.wait(timeout=480)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid,signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid,signal.SIGKILL)
+                    process.wait()
+                raise
+        if code:
+            raise RuntimeError(f'CPU smoke exited {code}; see genesis_smoke.log')
         training=json.loads((output/'status.json').read_text())
         manifest=json.loads((output/'manifest.json').read_text())
         if training.get('status')!='trained':
