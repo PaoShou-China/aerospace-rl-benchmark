@@ -89,7 +89,7 @@ ARMS = (('flash_residual', None), ('mlp', str(Path(__file__).resolve().parents[2
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     for arch, out_dir in ARMS:

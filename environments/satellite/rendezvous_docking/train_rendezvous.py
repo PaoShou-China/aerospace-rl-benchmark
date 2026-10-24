@@ -38,9 +38,7 @@ itself; see satellite/rendezvous_docking/env.py.
 Spawn distribution (2026-10-21): the 800-1200 m spawn makes the terminal
 "d<10 m and v<0.5 m/s" event too rare to bootstrap (0.8% success with the
 shared wide net) while the same CWH machinery reaches ~94% on docking at
-50-100 m. A success-rate-gated curriculum (150-300 m start, auto-widening to
-benchmark) was tried and later removed, and the static difficulty knob has
-been deleted outright; training runs directly at the benchmark spawn. The
+50-100 m; training runs directly at the benchmark spawn. The
 task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
 eval.py (no env kwargs) always evaluates the full 800-1200 m benchmark.
 
@@ -76,7 +74,7 @@ PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=.999, num_mini_batches=1,
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     run_training(TASK, SpaceRendezvousEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,

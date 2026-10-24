@@ -14,7 +14,7 @@ import argparse
 import json
 from pathlib import Path
 
-TASKS = ['quadx', 'fixedwing', 'rocket', 'satellite', 'transfer', 'docking', 'rendezvous']
+TASKS = ['quadx', 'fixedwing', 'rocket', 'missile', 'satellite', 'transfer', 'docking', 'rendezvous']
 
 
 def load(path):

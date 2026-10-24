@@ -29,44 +29,31 @@ there), these upstream behaviours are KEPT:
     identity-mapped ignition [-1,1] and dead-zoned throttle clamp are
     dropped.
 
-Reward (2026-10-22: the 2026-10-21 'v2' redesign is now the ONLY arm; the
-verbatim-upstream shaping was deleted after a full 1000-update run converged
-to a reward-farming local optimum on it -- hover on the pad axis farming the
-absolute holding term, fuel out at ~step 305, pad hit at ~40 m/s, success 0).
-Two of the upstream dense terms are replaced and the stay-airborne cost is
-raised (see the reward formula below for the 2026-10-22 rationale); the
-remaining terms are untouched:
-  * deceleration 4*(dvz+1)/exp(z)*sign(vz) is numerically dead above ~10 m
-    (the suicide burn must start at z ~150-300 m), pays free fall through the
-    +1 offset, and has a sign-flip cliff on bounce. Replaced by an
-    impact-speed potential  brake = KB*(Phi_prev - Phi),
-    Phi = sqrt(vz^2 + 2*9.81*z): the speed the booster would hit the pad with
-    if it braked at g from here -- at A_REF=g, Phi^2 IS the mechanical energy
-    per unit mass, so free fall conserves Phi exactly and pays zero (the real
-    usable net deceleration is ~17-46 m/s^2 with drag, so Phi overestimates
-    the danger; as a potential only the gradient direction matters).
-    Delta-Phi telescopes, is alive at every altitude, rewards braking and
-    descending alike, and has no sign-flip cliff.
-  * holding +0.3/(||p_xy||+0.1) is absolute and farmable by hovering on the
-    pad axis. Replaced by an off-axis cost -KR*||p_xy|| (non-farmable
-    centring pressure).
-  * terminal: the per-contact-step +5-0.3|vz| becomes a FIRST-touch-only
-    quality bonus TOUCH_BONUS*max(0, 1 - v_first) (continuous gradient on
-    touch speed, nothing to farm by sitting on the pad), and success
-    +3 -> SUCCESS_BONUS=+10 per inner step WHILE SETTLED on the pad: a
-    success no longer truncates -- the episode keeps running to the
-    1200-step time limit and the settled stream (up to 10*3600 inner steps)
-    dominates the dense shaping, so landing softly EARLY is strictly the
-    best action. This replaces the earlier +100 one-shot design.
-Every dense component is accumulated per replica and reported as
-Episode/rew_* tensorboard scalars plus run.json completed_metrics keys, so
-reward attribution is directly observable.
+Reward (2026-10-24 'v4': dense per-POLICY-step shaping replacing the v2
+potential design, which a 1000-update run farmed by minimum-speed descent
+on the brake potential -- brake +1238 of reward, pad_touch_rate 0). The v4
+coefficients come from a discounted-return analysis at dt=0.02 s, gamma
+0.995, B=5000; the policy rate is 60 Hz (dt 0.0167), the closest divisor of
+the 120 Hz control loop to the analysed 50 Hz, so the high-speed-dive bound
+k <= 0.25*60/u_max admits DESCENT_COEF=0.1 up to u=150 m/s:
+  r = -HOVER_COST                                time pressure, always
+      + HOLD_COEF/(||p_xy||+0.1)                 <= 0.05, cannot farm hover
+      + LATERAL_COEF*(d_xy_prev - d_xy)          telescoping pad approach
+      + DESCENT_COEF*(z_prev - z)                0.1: a pure dive stays
+                                                 net-negative to u<=150 m/s
+      + DECEL_COEF*(dvz+1)/e^z*sign(vz)          upstream decel term, 4->0.1
+      - YAW_COEF*|w_yaw| - TILT_COEF*||rpy_xy||
+      + contact: CONTACT_BASE - CONTACT_VEL_COEF*|vz| per step with any
+        pad contact (quasi-static settle nets ~+0.1..0.35/step)
+      + SUCCESS_BONUS once on first settle (5000 >> gamma*c/(1-gamma)~70,
+        so delaying a reachable success is never profitable)
+Success still does NOT truncate; the settled contact stream keeps paying.
 
-Unchanged port details: 40 Hz policy / 120 Hz control / 240 Hz physics, 1200
-policy steps (30 s) truncation, bounds ||p_xy||>200 or z>500, any non-pad
-contact or z<0 is fatal, obs = [body omega, quat, body v, p, action, aux(9),
-pad contact flag] (30 dims), 5% starting fuel, reignitable engine with the
-per-physics-step ignition>0.5 rule.
+Unchanged port details: 60 Hz policy / 120 Hz control / 240 Hz physics,
+1800 policy steps (30 s) truncation, bounds ||p_xy||>200 or z>500, any
+non-pad contact or z<0 is fatal, obs = [body omega, quat, body v, p,
+action, aux(9), pad contact flag] (30 dims), 5% starting fuel, reignitable
+engine with the per-physics-step ignition>0.5 rule.
 
 Success: pad contact with |v|<0.02, |omega|<0.02, tilt<0.1 (upstream values).
 """
@@ -78,39 +65,49 @@ from environments.common.dynamics import euler, inverse_rotate, quat_from_euler
 from algorithms.baselines.baselines import RocketPDGBaseline
 
 
-A_REF=9.81      # reference braking decel = g exactly: free fall conserves Phi (pays zero)
-KB=10.          # impact-speed potential gain (episode total caps ~ 10*Phi_spawn ~ 1350)
-KR=0.1          # off-axis cost per metre (replaces the farmable holding term)
-TOUCH_BONUS=50. # first-touch quality bonus 50*max(0,1-v_first)
-SUCCESS_BONUS=10.  # per-inner-step reward while settled on the pad (paid continuously)
+HOVER_COST=0.3      # per policy step, always (time pressure)
+HOLD_COEF=0.005     # holding reward HOLD_COEF/(||p_xy||+0.1), max 0.05 -- too
+                    # small to farm against the hover cost
+LATERAL_COEF=10.    # telescoping lateral progress toward the pad axis
+DESCENT_COEF=0.1    # descent progress (0.2 -> 0.1 by the dive analysis: a pure
+                    # vertical dive then stays net-negative up to 150 m/s)
+DECEL_COEF=0.1      # upstream deceleration term (dvz+1)/e^z*sign(vz), 4 -> 0.1
+YAW_COEF=0.5        # -YAW_COEF*|body yaw rate|
+TILT_COEF=0.5       # -TILT_COEF*||roll/pitch||
+CONTACT_BASE=0.5    # per policy step with any pad contact
+CONTACT_VEL_COEF=1. # -CONTACT_VEL_COEF*|vz| on contact steps
+SUCCESS_BONUS=5000. # one-shot on first settle-success (B >> gamma*c/(1-gamma))
+
+REWARD_KEYS=('hover','hold','lateral','descent','decel','attitude','contact','success')
 
 
-def rocket_shaping(position,previous_position,vel_z,previous_vel_z,rpy,body_omega,landed):
-    """Dense reward per inner step, returned as (total, per-component dict).
+def rocket_shaping(cfg,p,previous_position,vel_z,previous_vel_z,rpy,body_omega,
+                   contact,contact_vz,newly_complete):
+    """Dense reward per POLICY step, returned as (total, per-component dict).
 
-    vel_z is the WORLD-frame vertical velocity ("ground_lin_vel" upstream,
-    which their code computes as body-frame v rotated to world).
-
-    The holding and deceleration terms of the verbatim upstream shaping are
-    replaced (rationale in the module docstring) by an impact-speed potential
-    and an off-axis cost; the remaining terms are identical to upstream.
-    While `landed` (success already achieved, still on the pad) the stay-
-    airborne cost is waived: the episode keeps running to the 1200-step time
-    limit after success and the settled SUCCESS_BONUS stream takes over.
+    vel_z is the WORLD-frame vertical velocity. `contact` marks any pad
+    contact during this policy step, `contact_vz` the world descent speed at
+    the first contact inner step; `newly_complete` fires once per episode on
+    the settle-success event. All coefficients come from cfg (see the module
+    constants); computed once per policy step over the whole-step deltas.
     """
-    lateral_progress=previous_position[:,:2].norm(dim=-1)-position[:,:2].norm(dim=-1)
-    vertical_progress=previous_position[:,2]-position[:,2]
-    attitude=-body_omega[:,2].abs()-rpy[:,:2].square().sum(-1).sqrt()
-    airborne=torch.where(landed,torch.zeros_like(lateral_progress),
-                         torch.full_like(lateral_progress,-3.))
-    phi=(vel_z.square()+2.*A_REF*position[:,2]).clamp_min(0.).sqrt()
-    phi_prev=(previous_vel_z.square()+2.*A_REF*previous_position[:,2]).clamp_min(0.).sqrt()
-    brake=KB*(phi_prev-phi)
-    off_axis=-KR*position[:,:2].norm(dim=-1)
-    total=airborne+brake+10.*lateral_progress+off_axis+.2*vertical_progress+attitude
-    components={'airborne':airborne,'brake':brake,'lateral':10.*lateral_progress,
-                'off_axis':off_axis,'descent':.2*vertical_progress,'attitude':attitude}
-    return total,components
+    dxy=p[:,:2].norm(dim=-1)
+    dxy_prev=previous_position[:,:2].norm(dim=-1)
+    dvz=vel_z-previous_vel_z
+    decel=(dvz+1.)*torch.exp(-p[:,2].clamp_min(0.))*torch.where(vel_z<0.,1.,-1.)
+    comps={
+        'hover':torch.full_like(dxy,-cfg['hover']),
+        'hold':cfg['hold']/(dxy+0.1),
+        'lateral':cfg['lateral']*(dxy_prev-dxy),
+        'descent':cfg['descent']*(previous_position[:,2]-p[:,2]),
+        'decel':cfg['decel']*decel,
+        'attitude':-cfg['yaw']*body_omega[:,2].abs()-cfg['tilt']*rpy[:,:2].square().sum(-1).sqrt(),
+        'contact':torch.where(contact,cfg['contact_base']-cfg['contact_vel']*contact_vz.abs(),
+                              torch.zeros_like(dxy)),
+        'success':newly_complete.to(dxy.dtype)*cfg['success'],
+    }
+    total=sum(comps.values())
+    return total,comps
 
 
 class RocketLandingEnv:
@@ -125,15 +122,25 @@ class RocketLandingEnv:
     # PD (baselines.py; reuses the env's raw 7-dim action convention)
     conventional_controller=RocketPDGBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate'):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate',
+                 reward=None):
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'rocket','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
         self.clip_actions=1.0
+        # reward coefficients (module defaults; `reward` overrides per-key for
+        # the evolution sweep arms, recorded into cfg -> run.json)
+        self.reward_cfg=dict(hover=HOVER_COST,hold=HOLD_COEF,lateral=LATERAL_COEF,
+                             descent=DESCENT_COEF,decel=DECEL_COEF,yaw=YAW_COEF,
+                             tilt=TILT_COEF,contact_base=CONTACT_BASE,
+                             contact_vel=CONTACT_VEL_COEF,success=SUCCESS_BONUS)
+        if reward:self.reward_cfg.update(reward)
 
         self.plant=TensorPlant('rocket',num_envs,backend,seed)
         self.device=self.plant.device
-        self.agent_hz=40;self.inner_steps=120//self.agent_hz;self.max_steps=1200
+        # 60 Hz policy: the closest divisor of the 120 Hz control loop to the
+        # analysed 50 Hz (dt 0.0167 s); 1800 steps = 30 s episode
+        self.agent_hz=60;self.inner_steps=120//self.agent_hz;self.max_steps=1800
         self.max_episode_length=self.max_steps+2
         self.num_actions=7
         # Upstream action_space Box (rocket_base_env.py L85-107): finlet x/y/yaw
@@ -175,12 +182,12 @@ class RocketLandingEnv:
                                 'touch_tilt':torch.zeros_like(self.touch_speed)}
         # per-component reward accounting: Episode/rew_* tensorboard scalars and
         # run.json completed_metrics keys, so reward attribution is observable
-        keys=('airborne','brake','lateral','off_axis','descent','attitude','touch','success')
+        keys=REWARD_KEYS
         self.reward_components={k:torch.zeros(num_envs,device=self.device,dtype=torch.float64) for k in keys}
         for k in keys:self.completed_metrics[f'rew_{k}']=torch.zeros_like(self.touch_speed)
 
         self.extras=dict()
-        self.cfg=dict(self.task_cfg)
+        self.cfg=dict(self.task_cfg);self.cfg['reward']=dict(self.reward_cfg)
         self._init_wind(num_envs,seed,steady_wind,dryden,severity)
 
         self.reset()
@@ -216,9 +223,14 @@ class RocketLandingEnv:
         command=physical.clone()
         self.action.copy_(command)
         if self._wind is not None:self.plant.wind.copy_(self._wind.step())
-        self.reward.fill_(0.)
         self.touch_flag.fill_(False)
         self.count+=1
+        # policy-step snapshots for the per-policy-step reward deltas
+        p_start,_,v_start,_=self.plant.state()
+        p_start=p_start.clone();vz_start=v_start[:,2].clone()
+        complete_start=self.complete.clone()
+        contact_any=self.terminated.clone().fill_(False)
+        contact_vz=torch.zeros(self.num_envs,device=self.device,dtype=torch.float64)
         for _ in range(self.inner_steps):
             active=~(self.terminated|self.truncated)
             p0,q0,v0,w0=self.plant.state();vb0=inverse_rotate(q0,v0);wb0=inverse_rotate(q0,w0)
@@ -226,22 +238,13 @@ class RocketLandingEnv:
             self.plant.controller(command,active)
             for _ in range(2):self.plant.physics_step(command,active)
             p,rpy,v,wb,vb=self._observe(active)
-            timeout=self.count>=self.max_steps
             # Upstream compute_base_term_trunc_reward: any contact other than
             # (rocket, pad) is a fatal collision, as is dropping below ground.
             collision=self.plant.ground_contact|(p[:,2]<0)
             bounds=(p[:,:2].norm(dim=-1)>200)|(p[:,2]>500)
-            # landed mask from PREVIOUS inner steps: once a success has been
-            # achieved the episode keeps running to the time limit, the
-            # stay-airborne cost is waived and LANDED_BONUS is paid per step
-            landed=self.complete&active
-            shaping,comps=rocket_shaping(p,p0,v[:,2],v0[:,2],rpy,wb,landed)
-            reward=self.reward+shaping
-            for k in comps:self.reward_components[k]+=torch.where(active,comps[k],0.)
             touch=self.plant.pad_contact&active
             speed0=vb0.norm(dim=-1);spin0=wb0.norm(dim=-1);tilt0=rpy[:,:2].norm(dim=-1)
-            # Upstream L231-263: on a pad-contact step, pay +5-0.3|vz| (upstream)
-            # or a first-touch-only quality bonus (v2), then judge the PREVIOUS
+            # Upstream L231-263: on a pad-contact step judge the PREVIOUS
             # inner-step speed magnitude (= speed0/spin0 here, the state at the
             # start of this inner step): >1.0 m/s or >0.35 rad/s is fatal;
             # <0.02/<0.02 with tilt<0.1 is a landed success; anything in between
@@ -249,32 +252,27 @@ class RocketLandingEnv:
             fatal=collision|(touch&((speed0>1.)|(spin0>.35)))
             complete=touch&~fatal&(spin0<.02)&(speed0<.02)&(tilt0<.1)
             new_touch=touch&~self.touch_flag
-            # first-touch-only bonus, continuous in the touch speed
-            # (speed0 = pre-contact inner-step speed, the same value the
-            # fatal/settle judgement uses); unfarmable by sitting on the pad
-            touch_r=torch.where(new_touch,(TOUCH_BONUS*(1.-speed0)).clamp_min(0.),0.)
-            # success stream: +SUCCESS_BONUS per inner step while settled on
-            # the pad (complete stays true at rest; the episode runs to the
-            # time limit, so landing softly early maximizes this stream)
-            succ_r=complete.to(torch.float64)*SUCCESS_BONUS
-            reward+=touch_r
-            reward+=succ_r
-            self.reward_components['touch']+=torch.where(active,touch_r,0.)
-            self.reward_components['success']+=torch.where(active,succ_r,0.)
             self.touch_flag|=new_touch
             self.touch_speed.copy_(torch.where(new_touch,speed0,self.touch_speed))
             self.touch_ang_vel.copy_(torch.where(new_touch,spin0,self.touch_ang_vel))
             self.touch_tilt.copy_(torch.where(new_touch,tilt0,self.touch_tilt))
+            # per-policy-step contact bookkeeping: any contact while active,
+            # and the world descent speed at the FIRST contact inner step
+            contact_vz.copy_(torch.where(touch&~contact_any,v0[:,2],contact_vz))
+            contact_any|=touch
             self.complete|=complete&active;self.fatal_collision|=fatal&active
             self.obs_pad.copy_(torch.where(active,self.plant.pad_contact.to(torch.float64),self.obs_pad))
             term=fatal|bounds
-            # success does NOT truncate (2026-10-22): the rocket keeps earning
-            # the settled SUCCESS_BONUS stream until the 1200-step time limit
-            # below
+            # success does NOT truncate: the rocket keeps earning the settled
+            # contact stream until the time limit below
             trunc=torch.zeros_like(fatal)
-            self.reward.copy_(torch.where(active,reward,self.reward))
             self.terminated|=term&active;self.truncated|=trunc&active
             self.collision|=collision&active;self.out_of_bounds|=bounds&active
+        # one dense reward per POLICY step over the whole-step state deltas
+        shaping,comps=rocket_shaping(self.reward_cfg,p,p_start,v[:,2],vz_start,rpy,wb,
+                                     contact_any,contact_vz,self.complete&~complete_start)
+        self.reward.copy_(shaping)
+        for k in comps:self.reward_components[k]+=comps[k]
         # the time limit is applied AFTER the full control step (all physics
         # substeps) so the final control step is not cut short; accidents still
         # terminate inside the substep loop above. This is the ONLY truncation:
@@ -296,6 +294,11 @@ class RocketLandingEnv:
         self.completed_metrics['touch_ang_vel']+=torch.where(landed,self.touch_ang_vel,0.)
         self.completed_metrics['touch_tilt']+=torch.where(landed,self.touch_tilt,0.)
         done=self.reset_buf
+        # reward attribution at done: accumulate the per-episode component sums
+        for k,buf in self.reward_components.items():
+            self.completed_metrics[f'rew_{k}']+=torch.where(done,buf,0.)
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         self.extras['terminal_observations']=TensorDict(
@@ -324,7 +327,7 @@ class RocketLandingEnv:
         # unconditional); the gate reuses the already-synced done_any for cost
         if done_any:self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def get_observations(self):
         return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])

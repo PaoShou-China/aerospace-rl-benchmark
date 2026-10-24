@@ -135,7 +135,8 @@ def run_scenario(name, ic, controller_cls=RocketPDGBaseline):
     diag0 = {k: v.clone() for k, v in ctrl.diag.items()}
     for _ in range(STEPS):
         act = ctrl.actions(obs)
-        obs, _, reset_buf, _ = env.step(act)
+        obs, _, term, trunc, _ = env.step(act)
+        reset_buf = term | trunc
         ctrl.reset_idx(reset_buf)
         o = obs['policy'].to(torch.float64)
         thr, fuel = o[:, 26], o[:, 25]      # aux: 4 finlet act + ignited=24, fuel=25, throttle=26

@@ -1,8 +1,8 @@
-"""RSL-RL PPO training entry for the QuadX-Hover task (QuadXHoverEnv).
+"""RSL-RL PPO training entry for the QuadX-Waypoints task (QuadXWaypointsEnv).
 
-Crazyflie 2.x quadrotor station keeping on the Genesis rigid-body engine:
-hover at 1 m altitude for 400 policy steps (10 s) without ground contact or
-leaving the 3 m radius bound.
+Crazyflie 2.x quadrotor waypoint navigation on the Genesis rigid-body engine:
+reach a sequence of 4 waypoints sampled in a 5 m flight dome within 800 policy
+steps (20 s), without ground contact or leaving the dome.
 
 Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_quadx.py`.
@@ -14,11 +14,11 @@ dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[1]  # repo root
+_ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.multirotor import QuadXHoverEnv
+from environments.multirotor import QuadXWaypointsEnv
 
 TASK = 'quadx'
 NUM_ENVS = 1024          # Genesis hover tutorial uses 8192; kept at 1024 for hardware/wall time
@@ -48,10 +48,10 @@ WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before
 # PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
-    run_training(TASK, QuadXHoverEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
+    run_training(TASK, QuadXWaypointsEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
                  lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
                  entropy_coef=ENTROPY_COEF, init_std=INIT_STD,

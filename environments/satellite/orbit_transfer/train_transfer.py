@@ -54,7 +54,7 @@ PPO_OVERRIDES = {'gamma': 0.9999, 'lr_schedule': 'fixed', 'learning_rate': 2.5e-
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     run_training(TASK, LowThrustTransferEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,

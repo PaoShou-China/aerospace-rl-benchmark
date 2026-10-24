@@ -1,12 +1,27 @@
-"""QuadX-Hover original task in the official Genesis RL environment format.
+"""QuadX-Waypoints original task in the official Genesis RL environment format.
 
-Task: hover at the spawn point (0, 0, 1) for 400 agent steps. Failure
-(termination): ground contact or |p| > 3 m; success: surviving to the step
-limit without either (the original PyFlyt hover task defines no success
-condition, which would make the reported success rate structurally 0).
+Task: reach a sequence of 4 waypoints sampled in a 5 m flight dome (spawn at
+(0, 0, 1)). Failure (termination): ground contact or |p| > 5 m; success:
+reaching all waypoints before the 800-step (20 s) limit. Waypoint geometry
+follows the upstream PyFlyt QuadXWaypointsEnv (WaypointHandler): polar
+sampling with distance in [1, 0.9*dome] and a floor on target altitude;
+capture radius is the upstream goal_reach_distance = 0.2 m.
+
+Reward redesign (mirrors FixedwingWaypointsEnv, 2026-10-23): the upstream
+shaped reward (-0.1/step + clamp_min(0) progress + 0.1/d + 100 on reach /
+-100 on crash) pays infinite positive return for orbiting a waypoint without
+reaching it, and the terminal +-100 are unreachable by credit assignment in a
+400-step episode. It is replaced by potential-based telescoping shaping
+
+    Phi(s) = -(distance_to_current_target + sum of remaining path legs)
+
+which telescopes to the total path length flown successfully: progress pays
+its true value, orbiting nets exactly zero, and crashing/timeouts forfeit all
+unrealized potential. An explicit +15 per waypoint reached keeps a crisp
+sparse event; an explicit -10 sharpens crash/OOB.
 
 cfg dicts and buffers in __init__, step() returning
-(get_observations(), rew_buf, reset_buf, extras), get_observations() wrapping
+(get_observations(), rew_buf, terminated, truncated, extras), get_observations() wrapping
 self.obs_buf in a TensorDict under the 'policy' group, and reset_idx() for
 episodic bookkeeping. Rewards, terminations, observations and spawn
 distribution are task-local; physics/actuation live in common.plant.
@@ -18,25 +33,33 @@ from environments.common.plant import TensorPlant
 from environments.common.dynamics import euler, inverse_rotate, quat_from_euler
 from algorithms.baselines.baselines import QuadXSE3Baseline
 
+NUM_TARGETS = 4
+REACH_BONUS = 15.0
+CRASH_PENALTY = 10.0
+# Upstream PyFlyt goal_reach_distance default: the SE(3) baseline converges to
+# ~0.02-0.05 m steady error, so a 0.2 m capture sphere is comfortably
+# reachable for both scripted and learned policies.
+CAPTURE_RADIUS = 0.2
+# Waypoint shell: upstream WaypointHandler samples distance uniform in
+# [1, 0.9*dome] with dome = 5 m. Altitude floor: upstream uses 0.1 m, raised
+# to 0.4 m so a capture pass cannot clip the ground-contact termination.
+WAYPOINT_MIN_RADIUS = 1.0
+WAYPOINT_MAX_RADIUS = 4.5
+WAYPOINT_MIN_HEIGHT = 0.4
 
-def hover_shaping(position,rpy,body_omega):
-    delta=position.clone();delta[:,2]-=1
-    return 1-delta.norm(dim=-1)-rpy[:,:2].norm(dim=-1)-.01*body_omega[:,2].square()
 
-
-class QuadXHoverEnv:
+class QuadXWaypointsEnv:
     # Spawn-noise attrs are manual domain-randomization knobs (all zero in the
-    # benchmark, where no random numbers are drawn and the reset matches the
-    # legacy deterministic spawn exactly). Wind is optional via the
-    # steady_wind/dryden ctor kwargs; calm air reproduces the benchmark
-    # bit-for-bit.
+    # benchmark, where the only reset randomness is the waypoint draw). Wind is
+    # optional via the steady_wind/dryden ctor kwargs; calm air with a fixed
+    # seed reproduces a given waypoint layout bit-for-bit.
     spawn_xy_noise=0.        # spawn xy-offset radius [m] (manual DR knob)
     spawn_z_noise=0.         # spawn z-offset half-range [m] (manual DR knob)
     spawn_vel_noise=0.       # spawn |v0| per-axis half-range [m/s] (manual DR knob)
     spawn_att_noise=0.       # spawn per-axis euler half-range [rad] (manual DR knob)
-    bounds_radius=3.         # out-of-bounds radius [m]
-    # conventional controller: SE(3) geometric hover control, Lee et al. 2010
-    # (baselines.py; reuses the env's rate+collective action convention)
+    bounds_radius=5.         # out-of-bounds radius [m] (= flight dome)
+    # conventional controller: SE(3) geometric waypoint tracking, Lee et al.
+    # 2010 (baselines.py; reuses the env's rate+collective action convention)
     conventional_controller=QuadXSE3Baseline
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate'):
@@ -52,16 +75,15 @@ class QuadXHoverEnv:
         # correlated max-rate commands) can spin the quad to |w| in the hundreds
         # of rad/s and NaN the Genesis solver on propeller-ground impact
         # ("invalid accelerations"). Caps sit far above nominal trajectories
-        # (hover |v|<2 m/s, |w|<10 rad/s), so only already-unphysical crash
-        # states are affected. Disabled (None) unless this task opts in.
+        # (waypoint flight |v|<2 m/s, |w|<10 rad/s), so only already-unphysical
+        # crash states are affected. Disabled (None) unless this task opts in.
         self.plant=TensorPlant('quadx',num_envs,backend,seed,vel_clamp=(15.,30.))
         self.device=self.plant.device
-        self.agent_hz=40;self.inner_steps=120//self.agent_hz;self.max_steps=400
+        self.agent_hz=40;self.inner_steps=120//self.agent_hz;self.max_steps=800
         self.max_episode_length=self.max_steps+2
         self.num_actions=4
         self.action_low=torch.tensor([-math.pi,-math.pi,-math.pi,0.],device=self.device,dtype=torch.float64)
         self.action_high=torch.tensor([math.pi,math.pi,math.pi,.8],device=self.device,dtype=torch.float64)
-        self.hover_target=torch.tensor((0.,0.,1.),device=self.device,dtype=torch.float64)
 
         # initialize buffers
         self.action=torch.zeros((num_envs,self.num_actions),device=self.device,dtype=torch.float64)
@@ -71,6 +93,11 @@ class QuadXHoverEnv:
         self.truncated=self.terminated.clone()
         self.collision=self.terminated.clone();self.out_of_bounds=self.terminated.clone()
         self.complete=self.terminated.clone();self.fatal_collision=self.terminated.clone()
+        self.targets=torch.zeros((num_envs,NUM_TARGETS,3),device=self.device,dtype=torch.float64)
+        self.target_index=torch.zeros(num_envs,device=self.device,dtype=torch.long)
+        self.leg_suffix=torch.zeros((num_envs,NUM_TARGETS+1),device=self.device,dtype=torch.float64)
+        self.old_distance=torch.full((num_envs,),torch.inf,device=self.device,dtype=torch.float64)
+        self.new_distance=torch.full_like(self.old_distance,torch.inf)
         self._observation=None
         self.obs_buf=None
         self.rew_buf=torch.zeros(num_envs,device=self.device,dtype=torch.float32)
@@ -80,8 +107,10 @@ class QuadXHoverEnv:
         self.completed_returns=torch.zeros_like(self.returns)
         self.completed_episodes=torch.zeros_like(self.episode_length_buf)
         self.completed_successes=torch.zeros_like(self.episode_length_buf)
-        self.completed_metrics={'terminal_pos_err_m':torch.zeros_like(self.returns),
-                                'terminal_att_err_rad':torch.zeros_like(self.returns)}
+        self.completed_metrics={'waypoints_reached':torch.zeros((),device=self.device,dtype=torch.float64),
+                                'crashes':torch.zeros((),device=self.device,dtype=torch.float64),
+                                'out_of_bounds':torch.zeros((),device=self.device,dtype=torch.float64),
+                                'timeouts':torch.zeros((),device=self.device,dtype=torch.float64)}
 
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
@@ -109,34 +138,54 @@ class QuadXHoverEnv:
         raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
         return self.action_low+(raw+1)*.5*(self.action_high-self.action_low)
 
+    @property
+    def current_target(self):
+        """The active waypoint (n, 3); the last one once all are reached."""
+        indices=self.target_index.clamp_max(NUM_TARGETS-1)[:,None,None].expand(-1,-1,3)
+        return self.targets.gather(1,indices)[:,0]
+
+    def _potential(self):
+        """Phi = -(distance to current target + remaining path legs); 0 when complete."""
+        p=self.plant.drone.get_pos().to(torch.float64)
+        slots=torch.arange(NUM_TARGETS,device=self.device)[None]+self.target_index[:,None]
+        valid=slots<NUM_TARGETS;indices=slots.clamp_max(NUM_TARGETS-1)
+        targets=self.targets.gather(1,indices[:,:,None].expand(-1,-1,3))
+        d=(targets[:,0]-p).norm(dim=-1)*valid[:,0].to(torch.float64)
+        return -(d+self.leg_suffix.gather(1,self.target_index[:,None]).squeeze(1))
+
     def step(self,actions):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
         physical=self._scale_actions(actions)
         self.action.copy_(physical)
-        command=physical.clone()
         if self._wind is not None:self.plant.wind.copy_(self._wind.step())
-        self.reward.fill_(-.1)
+        old_potential=self._potential()
         self.count+=1
+        crash=torch.zeros_like(self.terminated)
+        reach_count=torch.zeros(self.num_envs,device=self.device,dtype=torch.float64)
         for _ in range(self.inner_steps):
             active=~(self.terminated|self.truncated)
             self.plant.clear_contacts()
-            self.plant.controller(command,active)
-            for _ in range(2):self.plant.physics_step(command,active)
+            self.plant.controller(physical,active)
+            for _ in range(2):self.plant.physics_step(physical,active)
             p,rpy,v,wb,vb=self._observe(active)
             collision=self.plant.ground_contact;bounds=p.norm(dim=-1)>self.bounds_radius
-            reward=torch.where(collision|bounds,-100.,self.reward)+hover_shaping(p,rpy,wb)
-            term=collision|bounds
-            self.reward.copy_(torch.where(active,reward,self.reward))
-            self.terminated|=term&active
+            reached=self.new_distance<CAPTURE_RADIUS
+            self.target_index+=(reached&active).to(torch.long)
+            complete=self.target_index>=NUM_TARGETS
+            term=collision|bounds;trunc=complete
+            crash|=term&active
+            reach_count+=(reached&active).to(torch.float64)
+            self.terminated|=term&active;self.truncated|=trunc&active
             self.collision|=collision&active;self.out_of_bounds|=bounds&active
+            self.complete|=complete&active
         # the time limit is applied AFTER the full control step (all physics
-        # substeps) so the final control step is not cut short; accidents still
-        # terminate inside the substep loop above
+        # substeps) so the final control step is not cut short; accidents and
+        # waypoint completion still terminate inside the substep loop above
         active=~(self.terminated|self.truncated)
-        timeout=(self.count>=self.max_steps)&active
-        self.truncated|=timeout
-        self.complete|=timeout&~self.collision&~self.out_of_bounds
+        self.truncated|=(self.count>=self.max_steps)&active
+        # potential-based telescoping reward: progress + reach bonus - crash penalty
+        self.reward.copy_(self._potential()-old_potential+REACH_BONUS*reach_count-CRASH_PENALTY*crash.to(torch.float64))
 
         self.reset_buf=self.terminated|self.truncated
         # update buffers
@@ -147,27 +196,32 @@ class QuadXHoverEnv:
         self.completed_episodes+=self.reset_buf.to(torch.long)
         self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
         done=self.reset_buf
-        n_done=done.sum().clamp_min(1)
-        pos_err=torch.where(done,(p-self.hover_target).norm(dim=-1),0.)
-        att_err=torch.where(done,rpy[:,:2].norm(dim=-1),0.)
-        self.completed_metrics['terminal_pos_err_m']+=pos_err
-        self.completed_metrics['terminal_att_err_rad']+=att_err
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
-        # 'complete' marks eval success (survived to the limit) -- it is NOT an
-        # MDP termination. Normal step-limit expiry must stay a timeout so
-        # FlashSAC bootstraps from it; only true terminations (crash /
-        # out-of-bounds) cut the bootstrap.
-        self.extras['time_outs']=self.truncated&~self.terminated
+        # 'complete' marks eval success (all waypoints reached) -- it is NOT an
+        # MDP termination in the bootstrap sense; reaching the last waypoint
+        # ends the episode as a truncation so FlashSAC bootstraps from it, only
+        # true terminations (crash / out-of-bounds) cut the bootstrap.
+        self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         self.extras['terminal_observations']=TensorDict(
             {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
         # single host sync per agent step (done == reset_buf; the same bool
         # gates both the episode extras and the reset path)
         done_any=bool(done.any())
         if done_any:
-            self.extras['episode']={
-                'success_rate':(done&self.complete).to(torch.float64).sum()/n_done,
-                'terminal_pos_err_m':pos_err.sum()/n_done,
-                'terminal_att_err_rad':att_err.sum()/n_done}
+            n=done.sum().clamp_min(1)
+            crashes=done&self.collision;oob=done&self.out_of_bounds
+            timeouts=done&self.truncated&~self.complete
+            self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/n,
+                                    'waypoints_reached':self.target_index[done].to(torch.float64).mean(),
+                                    'crash_rate':crashes.to(torch.float64).sum()/n,
+                                    'out_of_bounds_rate':oob.to(torch.float64).sum()/n,
+                                    'timeout_rate':timeouts.to(torch.float64).sum()/n}
+            self.completed_metrics['waypoints_reached']+=self.target_index[done].to(torch.float64).sum()
+            self.completed_metrics['crashes']+=crashes.to(torch.float64).sum()
+            self.completed_metrics['out_of_bounds']+=oob.to(torch.float64).sum()
+            self.completed_metrics['timeouts']+=timeouts.to(torch.float64).sum()
         else:
             self.extras.pop('episode',None)
 
@@ -176,7 +230,7 @@ class QuadXHoverEnv:
         # already-synced done_any is purely a cost guard, not a correctness one.
         if done_any:self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def get_observations(self):
         return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
@@ -184,9 +238,17 @@ class QuadXHoverEnv:
     def _observe(self,mask):
         p,q,v,w=self.plant.state()
         rpy=euler(q);wb=inverse_rotate(q,w);vb=inverse_rotate(q,v)
+        slots=torch.arange(NUM_TARGETS,device=self.device)[None]+self.target_index[:,None]
+        valid=slots<NUM_TARGETS;indices=slots.clamp_max(NUM_TARGETS-1)
+        targets=self.targets.gather(1,indices[:,:,None].expand(-1,-1,3))
+        delta=inverse_rotate(q[:,None,:].expand(-1,NUM_TARGETS,-1),targets-p[:,None,:])*valid[:,:,None]
+        distance=delta[:,0].norm(dim=-1)
+        self.old_distance.copy_(torch.where(mask,self.new_distance,self.old_distance))
+        self.new_distance.copy_(torch.where(mask,distance,self.new_distance))
         attitude=torch.cat((wb,q[:,1:],q[:,:1],vb,p,self.action,self.plant.auxiliary()),-1)
-        if self._observation is None:self._observation=attitude.clone()
-        else:self._observation.copy_(torch.where(mask[:,None],attitude,self._observation))
+        observation=torch.cat((attitude,delta.flatten(1),valid.to(torch.float64)),-1)
+        if self._observation is None:self._observation=observation.clone()
+        else:self._observation.copy_(torch.where(mask[:,None],observation,self._observation))
         return p,rpy,v,wb,vb
 
     def _update_observation(self):
@@ -202,8 +264,7 @@ class QuadXHoverEnv:
         rotation=torch.zeros_like(q);rotation[:,0]=1
         velocity=torch.zeros_like(v);omega=torch.zeros_like(w)
         # spawn noise attrs are manual domain-randomization knobs (all zero in
-        # the benchmark, where no random numbers are drawn and the reset
-        # matches the legacy deterministic spawn exactly)
+        # the benchmark); the waypoint draw below is the only reset randomness
         if self.spawn_xy_noise>0. or self.spawn_z_noise>0.:
             u=self.plant.rng.uniform(3,mask)
             rad=self.spawn_xy_noise*u[:,0];ang=2*math.pi*u[:,1]
@@ -224,6 +285,20 @@ class QuadXHoverEnv:
         self.complete.masked_fill_(mask,False);self.fatal_collision.masked_fill_(mask,False)
         self.action.masked_fill_(mask[:,None],0)
         self.plant.zero(mask)
+        # upstream WaypointHandler polar sampling: distance in [1, 0.9*dome],
+        # altitude |r cos(phi)| floored at WAYPOINT_MIN_HEIGHT
+        theta=self.plant.rng.uniform(NUM_TARGETS,mask)*2*math.pi
+        phi=self.plant.rng.uniform(NUM_TARGETS,mask)*2*math.pi
+        radius=WAYPOINT_MIN_RADIUS+self.plant.rng.uniform(NUM_TARGETS,mask)*(WAYPOINT_MAX_RADIUS-WAYPOINT_MIN_RADIUS)
+        targets=torch.stack((radius*torch.sin(phi)*torch.cos(theta),radius*torch.sin(phi)*torch.sin(theta),
+                             (radius*torch.cos(phi)).abs().clamp_min(WAYPOINT_MIN_HEIGHT)),-1)
+        self.targets.copy_(torch.where(mask[:,None,None],targets,self.targets))
+        legs=(self.targets[:,1:]-self.targets[:,:-1]).norm(dim=-1)
+        ext=torch.cat((legs,torch.zeros((self.num_envs,2),device=self.device,dtype=torch.float64)),-1)
+        suffix=ext.flip(-1).cumsum(-1).flip(-1)
+        self.leg_suffix.copy_(torch.where(mask[:,None],suffix,self.leg_suffix))
+        self.target_index.masked_fill_(mask,0)
+        self.old_distance.masked_fill_(mask,torch.inf);self.new_distance.masked_fill_(mask,torch.inf)
         self.plant.warmup(mask)
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)

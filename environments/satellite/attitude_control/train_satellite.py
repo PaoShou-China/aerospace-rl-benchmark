@@ -31,7 +31,7 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/fla
 # 2026-10-22 warm-start refinement (run-9): the archived BC+DAgger checkpoint
 # (results/satellite, seed-7 1024-env run) re-evaluates at 94.8% deterministic
 # on the benchmark (results/satellite/eval.json) -- far above every pure-RL
-# from-scratch attempt (17.4% benchmark; curriculum run 5.5%, stalled at d=0.5,
+# from-scratch attempt (17.4% benchmark,
 # archived as results/satellite_rl_benchmark_20261022). Refine it with the
 # gate-proven run-8 recipe: sigma pinned 0.1, lr = 1.5e-4 * sigma (constant
 # mean-update drift K), obs normalizers frozen (the warm start fitted them),
@@ -162,7 +162,7 @@ LR_SCHEDULE = 'fixed'
 #   (gamma^300), leaving no gradient toward capture.
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     run_training(TASK, SatelliteAttitudeEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,

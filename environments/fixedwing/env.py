@@ -180,6 +180,8 @@ class FixedwingWaypointsEnv:
         self.completed_episodes+=self.reset_buf.to(torch.long)
         self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
         done=self.reset_buf
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         self.extras['terminal_observations']=TensorDict(
@@ -214,7 +216,7 @@ class FixedwingWaypointsEnv:
         if done_any:
             self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def get_observations(self):
         return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])

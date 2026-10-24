@@ -1,6 +1,6 @@
 """Deterministic evaluation of a trained RSL-RL checkpoint on the batched GPU envs.
 
-Usage: python eval.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous
+Usage: python eval.py quadx|fixedwing|rocket|missile|satellite|transfer|docking|rendezvous
 Defaults: 1024 envs on GPU, seed 7, frozen deterministic policy (mean action,
 no exploration noise). The env configuration used at training time
 (env_kwargs) is restored from results/<task>/config.json.
@@ -20,16 +20,20 @@ _ROOT = Path(__file__).resolve().parents[1]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import torch
+
+from algorithms.train_utils import RslVecEnv
 from rsl_rl.runners import OnPolicyRunner
 
-from environments.multirotor import QuadXHoverEnv
+from environments.multirotor import QuadXWaypointsEnv
 from environments.fixedwing import FixedwingWaypointsEnv
 from environments.rocket import RocketLandingEnv
+from environments.missile import MissileInterceptEnv
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
 from environments.satellite.orbit_transfer import LowThrustTransferEnv
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
-ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+ENVS = {'quadx': QuadXWaypointsEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+        'missile': MissileInterceptEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
         'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
 
@@ -61,7 +65,7 @@ def main():
         runner.load(str(ckpt))
         policy = runner.deterministic_action
     else:
-        runner = OnPolicyRunner(env, cfg, log_dir='/tmp/eval_tb', device=str(env.device))
+        runner = OnPolicyRunner(RslVecEnv(env), cfg, log_dir='/tmp/eval_tb', device=str(env.device))
         runner.load(str(ckpt))
         actor = runner.alg.actor.eval()
         policy = actor
@@ -76,7 +80,7 @@ def main():
     with torch.no_grad():
         while steps < args.max_steps:
             actions = policy(obs)
-            obs, _, _, _ = env.step(actions)
+            obs, _, _, _, _ = env.step(actions)
             steps += 1
             if float((env.completed_episodes - ep0).sum()) >= target:
                 break

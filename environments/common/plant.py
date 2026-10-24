@@ -20,14 +20,32 @@ def rotate(q,v):
     return inverse_rotate(torch.cat((q[...,:1],-q[...,1:]),-1),v)
 
 
+def _mix32(x):
+    """32-bit avalanche finalizer (murmur3 fmix32); bijective modulo 2**32."""
+    x=(x^(x>>16))&0xffffffff
+    x=(x*0x85ebca6b)&0xffffffff
+    x=(x^(x>>13))&0xffffffff
+    x=(x*0xc2b2ae35)&0xffffffff
+    return x^(x>>16)
+
+
 class TensorRandom:
     """Independent per-replica counter streams; RNG state also lives on device.
 
     Distribution-compatible with upstream, not NumPy PCG64 bitstream-compatible.
     Masked resets/steps do not consume random numbers in another replica.
+
+    Replica streams are keyed by mix32(base_seed ^ (i*GOLDEN)), not by
+    base_seed+i. The contiguous form made base seed s+1 hand replica i the
+    exact stream of replica i+1 under seed s, so two adjacent seeds sampled a
+    1024-stream population that overlapped in 1023 of 1024 replicas (and the
+    whole batch was a permutation of the previous one, hence identical
+    aggregate metrics). Hashing the (base_seed, replica) pair makes every
+    (seed, replica) stream distinct and breaks that shift relation.
     """
     def __init__(self,n,device,seed):
-        self.seed=torch.arange(n,device=device,dtype=torch.int64)+seed
+        i=torch.arange(n,device=device,dtype=torch.int64)
+        self.seed=_mix32((int(seed)&0xffffffff)^((i*0x9e3779b1)&0xffffffff))
         self.counter=torch.zeros(n,device=device,dtype=torch.int64)
     def uniform(self,width,mask):
         k=self.counter[:,None]+torch.arange(width,device=mask.device,dtype=torch.int64)
@@ -64,7 +82,7 @@ class TensorRatePID:
 
 class TensorPlant:
     def __init__(self,vehicle,n,backend='cpu',seed=7,vel_clamp=None):
-        if vehicle not in ('quadx','fixedwing','rocket'):raise ValueError(vehicle)
+        if vehicle not in ('quadx','fixedwing','rocket','missile'):raise ValueError(vehicle)
         if n<1:raise ValueError('n must be positive')
         self.vehicle=vehicle;self.n=n
         # Optional solver guard (None = disabled): cap world speed and body spin
@@ -80,23 +98,33 @@ class TensorPlant:
         with engine_configuration(backend):self._geometry=ConfiguredBulletClient()
         c=self._geometry;c._num_envs=n;c.resetSimulation()
         self.ground_id=c.loadURDF('plane.urdf',useFixedBase=True)
-        model={'quadx':'cf2x','fixedwing':'fixedwing','rocket':'rocket'}[vehicle]
+        model={'quadx':'cf2x','fixedwing':'fixedwing','rocket':'rocket','missile':'missile'}[vehicle]
         source=Path(__file__).parent/'original_pyflyt/models/vehicles'/model
         self.params=yaml.safe_load((source/f'{model}.yaml').read_text())
-        self.body_id=c.loadURDF(str(source/f'{model}.urdf'),basePosition=(0,0,1 if vehicle=='quadx' else 10 if vehicle=='fixedwing' else 450))
-        c._build()
-        self.pad=None
+        self.body_id=c.loadURDF(str(source/f'{model}.urdf'),basePosition=(0,0,1 if vehicle=='quadx' else 10 if vehicle=='fixedwing' else 4000 if vehicle=='missile' else 450))
+        self.pad=None;self.target=None
         if vehicle=='rocket':
             pad=Path(__file__).parent/'original_pyflyt/models/landing_pad.urdf'
             self.pad_id=c.loadURDF(str(pad),basePosition=(0,0,.1),useFixedBase=True)
             self.pad=c._bodies[self.pad_id]['entity']
+        if vehicle=='missile':
+            # Kinematic engagement target: pure visual entity (collision=False),
+            # its state is overwritten every physics step from the env's
+            # analytic 3-DOF buffers, exactly like the pause-restore pattern.
+            # Loaded before c._build() like every other scene body.
+            from .consistency import verify_missile_assets
+            verify_missile_assets()
+            tgt=Path(__file__).parent/'original_pyflyt/models/target.urdf'
+            self.target_id=c.loadURDF(str(tgt),basePosition=(0,0,4500),collision=False)
+            self.target=c._bodies[self.target_id]['entity']
+        c._build()
         self.scene=c._scene;self.drone=c._bodies[self.body_id]['entity'];self.ground=c._bodies[0]['entity']
         self.device=gs.device;self.dtype=torch.float64;d=self.device
         self.links={link.name:link.idx_local for link in self.drone.links}
         self.force=torch.zeros((n,self.drone.n_links,3),device=d,dtype=torch.float64)
         self.torque=torch.zeros_like(self.force)
         self.rng=TensorRandom(n,d,seed)
-        self.command_width={'quadx':4,'fixedwing':4,'rocket':7}[vehicle]
+        self.command_width={'quadx':4,'fixedwing':4,'rocket':7,'missile':3}[vehicle]
         self.physics_steps=0
         # world-frame wind velocity (n,3) float64; None = calm air. Aerodynamic
         # terms (lifting surfaces, quadx body drag, rocket body drag) evaluate
@@ -120,6 +148,11 @@ class TensorPlant:
                 names=['ail_left_link','ail_right_link','horizontal_tail_link','vertical_tail_link','main_wing_link']
                 keys=['left_wing_flapped_params','right_wing_flapped_params','horizontal_tail_params','vertical_tail_params','main_wing_params']
                 lifts=[[0,0,1],[0,0,1],[0,0,1],[0,1,0],[0,0,1]];forwards=[[1,0,0]]*5
+            elif vehicle=='missile':
+                # Cross tail: +-y fins (lift axis z) -> pitch/roll, +-z fins
+                # (lift axis y) -> yaw/roll; nose along +x like fixedwing.
+                names=['fin_left','fin_right','fin_top','fin_bottom'];keys=['fin_params']*4
+                lifts=[[0,0,1],[0,0,1],[0,1,0],[0,1,0]];forwards=[[1,0,0]]*4
             else:
                 # Upstream finlet_map (core/drones/rocket.py L152-159) maps
                 # (finlet_x, finlet_y, finlet_yaw) onto FOUR URDF fin links:
@@ -138,7 +171,7 @@ class TensorPlant:
             if vehicle=='fixedwing':
                 self.fixed_index=torch.tensor([0,0,1,1,2],device=d,dtype=torch.long)
                 self.fixed_sign=torch.tensor([1,-1,1,-1,0],device=d,dtype=torch.float64)
-            else:
+            elif vehicle=='rocket':
                 from .consistency import inertial_basis
                 self.fuel=torch.full((n,),.05,device=d,dtype=torch.float64)
                 self.ignited=torch.zeros(n,device=d,dtype=torch.bool)
@@ -148,6 +181,25 @@ class TensorPlant:
                 self.fuel_inertia=torch.tensor([self.params['booster_params'][f'inertia_i{x}{x}'] for x in 'xyz'],device=d,dtype=torch.float64)
                 body=self.params['body_params']
                 self.body_drag_constant=torch.tensor([.5*1.225*body[f'drag_coef_{x}']*body[f'area_{x}'] for x in 'xyz'],device=d,dtype=torch.float64)
+                self.drag_id=self.links['base_link']
+            else:
+                # missile: boost-coast engine + rate-PID steering (TensorRatePID
+                # on body rates, fin_cmd = normalized (roll, pitch, yaw) surface
+                # command). No fuel/throttle channel -- the burn clock below is
+                # the only propulsion state.
+                self.pid=TensorRatePID(self.params['control_params']['ang_vel'],n,d)
+                self.ignited=torch.zeros(n,device=d,dtype=torch.bool)
+                self.burn_clock=torch.zeros(n,device=d,dtype=torch.float64)
+                self.fin_cmd=torch.zeros((n,3),device=d,dtype=torch.float64)
+                b=self.params['boost_params'];body=self.params['body_params']
+                self.max_thrust=torch.tensor(b['max_thrust'],device=d,dtype=torch.float64)
+                self.burn_time=torch.tensor(b['burn_time'],device=d,dtype=torch.float64)
+                self.boost_noise_ratio=torch.tensor(b['noise_ratio'],device=d,dtype=torch.float64)
+                self.body_drag_constant=torch.tensor(.5*1.225*body['drag_coef_x']*body['area_x'],device=d,dtype=torch.float64)
+                self.cn_k=torch.tensor(.5*1.225*body['area_x']*body['cn_alpha'],device=d,dtype=torch.float64)
+                self.cp_x=torch.tensor(body['cp_offset_x'],device=d,dtype=torch.float64)
+                self.cmq_coef=torch.tensor(body['cmq_coef'],device=d,dtype=torch.float64)
+                self.roll_gear=torch.tensor(self.params['control_params']['roll_gear'],device=d,dtype=torch.float64)
                 self.drag_id=self.links['base_link']
 
     def state(self):
@@ -173,11 +225,18 @@ class TensorPlant:
             add=(lo-low)/(hi-low)*(hi-mixed);sub=(high-hi)/(high-lo)*(mixed-lo)
             pwm=torch.where(high!=low,mixed+add-sub,mixed).clamp(.05,1)
             self.pwm.copy_(torch.where(mask[:,None],pwm,self.pwm))
+        elif self.vehicle=='missile':
+            # Rate command -> normalized (roll, pitch, yaw) fin command; the
+            # skid-to-turn mixer expands it onto the four tail fins in
+            # physics_step.
+            _,q,_,w=self.state();rates=inverse_rotate(q,w)
+            fin_cmd=self.pid.step(rates,command[:,:3],mask)
+            self.fin_cmd.copy_(torch.where(mask[:,None],fin_cmd,self.fin_cmd))
 
     def clear_contacts(self):
         self.ground_contact.zero_();self.pad_contact.zero_()
 
-    def physics_step(self,command,mask):
+    def physics_step(self,command,mask,target_state=None):
         p,q,v,w=self.state();vb=inverse_rotate(q,v);wb=inverse_rotate(q,w)
         self.force.zero_();self.torque.zero_()
         if self.vehicle in ('quadx','fixedwing'):
@@ -198,6 +257,18 @@ class TensorPlant:
         else:
             if self.vehicle=='fixedwing':
                 cmd=command.index_select(1,self.fixed_index)*self.fixed_sign
+            elif self.vehicle=='missile':
+                # skid-to-turn mixer. Torque signs from the fin geometry
+                # (nose +x, y-fins: lift z at y=+-0.13, z-fins: lift y at
+                # z=+-0.13, all at x=-1.3 behind the CG):
+                #   pitch: tau_y = +1.3*(F_left+F_right)
+                #   yaw:   tau_z = -1.3*(F_top+F_bottom)  -> yaw channel negated
+                #   roll:  tau_x = +0.13*(F_left-F_right) - 0.13*(F_top-F_bottom)
+                #          -> the z-fin pair carries the ROLLED-BACK differential
+                # order matches surface_ids [fin_left,fin_right,fin_top,fin_bottom]
+                roll,pitch,yaw=self.fin_cmd.unbind(-1)
+                g=self.roll_gear
+                cmd=torch.stack((pitch+g*roll,pitch-g*roll,-yaw-g*roll,-yaw+g*roll),-1).clamp(-1,1)
             else:
                 a=command;cmd=torch.stack((a[:,1]+a[:,2],a[:,1]-a[:,2],a[:,0]-a[:,2],a[:,0]+a[:,2]),-1).clamp(-1,1)
             previous=self.surfaces.actuation.clone()
@@ -208,6 +279,39 @@ class TensorPlant:
                 m=self.params['motor_params'];thrust=self.throttle[:,0].abs()*self.throttle[:,0]*m['total_thrust']
                 self.force[:,self.links['motor_link'],0]=thrust
                 self.torque[:,self.links['motor_link'],0]=thrust*m['torque_coef']/m['thrust_coef']
+            elif self.vehicle=='missile':
+                # Axial body drag (rocket-style), then the slender-body normal
+                # force F = -0.5*rho*|v|*A*Cn*v_lat applied at the aft CP:
+                # it is both the turning force and the weathercock restoring
+                # moment (tau = r x F with r = (cp_x, 0, 0)).
+                # Boost-coast engine: ignites on the first active physics step
+                # and burns along body +x until burn_time elapses. One normal
+                # sample per physics step regardless of burn state (RNG count
+                # invariant).
+                vel=self._air_velocity([self.drag_id],q)[:,0]
+                self.force[:,self.drag_id,0]-=self.body_drag_constant*vel[:,0].abs()*vel[:,0]
+                k=self.cn_k*vel.norm(dim=-1)
+                # Transverse flow at the CP includes the rotational contribution
+                # (v_cp = v_cg + omega x r, r = (cp_x,0,0)), which turns the
+                # slender-body force into BOTH the weathercock restoring moment
+                # AND a rotational damping moment (-k*|v|*cp_x^2 * omega_lat).
+                # Without the omega term the pitch/yaw channels are undamped
+                # oscillators (verified open-loop: constant full-fin deflection
+                # produced a sustained ~0.6 s-period limit cycle).
+                fy=-k*(vel[:,1]+self.cp_x*wb[:,2])
+                fz=-k*(vel[:,2]-self.cp_x*wb[:,1])
+                # Cmq-style synthetic pitch/yaw damping (see missile.yaml).
+                cmq=self.cmq_coef*vel.norm(dim=-1)
+                self.force[:,self.drag_id,1]+=fy
+                self.force[:,self.drag_id,2]+=fz
+                self.torque[:,self.drag_id,1]+=(-self.cp_x)*fz-cmq*wb[:,1]
+                self.torque[:,self.drag_id,2]+=self.cp_x*fy-cmq*wb[:,2]
+                self.ignited.copy_(torch.where(mask,self.ignited|mask,self.ignited))
+                noise=self.rng.normal(mask,1)
+                burning=self.ignited&(self.burn_clock<self.burn_time)
+                thrust=self.max_thrust*(1.+self.boost_noise_ratio*noise)*burning.to(torch.float64)
+                self.force[:,self.drag_id,0]+=thrust
+                self.burn_clock.copy_(torch.where(mask,self.burn_clock+1/240,self.burn_clock))
             else:
                 b=self.params['booster_params'];body=self.params['body_params']
                 # Upstream body drag acts on body_ids=[0] == base_link
@@ -248,6 +352,14 @@ class TensorPlant:
             cv=cv*(v_cap/cv.norm(dim=-1,keepdim=True).clamp_min(v_cap))
             cw=cw*(w_cap/cw.norm(dim=-1,keepdim=True).clamp_min(w_cap))
             self.drone.set_dofs_velocity(torch.cat((cv,inverse_rotate(self.drone.get_quat().to(torch.float64),cw)),-1).to(gs.tc_float))
+        if target_state is not None and self.target is not None:
+            # Kinematic engagement target (missile): overwrite the visual
+            # entity's state from the env's analytic 3-DOF buffers before the
+            # solver runs (pause-restore pattern; collision=False, no forces).
+            tp,tq,tv,tw=target_state
+            self.target.set_pos(tp.to(gs.tc_float),zero_velocity=False)
+            self.target.set_quat(tq.to(gs.tc_float),zero_velocity=False)
+            self.target.set_dofs_velocity(torch.cat((tv,inverse_rotate(tq,tw)),-1).to(gs.tc_float))
         self.scene.step(update_visualizer=False,refresh_visualizer=False)
         self.physics_steps+=1
         ground=self.drone.get_contacts(with_entity=self.ground,is_padded=True)['valid_mask'].any(-1)
@@ -268,6 +380,11 @@ class TensorPlant:
     def auxiliary(self):
         if self.vehicle=='quadx':return self.throttle
         if self.vehicle=='fixedwing':return torch.cat((self.surfaces.actuation,self.throttle),-1)
+        if self.vehicle=='missile':
+            burn_left=(self.burn_time-self.burn_clock).clamp_min(0.)/self.burn_time
+            burning=(self.ignited&(self.burn_clock<self.burn_time)).to(torch.float64)
+            return torch.cat((self.surfaces.actuation,self.ignited[:,None].to(torch.float64),
+                              burning[:,None],burn_left[:,None]),-1)
         return torch.cat((self.surfaces.actuation,self.ignited[:,None].to(torch.float64),self.fuel[:,None],self.throttle,self.gimbal),-1)
 
     def zero(self,mask):
@@ -278,6 +395,11 @@ class TensorPlant:
         self.throttle.masked_fill_(mask[:,None],0)
         if self.vehicle=='quadx':
             self.pid.reset(mask);self.pwm.masked_fill_(mask[:,None],0)
+        elif self.vehicle=='missile':
+            self.pid.reset(mask);self.surfaces.actuation.masked_fill_(mask[:,None],0)
+            self.ignited.masked_fill_(mask,False)
+            self.burn_clock.masked_fill_(mask,0)
+            self.fin_cmd.masked_fill_(mask[:,None],0)
         else:
             self.surfaces.actuation.masked_fill_(mask[:,None],0)
             if self.vehicle=='rocket':

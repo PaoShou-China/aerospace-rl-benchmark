@@ -91,7 +91,8 @@ def run_condition(name, num_envs, steps, d0=None, v0=None, first_only=False, see
         fuel_acc += tnorm * env.dt / (env.isp * env.g0)
         sat_acc += (a.abs() >= 1. - 1e-6).any(-1).double()
         len_acc += 1
-        obs, _, reset_buf, extras = env.step(a)
+        obs, _, term, trunc, extras = env.step(a)
+        reset_buf = term | trunc
         done = reset_buf & tracked if first_only else reset_buf
         if bool(done.any()):
             term = extras['terminal_observations']['policy'].double()[done]

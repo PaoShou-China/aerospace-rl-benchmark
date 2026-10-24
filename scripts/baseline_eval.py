@@ -1,6 +1,6 @@
 """Evaluation of the classical (non-learned) baselines on the batched GPU envs.
 
-Usage: python baseline_eval.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous
+Usage: python baseline_eval.py quadx|fixedwing|rocket|missile|satellite|transfer|docking|rendezvous
 Defaults mirror eval.py: 1024 envs, seed 7, same env construction (if
 results/<task>/config.json exists, its env_kwargs are restored),
 same success accounting from the env's completed-episode counters.  Each
@@ -21,16 +21,18 @@ sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.
 
 import torch
 
-from environments.multirotor import QuadXHoverEnv
+from environments.multirotor import QuadXWaypointsEnv
 from environments.fixedwing import FixedwingWaypointsEnv
 from environments.rocket import RocketLandingEnv
+from environments.missile import MissileInterceptEnv
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
 from environments.satellite.orbit_transfer import LowThrustTransferEnv
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
 from algorithms.baselines.baselines import build_baseline
 
-ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+ENVS = {'quadx': QuadXWaypointsEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+        'missile': MissileInterceptEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
         'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
 
@@ -55,7 +57,6 @@ def main():
     cfg_path = out / 'config.json'
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     env_kwargs = dict(cfg.get('env_kwargs') or {})
-    env_kwargs.pop('curriculum', None)
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed, **env_kwargs)
     controller = build_baseline(args.vehicle, env)
 
@@ -69,7 +70,8 @@ def main():
     with torch.no_grad():
         while steps < args.max_steps:
             actions = controller.actions(obs)
-            obs, _, reset_buf, _ = env.step(actions)
+            obs, _, term, trunc, _ = env.step(actions)
+            reset_buf = term | trunc
             controller.reset_idx(reset_buf)
             steps += 1
             if float((env.completed_episodes - ep0).sum()) >= target:

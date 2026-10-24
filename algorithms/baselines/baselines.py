@@ -20,6 +20,9 @@ Methods
     rendezvous  receding-horizon CWH two-impulse terminal guidance (exact
                 symplectic STM, online transfer-time ratchet) to a hold point
                 between the keep-out and success spheres
+    missile     augmented proportional navigation (APN, N=4, half-N gravity
+                compensation, first-order LOS-rate filter) mapped through the
+                skid-to-turn kinematic inverse to body-rate commands
 
 All formulas are analytic; no training, no tuning loop, no host-device
 synchronization.
@@ -178,7 +181,7 @@ class QuadXSE3Baseline(Baseline):
     collective is its projection on the body thrust axis f = F_des . b3 and the
     desired attitude R_d is built from b3_d = F_hat_des and the commanded yaw.
     Attitude error e_R = 1/2 vee(R_d' R - R' R_d) and body-rate error
-    e_O = w - R' R_d w_d (= w for the stationary hover setpoint) drive the
+    e_O = w - R' R_d w_d (= w for the stationary waypoint setpoint) drive the
     torque law M = -kR e_R - kOm e_O + w x Jw.  The wrench (f, M) is allocated
     onto the four rotors with the frozen cf2x geometry,
         t_i = f/4 + ay_i Mx/(4d) - ax_i My/(4d) + spin_i Mz/(4c),
@@ -213,6 +216,7 @@ class QuadXSE3Baseline(Baseline):
 
     # controller gains
     KX, KV = 4.0, 3.0              # position PD [1/s^2, 1/s]
+    V_MAX = 1.5                    # cruise speed cap [m/s]
     KR, KOM = 8e-4, 2.5e-4         # attitude PD [N m/rad, N m s/rad]
     KI_POS = 0.15                  # axial position-error integral [N/m]
     I_MAX = 0.35                   # integral clamp [N]
@@ -221,7 +225,8 @@ class QuadXSE3Baseline(Baseline):
         super().__init__(env)
         d, n = self.device, env.num_envs
         self.dt = 1. / env.agent_hz           # agent control period [s]
-        self.target = env.hover_target.to(torch.float64)
+        # setpoint = the env's active waypoint (env.current_target); the same
+        # PD law tracks it as a stationary setpoint per control step
         self.e1 = torch.tensor((1., 0., 0.), device=d, dtype=torch.float64).expand(n, 3)
         self.e3 = torch.tensor((0., 0., 1.), device=d, dtype=torch.float64).expand(n, 3)
         self.J = torch.tensor(self.INERTIA, device=d, dtype=torch.float64)
@@ -250,12 +255,23 @@ class QuadXSE3Baseline(Baseline):
         R = _quat_to_R(q)                       # body -> world
         b3 = R[:, :, 2]                         # body thrust axis in world
         v_w = torch.einsum('nij,nj->ni', R, vb)
-        e_x, e_v = p - self.target, v_w         # hover setpoint: v_d = 0
+        e_x = p - self.env.current_target
+        # cascade outer loop: position error -> speed-capped velocity setpoint
+        # (raw PD accelerates to ~KX/KV*|e_x| ~ 6 m/s toward a 4.5 m waypoint,
+        # overshooting the 5 m dome; the cap keeps transit <= V_MAX)
+        v_d = -self.KX / self.KV * e_x
+        v_d = v_d * (self.V_MAX / v_d.norm(dim=-1, keepdim=True).clamp_min(self.V_MAX))
+        e_v = v_w - v_d            # waypoint setpoint with cruise feedforward
 
-        F_des = self.MASS * (self.G * self.e3 - self.KX * e_x - self.KV * e_v)
+        F_des = self.MASS * (self.G * self.e3 - self.KV * e_v)
         f_raw = (F_des * b3).sum(-1) + self.trim
         # axial trim integral; freeze while the collective command is clipped
-        trim_dot = -self.KI_POS * (e_x * b3).sum(-1)
+        # and outside the capture neighborhood (a multi-meter transit error
+        # would wind the trim to its clamp -- ~1.3x hover thrust -- and loft
+        # every approach; the trim only exists to cancel millimeter-scale
+        # hover residuals)
+        near = e_x.norm(dim=-1) < 0.5
+        trim_dot = -self.KI_POS * (e_x * b3).sum(-1) * near.to(torch.float64)
         trim_dot = torch.where(f_raw > self.f_max, trim_dot.clamp_max(0.), trim_dot)
         trim_dot = torch.where(f_raw < self.f_min, trim_dot.clamp_min(0.), trim_dot)
         self.trim += trim_dot * self.dt
@@ -1507,3 +1523,84 @@ def build_baseline(vehicle, env):
 # and the BC collector instantiates its own controller against the env and
 # drives it directly.  The envs themselves stay plain tensor environments --
 # they neither own a controller instance nor expose one through info.
+
+
+# --------------------------------------------------------------------------- #
+# missile: augmented proportional navigation -> body-rate commands
+# --------------------------------------------------------------------------- #
+def _quat_to_matrix(q_xyzw):
+    """Batched xyzw quaternion -> 3x3 rotation matrices (body -> world)."""
+    x, y, z, w = q_xyzw.unbind(-1)
+    return torch.stack((
+        1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+        2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+        2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+    ), -1).unflatten(-1, (3, 3))
+
+
+@register_baseline('missile')
+class MissileAPNBaseline(Baseline):
+    """APN guidance (N=4) with half-N gravity compensation, mapped to the
+    env's body-rate command interface through the skid-to-turn kinematic
+    inverse ``omega = cross(b_x, a_lat) / V``: rotating the thrust axis toward
+    the commanded lateral-acceleration direction at the turn rate a/V that
+    curves the velocity vector accordingly.  Sole internal state: a
+    first-order low-pass filter on the body-frame LOS rate (reset_idx-clear).
+
+    Guards: LOS-rate filter freezes below Vc < 50 m/s (terminal noise
+    blow-up), the relative range is clamped away from zero, and the output is
+    normalized by the per-axis rate limits (roll OMEGA_MAX, pitch/yaw
+    OMEGA_LAT) into [-1, 1].
+    """
+    name = 'apn_rate'
+    # N=15 measured (1024-ep, seed 7): SR 0.812 vs 0.770 at N=10 on the fixed
+    # medium operating point; N>=18 overshoots and diverges the LOS loop.
+    N = 15.0
+    LOS_FILTER = 0.8
+
+    def __init__(self, env):
+        super().__init__(env)
+        d = self.device
+        from environments.missile.env import OMEGA_MAX, OMEGA_LAT
+        # per-axis rate-command limits (roll, pitch, yaw)
+        self.omega_scale = torch.tensor((OMEGA_MAX, OMEGA_LAT, OMEGA_LAT),
+                                        device=d, dtype=torch.float64)
+        self.lam_filt = torch.zeros((env.num_envs, 3), device=d, dtype=torch.float64)
+
+    def reset_idx(self, mask):
+        self.lam_filt.masked_fill_(mask[:, None], 0.)
+
+    @torch.no_grad()
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        q = o[:, 3:7]
+        vb = o[:, 7:10]
+        r_b = o[:, 23:26]
+        v_rel_b = o[:, 26:29]
+        lam = o[:, 29:32]
+        vc = o[:, 32].clamp_min(0.)
+        R = _quat_to_matrix(q)
+        # first-order LOS-rate filter, frozen in the terminal Vc<50 regime
+        alpha = torch.where(vc < 50., torch.zeros_like(vc), torch.full_like(vc, self.LOS_FILTER))
+        self.lam_filt += alpha[:, None] * (lam - self.lam_filt)
+        lam_w = torch.einsum('nij,nj->ni', R, self.lam_filt)
+        # APN: a_cmd = N*Vc*(lambda_dot x lambda_hat) + (N/2)*g_perp_LOS.
+        # lambda_w = cross(r, v_rel)/r^2 is the LOS ANGULAR VELOCITY (rotation
+        # axis), which is perpendicular to the LOS but is NOT the acceleration
+        # direction: the command must be rotated 90 deg about the LOS into the
+        # plane the LOS tip sweeps through, i.e. cross(lambda_w, r_hat_w).
+        # Dropping the cross product tilts the command and produces persistent
+        # cross-range divergence (verified: monotonically growing miss).
+        rng = r_b.norm(dim=-1).clamp_min(1e-3)
+        g = torch.tensor([0., 0., -9.81], device=self.device, dtype=torch.float64).expand_as(r_b)
+        r_hat_w = torch.einsum('nij,nj->ni', R, r_b / rng[:, None])
+        a_cmd = self.N * vc[:, None] * torch.linalg.cross(lam_w, r_hat_w) \
+            + 0.5 * self.N * (g - (g * r_hat_w).sum(-1, keepdim=True) * r_hat_w)
+        # express in body frame, drop the thrust-axis (b_x) component
+        a_lat_b = torch.einsum('nji,nj->ni', R, a_cmd)
+        a_lat_b = a_lat_b - a_lat_b[:, 0:1] * torch.tensor([1., 0., 0.], device=self.device, dtype=torch.float64)
+        # skid-to-turn kinematic inverse: omega = cross(b_x, a_lat) / V
+        V = vb.norm(dim=-1).clamp_min(50.)
+        b_x = torch.tensor([1., 0., 0.], device=self.device, dtype=torch.float64).expand_as(a_lat_b)
+        w_cmd = torch.linalg.cross(b_x, a_lat_b) / V[:, None]
+        return (w_cmd / self.omega_scale).clamp(-1., 1.).to(torch.float32)

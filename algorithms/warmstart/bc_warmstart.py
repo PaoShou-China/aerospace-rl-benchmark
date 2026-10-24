@@ -66,10 +66,10 @@ def collect_expert(env, steps):
                 raise ValueError('expert action violates finiteness/action range')
             checked = True
         obss[t], acts[t] = obs['policy'], expert
-        _, rew, done, _ = env.step(expert)
-        rews[t], dones[t] = rew, done
+        _, rew, term, trunc, _ = env.step(expert)
+        rews[t], dones[t] = rew, term | trunc
         obs = env.get_observations()
-        ctrl.reset_idx(done)
+        ctrl.reset_idx(term | trunc)
     return obss, acts, rews, dones
 
 

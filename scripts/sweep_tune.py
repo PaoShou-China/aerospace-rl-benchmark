@@ -36,7 +36,7 @@ from algorithms.train_utils import run_training  # noqa: E402
 NUM_ENVS = 1024
 SEED = 7
 BACKEND = 'gpu'
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 # --- per-task production PPO baselines (verbatim from each train_*.py) -----
 PPO_BASE = {
@@ -58,6 +58,9 @@ PPO_BASE = {
     'rendezvous': dict(num_steps_per_env=250, gamma=0.999, num_mini_batches=1,
                        lr_schedule='fixed', learning_rate=3e-4, entropy_coef=0.003,
                        trunk_hidden=64, critic_trunk_hidden=64),
+    'missile':    dict(num_steps_per_env=64, lr_schedule='fixed', learning_rate=3e-4,
+                       gamma=0.995, lam=0.97, entropy_coef=0.007, num_learning_epochs=10,
+                       clip_param=0.2, value_loss_coef=1.0),
 }
 
 PPO_CANDIDATES = {
@@ -102,16 +105,24 @@ PPO_CANDIDATES = {
         ('lr1e3', dict(learning_rate=1e-3)),
         ('trunk128', dict(trunk_hidden=128, critic_trunk_hidden=128)),
     ],
+    'missile': [
+        ('base', {}),
+        ('lr1e3', dict(learning_rate=1e-3)),
+        ('rollout32', dict(num_steps_per_env=32)),
+        ('rollout128', dict(num_steps_per_env=128)),
+        ('gamma099', dict(gamma=0.99)),
+        ('gamma999', dict(gamma=0.999)),
+    ],
 }
 
 # FlashSAC sweep updates = env steps per env (steps_per_iter == 1); sized so
 # each arm sees >= ~4 episodes per env. gamma follows the task's horizon.
 FS_BASE_GAMMA = {'quadx': 0.99, 'fixedwing': 0.999, 'rocket': 0.995,
                  'satellite': 0.999, 'transfer': 0.9999, 'docking': 0.999,
-                 'rendezvous': 0.999}
+                 'rendezvous': 0.999, 'missile': 0.995}
 FS_UPDATES = {'quadx': 800, 'fixedwing': 800, 'rocket': 2000,
               'satellite': 1500, 'transfer': 800, 'docking': 1000,
-              'rendezvous': 1000}
+              'rendezvous': 1000, 'missile': 4000}
 FS_CANDIDATES = [
     ('base', {}),
     ('lr1e3', dict(learning_rate=1e-3)),
@@ -122,18 +133,20 @@ FS_CANDIDATES = [
 # Production env classes / kwargs (mirror each train_*.py, including the
 # hard-coded WIND config of the atmospheric tasks; sweeps override dryden via
 # the candidates' 'env' key below).
-from environments.multirotor import QuadXHoverEnv            # noqa: E402
+from environments.multirotor import QuadXWaypointsEnv            # noqa: E402
 from environments.fixedwing import FixedwingWaypointsEnv  # noqa: E402
 from environments.rocket import RocketLandingEnv        # noqa: E402
+from environments.missile import MissileInterceptEnv    # noqa: E402
 from environments.satellite.attitude_control import SatelliteAttitudeEnv  # noqa: E402
 from environments.satellite.orbit_transfer import LowThrustTransferEnv  # noqa: E402
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv  # noqa: E402
 
 _GUST = dict(steady_wind=None, dryden=.3, severity='moderate')
 ENVS = {
-    'quadx': (QuadXHoverEnv, dict(_GUST)),
+    'quadx': (QuadXWaypointsEnv, dict(_GUST)),
     'fixedwing': (FixedwingWaypointsEnv, dict(_GUST)),
     'rocket': (RocketLandingEnv, dict(_GUST)),
+    'missile': (MissileInterceptEnv, {}),
     'satellite': (SatelliteAttitudeEnv, {}),
     'transfer': (LowThrustTransferEnv, {}),
     'docking': (SpaceDockingEnv, {}),
@@ -153,6 +166,8 @@ train_docking = _load_entry('train_docking',   # noqa: E402,F401  (applies Flash
                             'environments/satellite/rendezvous_docking/train_docking.py')
 train_rocket = _load_entry('train_rocket',     # noqa: E402,F401  (applies MLP/FlashRes zero-head patches)
                            'environments/rocket/train_rocket.py')
+train_missile = _load_entry('train_missile',   # noqa: E402,F401  (applies MLP/FlashRes zero-head patches)
+                            'environments/missile/train_missile.py')
 PPO_BASE['rocket']['init_std'] = train_rocket.INIT_STD
 
 SMOKE = bool(__import__('os').environ.get('SWEEP_SMOKE'))

@@ -92,7 +92,8 @@ class GenesisBulletClient:
             else:
                 e=self._scene.add_entity(gs.morphs.URDF(file=str(runtime_path),
                     pos=tuple(basePosition),quat=(baseOrientation[3],*baseOrientation[:3]),fixed=useFixedBase,
-                    scale=globalScaling,merge_fixed_links=False,align=False,recompute_inertia=False),
+                    scale=globalScaling,merge_fixed_links=False,align=False,recompute_inertia=False,
+                    **kwargs),
                     material=gs.materials.Rigid(friction=.5))
                 if name=='rocket.urdf':
                     pad=Path(__file__).parent/'original_pyflyt/models/landing_pad.urdf'

@@ -62,3 +62,4 @@ BC 另行报告独立成本，不摊入 RL 训练预算：示范采集墙钟（`
 ## 5. 协议修订记录
 
 - 2026-10-22 初版冻结（成功定义、控制器审计、阈值/预算/种子/测试集、成本口径）。
+- 2026-10-24 修正 env RNG 流种子分配（`environments/common/plant.py` `TensorRandom`）：由 `arange(n)+seed` 改为 `mix32(seed ^ (i·0x9e3779b1))`。旧方案下 base seed s+1 的第 i 个副本复用 seed s 第 i+1 个副本的同一条流，1024 envs 时相邻 seed 重叠 1023/1024，本协议种子 {7,13,21} 两两重叠 1018/1024，多 seed 实际是同一批初始条件（聚合指标可逐位相同）；修复后 {7,13,21,101} 的流集合两两无交集。因此 2026-10-22/23 产生的所有 env-RNG 相关数字（含 `results/<task>/baseline.json`、第 2 节控制器审计成功率与各任务专项 harness 数字）不再逐位可复现。已按新方案重跑 8 任务经典基线（1024 envs / 官方 reset 分布 / seed 7，`scripts/baseline_eval.py`）并覆盖 `results/<task>/baseline.json`；旧值仅作历史参考，不得与新结果混用或拼接区间。

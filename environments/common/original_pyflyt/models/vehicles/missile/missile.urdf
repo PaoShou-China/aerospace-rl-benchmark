@@ -1,0 +1,141 @@
+<?xml version="1.0" ?>
+
+<robot name="missile">
+
+  <!-- Project-authored generic air-to-air missile (NOT PyFlyt 0.29.0 upstream).
+       Nose along body +x. Homogeneous-cylinder inertia:
+         Ixx = 0.5*m*r^2            = 0.5*150*0.01 = 0.75 kg m^2 (roll)
+         Iyy = Izz = m*(3r^2+L^2)/12 = 150*(0.03+9)/12 ~ 113.6 kg m^2
+       Four tail fins at x = -1.3 m (cross layout), driven by the plant's
+       rate-PID through the skid-to-turn mixer. No landing gear / ground
+       contact geometry: the engagement flies at altitude. -->
+
+  <material name="grey">
+    <color rgba="0.3 0.3 0.3 1.0"/>
+  </material>
+  <material name="white">
+    <color rgba="0.85 0.85 0.85 1.0"/>
+  </material>
+
+  <link name="base_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="150.0"/>
+      <inertia ixx="0.75" ixy="0" ixz="0" iyy="113.6" iyz="0" izz="113.6"/>
+    </inertial>
+    <collision>
+      <origin rpy="1.5708 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.1" length="3.0"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin rpy="1.5708 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.1" length="3.0"/>
+      </geometry>
+      <material name="white"/>
+    </visual>
+  </link>
+
+
+  <link name="fin_left">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <box size="0.45 0.02 0.40"/>
+      </geometry>
+    </collision>
+    <visual>
+      <geometry>
+        <box size="0.45 0.02 0.40"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+  <joint name="fin_left_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-1.3 0.13 0"/>
+    <parent link="base_link"/>
+    <child link="fin_left"/>
+  </joint>
+
+
+  <link name="fin_right">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <box size="0.45 0.02 0.40"/>
+      </geometry>
+    </collision>
+    <visual>
+      <geometry>
+        <box size="0.45 0.02 0.40"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+  <joint name="fin_right_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-1.3 -0.13 0"/>
+    <parent link="base_link"/>
+    <child link="fin_right"/>
+  </joint>
+
+
+  <link name="fin_top">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <box size="0.45 0.40 0.02"/>
+      </geometry>
+    </collision>
+    <visual>
+      <geometry>
+        <box size="0.45 0.40 0.02"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+  <joint name="fin_top_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-1.3 0 0.13"/>
+    <parent link="base_link"/>
+    <child link="fin_top"/>
+  </joint>
+
+
+  <link name="fin_bottom">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <box size="0.45 0.40 0.02"/>
+      </geometry>
+    </collision>
+    <visual>
+      <geometry>
+        <box size="0.45 0.40 0.02"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+  <joint name="fin_bottom_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-1.3 0 -0.13"/>
+    <parent link="base_link"/>
+    <child link="fin_bottom"/>
+  </joint>
+
+</robot>

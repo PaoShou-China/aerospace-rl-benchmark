@@ -232,6 +232,8 @@ class LowThrustTransferEnv:
         self.completed_episodes+=self.reset_buf.to(torch.long)
         self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
         done=self.reset_buf
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
         n_done=done.sum().clamp_min(1)
         drp_km=torch.where(done,(rp-self.rp0)*1e-3,0.)
         dra_km=torch.where(done,(ra-self.ra0).abs()*1e-3,0.)
@@ -258,7 +260,7 @@ class LowThrustTransferEnv:
 
         self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def reset_idx(self,envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""

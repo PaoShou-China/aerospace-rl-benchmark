@@ -1,38 +1,41 @@
-"""Tests for the quadx SE(3) geometric baseline (Lee, Leok & McClamroch 2010).
+"""Tests for the quadx SE(3) geometric baseline (Lee, Leok & McClamroch 2010)
+on the QuadX-Waypoints task.
 
 Covers
-    T1  undisturbed benchmark hover + batch-size/device generality
+    T0  wrench->rotor allocation exactness (no simulation)
+    T1  undisturbed benchmark waypoint navigation + batch-size generality
     T2  varied initial conditions (manual spawn-noise DR knobs + injected
         positions/attitudes via plant.set_state, env code untouched)
     T3  action saturation: recoverable gust recovery, a 90 deg bank
         fall-and-catch whose transient saturates the rate-command window in
         closed loop, and a synthetic hostile observation that exercises every
-        limiting path (total thrust, per-rotor pwm, rate commands);
-        wrench->rotor allocation exactness is verified separately
+        limiting path (total thrust, per-rotor pwm, rate commands)
     T4  partial batch reset: manual reset_idx on half the batch mid-episode,
         trim-integral clearing, and re-convergence of both halves
 
-Each test reports success rate, position/attitude errors and action saturation
-ratios; failures raise AssertionError (exit code 1).  Genesis allows one device
-type per process, so run the CPU pass in a separate invocation:
+Each test reports success rate (all 4 waypoints reached), waypoints reached
+and action saturation ratios; failures raise AssertionError (exit code 1).
+Genesis allows one device type per process, so run the CPU pass in a separate
+invocation:
     python test_quadx_se3.py [gpu|cpu]      (default gpu)
 """
 import sys
 import time
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[1]  # repo root
+_ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import math
 
 import torch
 
-from environments.multirotor import QuadXHoverEnv
+from environments.multirotor import QuadXWaypointsEnv
 from algorithms.baselines.baselines import QuadXSE3Baseline
 
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else 'gpu'
 EPS = 1e-6
+NUM_TARGETS = 4
 
 
 def quat_attitude(q_xyzw):
@@ -45,16 +48,25 @@ def quat_attitude(q_xyzw):
 
 
 def run(env, ctrl, obs, steps, record_last=50):
-    """Run the controller for `steps` agent steps; return per-phase metrics."""
+    """Run the controller for `steps` agent steps; return per-phase metrics.
+
+    pos_err is tracked against the ACTIVE waypoint each step (the target
+    advances on capture, so steady-state values are diagnostics, not asserts).
+    """
     pos_errs, att_errs, yaw_errs = [], [], []
+    wp_count = torch.zeros(env.num_envs, device=env.device)
+    prev_index = env.target_index.clone()
     with torch.no_grad():
         for k in range(steps):
             act = ctrl.actions(obs)
             assert torch.isfinite(act).all(), 'non-finite controller action'
-            obs, _, rb, _ = env.step(act)
+            obs, _, term, trunc, _ = env.step(act)
+            rb = term | trunc
             ctrl.reset_idx(rb)
+            wp_count += (env.target_index - prev_index).clamp_min(0).to(torch.float64)
+            prev_index = env.target_index.clone()
             o = obs['policy'].to(torch.float64)
-            p_err = (o[:, 10:13] - env.hover_target.to(torch.float64)).norm(dim=-1)
+            p_err = (o[:, 10:13] - env.current_target.to(torch.float64)).norm(dim=-1)
             att, yaw = quat_attitude(o[:, 3:7])
             pos_errs.append(p_err)
             att_errs.append(att)
@@ -67,6 +79,7 @@ def run(env, ctrl, obs, steps, record_last=50):
         steady_pos=float(pos[-n:].mean()), steady_att=float(att[-n:].mean()),
         steady_yaw=float(yaw[-n:].mean()),
         max_pos=float(pos.max()), max_att=float(att.max()),
+        waypoints_reached=float(wp_count.mean()),
         pos_errs=pos, att_errs=att, obs=obs)
 
 
@@ -101,17 +114,17 @@ def episode_outcome(env, episodes_before, successes_before):
 
 def metrics_line(tag, episodes, success, run_stats, sat):
     print(f'  [{tag}] episodes={episodes} success={success / max(episodes, 1):.3f} '
-          f'steady pos={run_stats["steady_pos"]:.4f} m att={run_stats["steady_att"]:.4f} rad '
-          f'yaw={run_stats["steady_yaw"]:.4f} rad | max pos={run_stats["max_pos"]:.3f} '
-          f'max att={run_stats["max_att"]:.3f} | sat total={sat["total"]:.4f} '
-          f'rotor={sat["rotor"]:.4f} rate={sat["rate"]:.4f}')
+          f'wp/reached={run_stats["waypoints_reached"]:.2f} '
+          f'steady pos={run_stats["steady_pos"]:.4f} m att={run_stats["steady_att"]:.4f} rad | '
+          f'max pos={run_stats["max_pos"]:.3f} max att={run_stats["max_att"]:.3f} | '
+          f'sat total={sat["total"]:.4f} rotor={sat["rotor"]:.4f} rate={sat["rate"]:.4f}')
     return success / max(episodes, 1)
 
 
 # --------------------------------------------------------------------------- #
 def test_allocation_exactness():
     """Wrench -> rotor allocation must reproduce (f, M) exactly before clipping."""
-    env = QuadXHoverEnv(num_envs=16, backend=BACKEND, seed=0)
+    env = QuadXWaypointsEnv(num_envs=16, backend=BACKEND, seed=0)
     ctrl = QuadXSE3Baseline(env)
     g = torch.Generator().manual_seed(3)
     f = (torch.rand(16, 1, generator=g) * 1.2 + .05).double().to(env.device)
@@ -135,7 +148,7 @@ def test_hostile_observation(ctrl, env):
     """Synthetic state far outside the flight envelope: every limiter engages."""
     n = env.num_envs
     snap = sat_snapshot(ctrl)
-    o = torch.zeros(n, 21, device=env.device, dtype=torch.float64)
+    o = torch.zeros(n, 37, device=env.device, dtype=torch.float64)
     o[:, 0] = 400.                                      # huge body rate x
     o[:, 1:3] = torch.tensor((-15., 8.))
     o[:, 3] = 1.                                        # 180 deg roll (x,y,z,w)
@@ -157,23 +170,23 @@ def test_hostile_observation(ctrl, env):
 
 
 # --------------------------------------------------------------------------- #
-def test_hover():
-    print('T1: undisturbed benchmark hover')
+def test_waypoint_navigation():
+    print('T1: undisturbed benchmark waypoint navigation')
     for n in (1024, 7, 1):
-        env = QuadXHoverEnv(num_envs=n, backend=BACKEND, seed=7)
+        env = QuadXWaypointsEnv(num_envs=n, backend=BACKEND, seed=7)
         ctrl = QuadXSE3Baseline(env)
         ep0, sc0 = gpu_sum(env.completed_episodes), gpu_sum(env.completed_successes)
         obs = env.get_observations()
         t0 = time.time()
-        st = run(env, ctrl, obs, 400)
+        st = run(env, ctrl, obs, 800)
         wall = time.time() - t0
         episodes, success = episode_outcome(env, ep0, sc0)
-        sr = metrics_line(f'n={n}', episodes, success, st, sat_fractions(ctrl, 400, n))
+        sr = metrics_line(f'n={n}', episodes, success, st, sat_fractions(ctrl, 800, n))
         assert torch.isfinite(st['pos_errs']).all()
         if n > 7:
-            assert sr >= 0.95, f'benchmark hover success {sr:.3f} < 0.95'
-            assert st['steady_pos'] <= 0.15, f'steady pos err {st["steady_pos"]:.3f}'
-            assert st['steady_att'] <= 0.15, f'steady att err {st["steady_att"]:.3f}'
+            assert sr >= 0.90, f'benchmark waypoint success {sr:.3f} < 0.90'
+            assert st['waypoints_reached'] >= 3.9, \
+                f'mean waypoints reached {st["waypoints_reached"]:.2f} < 3.9'
         env.close()
     print(f'  [n=1024] wall={wall:.1f}s')
 
@@ -181,20 +194,21 @@ def test_hover():
 def test_varied_initial():
     print('T2: varied initial conditions')
     # (a) spawn noise via the env's manual domain-randomization knobs
-    env = QuadXHoverEnv(num_envs=1024, backend=BACKEND, seed=7)
+    env = QuadXWaypointsEnv(num_envs=1024, backend=BACKEND, seed=7)
     env.spawn_xy_noise, env.spawn_z_noise = .5, .25
     env.spawn_vel_noise, env.spawn_att_noise = .5, .35
     ctrl = QuadXSE3Baseline(env)
     ep0, sc0 = gpu_sum(env.completed_episodes), gpu_sum(env.completed_successes)
-    st = run(env, ctrl, env.get_observations(), 400)
+    st = run(env, ctrl, env.get_observations(), 800)
     episodes, success = episode_outcome(env, ep0, sc0)
-    sr = metrics_line('dr-noise', episodes, success, st, sat_fractions(ctrl, 400, 1024))
-    assert sr >= 0.90, f'dr-noise hover success {sr:.3f} < 0.90'
-    assert st['steady_pos'] <= 0.20 and st['steady_att'] <= 0.20
+    sr = metrics_line('dr-noise', episodes, success, st, sat_fractions(ctrl, 800, 1024))
+    assert sr >= 0.85, f'dr-noise waypoint success {sr:.3f} < 0.85'
+    assert st['waypoints_reached'] >= 3.8, \
+        f'mean waypoints reached {st["waypoints_reached"]:.2f} < 3.8'
     env.close()
 
     # (b) injected positions / attitudes (plant.set_state; env model untouched)
-    env = QuadXHoverEnv(num_envs=64, backend=BACKEND, seed=7)
+    env = QuadXWaypointsEnv(num_envs=64, backend=BACKEND, seed=7)
     ctrl = QuadXSE3Baseline(env)
     n = env.num_envs
     dev = env.device
@@ -214,24 +228,23 @@ def test_varied_initial():
     ctrl.reset_idx(mask)
     env._observe(mask)
     obs = env.get_observations()
-    st = run(env, ctrl, obs, 400)
+    st = run(env, ctrl, obs, 800)
     episodes, success = episode_outcome(env, 0, 0)
-    sr = metrics_line('injected IC', episodes, success, st, sat_fractions(ctrl, 400, n))
-    assert sr >= 0.90, f'injected-IC success {sr:.3f} < 0.90'
-    assert st['steady_pos'] <= 0.15 and st['steady_att'] <= 0.20
+    sr = metrics_line('injected IC', episodes, success, st, sat_fractions(ctrl, 800, n))
+    assert sr >= 0.85, f'injected-IC success {sr:.3f} < 0.85'
     env.close()
 
 
 def test_saturation():
     print('T3: action saturation')
-    env = QuadXHoverEnv(num_envs=64, backend=BACKEND, seed=7)
+    env = QuadXWaypointsEnv(num_envs=64, backend=BACKEND, seed=7)
     ctrl = QuadXSE3Baseline(env)
     n, dev = env.num_envs, env.device
     mask = torch.ones(n, dtype=torch.bool, device=dev)
     identity = torch.tensor([1., 0., 0., 0.], device=dev).repeat(n, 1)   # wxyz for set_state
 
-    # (a) recoverable gusts: attitude-limited braking stays inside the 3 m
-    # bound (|p| > 3 terminates), closed-loop recovery within the episode
+    # (a) recoverable gusts: attitude-limited braking stays inside the 5 m
+    # dome (|p| > 5 terminates), then waypoint navigation resumes
     snap = sat_snapshot(ctrl)
     v0 = torch.tensor([[-4., 0., 0.], [4., 0., -1.], [0., -3.5, -2.], [0., 3., 1.5],
                        [-3., -2.5, 0.], [2.5, 2.5, -1.5], [-3.5, 0., 0.], [0., 0., -2.5]] * 8,
@@ -242,18 +255,16 @@ def test_saturation():
     env.plant.zero(mask)
     ctrl.reset_idx(mask)
     env._observe(mask)
-    st = run(env, ctrl, env.get_observations(), 400)
+    st = run(env, ctrl, env.get_observations(), 800)
     episodes, success = episode_outcome(env, 0, 0)
     sr = metrics_line('gust', episodes, success, st, sat_delta(ctrl, snap, 400, n))
     assert torch.isfinite(st['pos_errs']).all(), 'gust run produced NaN'
-    assert sr >= 0.9, f'gust recovery success {sr:.3f} < 0.9'
-    assert st['steady_pos'] <= 0.20, f'gust recovery steady pos err {st["steady_pos"]:.3f}'
+    assert sr >= 0.85, f'gust recovery success {sr:.3f} < 0.85'
     ep_a, sc_a = episodes, success
 
     # (b) 90 deg bank from 2.8 m: during the fall-and-catch the low collective
     # steepens the pwm slope so the recovery transient drives the rate command
-    # past +-pi (measured: ~7 saturated steps, wb peak -2.6 rad/s), then the
-    # controller re-catches with z_min ~ 0.4 m and converges back to hover
+    # past +-pi, then the controller re-catches and resumes waypoint navigation
     snap = sat_snapshot(ctrl)
     tilt = torch.tensor([.70710678, .70710678, 0., 0.], device=dev).repeat(n, 1)
     env.plant.set_state(torch.tensor([0.3, 0., 2.8], device=dev).repeat(n, 1), tilt,
@@ -261,13 +272,12 @@ def test_saturation():
     env.plant.zero(mask)
     ctrl.reset_idx(mask)
     env._observe(mask)
-    st = run(env, ctrl, env.get_observations(), 400)
+    st = run(env, ctrl, env.get_observations(), 800)
     episodes, success = episode_outcome(env, ep_a, sc_a)
     sat = sat_delta(ctrl, snap, 400, n)
     sr = metrics_line('tilt-inversion', episodes, success, st, sat)
     assert sat['rate'] > 0, 'rate-command limiter never engaged in tilt-inversion test'
-    assert sr >= 0.9, f'tilt-inversion success {sr:.3f} < 0.9'
-    assert st['steady_pos'] <= 0.20, f'tilt-inversion steady pos err {st["steady_pos"]:.3f}'
+    assert sr >= 0.85, f'tilt-inversion success {sr:.3f} < 0.85'
 
     # (c) synthetic hostile state far outside the envelope: every limiter path
     test_hostile_observation(ctrl, env)
@@ -276,7 +286,7 @@ def test_saturation():
 
 def test_partial_reset():
     print('T4: partial batch reset mid-episode')
-    env = QuadXHoverEnv(num_envs=128, backend=BACKEND, seed=7)
+    env = QuadXWaypointsEnv(num_envs=128, backend=BACKEND, seed=7)
     ctrl = QuadXSE3Baseline(env)
     n, dev = env.num_envs, env.device
     obs = env.get_observations()
@@ -288,22 +298,12 @@ def test_partial_reset():
     ctrl.reset_idx(mask)
     assert bool((ctrl.trim[mask] == 0).all()), 'trim not cleared on manual reset'
     assert bool((ctrl.trim[~mask] == trim_before[~mask]).all()), 'trim disturbed on live half'
-    # 520 steps: final obs at t=620 lands 120 steps after the reset half's
-    # auto-reset at t=500 and 220 steps after the live half's at t=400 -- both
-    # past the spawn transient; the 50-step record window (t=570..620) crosses
-    # no reset boundary.
-    st = run(env, ctrl, env.get_observations(), 520, record_last=50)
-    o = st['obs']['policy'].to(torch.float64)
-    p_err = (o[:, 10:13] - env.hover_target.to(torch.float64)).norm(dim=-1)
-    att, _ = quat_attitude(o[:, 3:7])
+    st = run(env, ctrl, env.get_observations(), 800)
     episodes, success = episode_outcome(env, 0, 0)
     sr = success / max(episodes, 1)
     print(f'  [partial-reset] episodes={episodes} success={sr:.3f} | '
-          f'reset half pos={float(p_err[mask].mean()):.4f} att={float(att[mask].mean()):.4f} | '
-          f'live half pos={float(p_err[~mask].mean()):.4f} att={float(att[~mask].mean()):.4f}')
-    assert sr >= 0.90, f'partial-reset success {sr:.3f} < 0.90'
-    assert float(p_err[mask].mean()) <= 0.15 and float(att[mask].mean()) <= 0.20
-    assert float(p_err[~mask].mean()) <= 0.15 and float(att[~mask].mean()) <= 0.20
+          f'wp/reached={st["waypoints_reached"]:.2f}')
+    assert sr >= 0.85, f'partial-reset success {sr:.3f} < 0.85'
     env.close()
 
 
@@ -323,7 +323,7 @@ def _rpy_to_quat(rpy, dev):
 if __name__ == '__main__':
     torch.manual_seed(7)
     test_allocation_exactness()
-    test_hover()
+    test_waypoint_navigation()
     test_varied_initial()
     test_saturation()
     test_partial_reset()

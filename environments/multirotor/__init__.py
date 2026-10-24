@@ -51,4 +51,4 @@ References
     - rsl_rl (github.com/leggedrobotics/rsl_rl), PPO training backend.
 """
 
-from .env import QuadXHoverEnv
+from .env import QuadXWaypointsEnv

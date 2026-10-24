@@ -18,7 +18,29 @@ import time
 from pathlib import Path
 
 import torch
+from rsl_rl.env import VecEnv
 from rsl_rl.runners import OnPolicyRunner
+
+
+class RslVecEnv(VecEnv):
+    """Adapts the project envs' 5-tuple step (obs, rew, terminated, truncated,
+    extras) to the 4-tuple (obs, rew, dones, extras) rsl_rl expects.
+    dones = terminated | truncated, identical to the env's internal reset_buf;
+    timeout bootstrapping still flows through extras['time_outs'] untouched."""
+
+    def __init__(self, env):
+        self.__dict__['env'] = env  # bypass __getattr__ during construction
+
+    def get_observations(self):
+        return self.env.get_observations()
+
+    def step(self, actions):
+        obs, rew, term, trunc, extras = self.env.step(actions)
+        return obs, rew, term | trunc, extras
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
 
 
 def build_cfg(*, lr_schedule='fixed',
@@ -160,7 +182,7 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     else stays at the shared fair-comparison defaults.
     """
     torch.manual_seed(seed)
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]  # repo root (this file: algorithms/train_utils.py)
     out = Path(out_dir) if out_dir is not None else root / 'results' / task
     out.mkdir(parents=True, exist_ok=True)
     if not resume and clean:
@@ -188,7 +210,7 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         cfg = build_cfg(**algo_overrides)
         # OnPolicyRunner mutates cfg in place (resolving/popping class_name); pass a
         # deep copy so the dumped config.json stays a faithful training config.
-        runner = OnPolicyRunner(env, copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
+        runner = OnPolicyRunner(RslVecEnv(env), copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
         steps_per_iter = cfg['num_steps_per_env']
     else:
         raise ValueError(f'unknown algo {algo!r} (expected ppo | flash_sac)')

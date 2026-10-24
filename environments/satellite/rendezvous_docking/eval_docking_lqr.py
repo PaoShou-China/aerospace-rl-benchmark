@@ -160,7 +160,8 @@ def _roll(env, ctrl, steps, obs=None, grid_mode=False, labels=None):
         acc.observe(d, v_norm)
         actions = ctrl.actions(obs)
         acc.step(actions, env.dt, env.f_max / env.mass)
-        obs, _, reset_buf, extras = env.step(actions)
+        obs, _, term, trunc, extras = env.step(actions)
+        reset_buf = term | trunc
         done = reset_buf & ~first_done if grid_mode else reset_buf
         first_done |= reset_buf
         if bool(done.any()):

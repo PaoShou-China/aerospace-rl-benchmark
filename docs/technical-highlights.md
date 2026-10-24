@@ -20,13 +20,11 @@
    另有源码/资产 SHA-256 校验原语。张量 plant 的惯量直接解析自参考 URDF，而非手工抄数。
 2. **多执行路径**：5 个任务是无引擎的纯张量实现，3 个大气任务是 Genesis 刚体实现；
    后者另有一条“原版 NumPy 任务代码不改一行”的共享场景批处理桥，可做实现级交叉校验。
-3. **全库统一的 0–1 课程契约**：只改初始分布，不动成功判据；基准难度处逐位复现；
-   成功率门控自动爬升，进度写入 `run.json`。
-4. **算法对照基础设施**：FlashSAC 完整移植、PPO 架构匹配臂、跨算法同一 LR 调度、
+3. **算法对照基础设施**：FlashSAC 完整移植、PPO 架构匹配臂、跨算法同一 LR 调度、
    确定性评测，以及把“失败配置为什么失败”写进代码的负结果记录。
-5. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
+4. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
    并显式声明数值不等价边界。
-6. **经典（非学习）基线库**：8 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
+5. **经典（非学习）基线库**：8 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
    PDG、CWH-LQR、两脉冲制导等），同一环境、同一奖励、同一成功判据下给出
    非学习参照，并保留基线的诚实失败模式作为 RL 的攻击面。
 
@@ -244,7 +242,7 @@
 
 **机制与证据**
 
-- `run.json` 记录：任务配置（显式设置难度/课程时含对应字段）、算法、迭代数、
+- `run.json` 记录：任务配置（env kwargs 原样落盘）、算法、迭代数、
   总 transitions、wall time、逐副本 `completed_episodes` / `completed_successes`、
   真实 `physics_step_calls`、完成 episode 的设备端指标，以及一条数值不等价声明
   （[train_utils.py:276-286](../algorithms/train_utils.py#L276-L286)）。
@@ -254,19 +252,18 @@
 - `eval.py` 使用冻结的确定性策略（均值动作、无探索噪声），
   成功/回报由环境自身在设备端累计，结果写入 `eval.json`
   （[eval.py:1-7](../scripts/eval.py#L1-L7)、[eval.py:66-90](../scripts/eval.py#L66-L90)）。
-  评测构造 env 时不传任何 kwargs，因此**始终落在基准难度**，不受训练课程影响。
+  评测构造 env 时不传任何训练 kwargs，与训练分布解耦。
 - 每个任务入口的超参硬编码在文件中、不暴露 CLI；牺牲灵活性换取可复现性
   （[README.md:125-126](../README.md#L125-L126)）。
 
-**对审稿人的意义**：训练与评测的“输入—配置—统计口径”都可复核；
-课程难度不是隐藏状态，而是实验记录的一部分。
+**对审稿人的意义**：训练与评测的“输入—配置—统计口径”都可复核。
 
 **边界**
 
 - 这不是完整的实验管理平台：没有多 seed 编排、没有自动显著性检验。
 - **记录缺口**：训练入口级开关（如 `lr_cosine`、`freeze_obs_norm`）不写入
   `config.json`/`run.json`，复现时须以对应 `train_<task>.py` 的硬编码常量为准。
-- 为兼容课程统计，`update()` 在 episode 边界会做一次小规模标量同步
+- `update()` 在 episode 边界会做一次小规模标量同步
   （每步至多一次，且仅当有 episode 结束）；逐步训练路径本身无 host 同步。
 
 ---
@@ -336,7 +333,7 @@
    引擎数值不同（[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
 2. **不声称 NumPy 随机位流一致**。`TensorRandom` 与上游分布兼容，
    但位流不同（[plant.py:23-30](../environments/common/plant.py#L23-L30)）。
-3. **不声称课程提升性能**。课程只改初始/任务参数分布，成功判据不变。
+3. **不声称基线与 RL 可比性之外的最优性**。基线是手工设计，不代表性能上界（见第 7 条）。
 4. **不声称原版代码桥接是高性能路径**。它是正确性优先的 host 端桥接。
 5. **不声称算法等价**。PPO+FlashNet 与 FlashSAC 的偏差已在模块文档中列明；
    FlashSAC 移植与官方仓库的偏差也已列明。
@@ -355,7 +352,6 @@
 | 张量 plant 惯量取自参考 URDF | 已接线 | [dynamics.py:25-27](../environments/common/dynamics.py#L25-L27) |
 | 未激活副本不消耗随机数/不推进状态 | 设计保证 + 代码路径 | [plant.py:1-9](../environments/common/plant.py#L1-L9) |
 | 基准难度逐位复现 | 已验证（8 任务，同 seed 首个 reset 及 3 步后状态） | 临时复核脚本未随仓库保留 |
-| 课程难度写入 `run.json` | 已接线（静态难度；课程机制已移除） | [train_utils.py:276-286](../algorithms/train_utils.py#L276-L286) |
 | 评测始终在基准难度 | 已保证（eval 不传 kwargs） | [eval.py:54](../scripts/eval.py#L54) |
 | 双算法共用同一 LR 调度 | 已接线（opt-in `lr_cosine`） | [train_utils.py:216-230](../algorithms/train_utils.py#L216-L230) |
 | 每任务一个经典基线、只读 policy 观测 | 已实现 + 官方口径实测 | `python scripts/baseline_eval.py <task>`，[baselines.py:1495](../algorithms/baselines/baselines.py#L1495) |
@@ -404,4 +400,3 @@ python scripts/baseline_eval.py quadx
 | 基线统一评测入口 | [baseline_eval.py](../scripts/baseline_eval.py) |
 | 基线专项 harness（场景网格/消融） | [eval_docking_lqr.py](../satellite/rendezvous_docking/eval_docking_lqr.py)、[eval_fixedwing_autopilot.py](../fixedwing/eval_fixedwing_autopilot.py)、[eval_rendezvous_baseline.py](../satellite/rendezvous_docking/eval_rendezvous_baseline.py)、[rocket_pdg_test.py](../rocket/rocket_pdg_test.py)、[test_quadx_se3.py](../multirotor/test_quadx_se3.py) |
 | 确定性评测 | [eval.py](../scripts/eval.py) |
-| 任务难度轴与使用约定 | [README.md](../README.md) |

@@ -671,7 +671,8 @@ class FlashSACRunner:
             lr = self._set_lr(update_count, total_updates)
             with torch.no_grad():
                 actions = agent.act(obs, temperature=1.)
-            obs_td, rew, dones, extras = env.step(actions)
+            obs_td, rew, terminated, truncated, extras = env.step(actions)
+            dones = terminated | truncated
             next_obs = obs_td['policy'] if hasattr(obs_td, 'keys') else obs_td
             time_outs = extras.get('time_outs', torch.zeros_like(dones))
             terminated = dones & ~time_outs
