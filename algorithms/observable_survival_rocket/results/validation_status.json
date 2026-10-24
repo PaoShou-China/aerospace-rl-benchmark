@@ -1,0 +1,9 @@
+{
+  "remote_gpu_connected": false,
+  "remote_gpu_training_started": false,
+  "genesis_evaluation_run": false,
+  "new_landing_success_rate": null,
+  "cpu_test_status": "pending actual execution",
+  "synthetic_probe_status": "pending actual execution",
+  "important": "Historical benchmark numbers are existing repository records. This extension has no verified landing-performance result yet."
+}
