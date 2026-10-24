@@ -1,89 +1,109 @@
-# Observable-belief, survival-aware rocket landing (research prototype)
+# Observable-belief, survival-aware rocket landing
 
-## Actual execution status
+Research prototype based on `Yxuan-Gong` at `91a17f96e2ee289720f6bee521aab35f0ceb7647`.
+See `results/validation_status.json` for the exact tested revision and CI evidence.
 
-Based on `Yxuan-Gong` commit `91a17f96e2ee289720f6bee521aab35f0ceb7647`.
-**The authoring session has not connected to the supplied GPU and has not run
-Genesis training or evaluated a new landing policy.** The local execution
-sandbox cannot resolve the supplied SSH hostname and has no SSH client.
-No credentials are stored in the repository or passed to CI. The original
-`Yxuan-Gong` branch, remote machine and historical checkpoints are unchanged.
-CPU tests and a synthetic identification probe are provided; execution evidence
-must come from actual logs, not this README. See `results/validation_status.json`
-and the bounded CPU validation workflow. CPU tests do not certify a landing policy.
+## What has and has not been executed
 
-This is a **state-based physical-intelligence component**, not a vision-language
-action model: the repository actor consumes 30 state channels. No image/language
-VLA training is claimed. Novelty, speed and better landing performance remain
-unproven. Kalman inference, cubature and terminal MPC costs are established tools;
-combining them is not evidence of a disruptive invention.
+Actual source integration tests, a small synthetic identification check, and a
+bounded **CPU Genesis training smoke** have run. The smoke uses four environments,
+four policy steps and one training update: **16 new transitions and zero completed
+landing episodes**. It verifies collection, initialization from existing weights,
+backpropagation, the PPO/auxiliary update and checkpoint serialization. It is not
+an evaluation, a useful trained landing policy, or evidence of improved performance.
 
-## What the existing results actually say
+At tested code revision `ac77c1a0331d1d9475706cadf7dc770aef08aa5d`, all **21 tests
+passed, with zero skips**, in CI run `40057451572`. The Genesis CPU smoke also
+passed. Its artifact SHA256 is recorded in `results/validation_status.json`.
 
-The stored comparison reports 419/512 official event successes for DAgger and
-428/512 for the published physical actor. The latter has only 3/512 terminal
-settled episodes and 214 episodes that succeeded and later failed. Discordant
-pairs are 79 gains and 70 losses; the paired exact test is recomputed in the
-research audit. These are EXISTING results, not a fresh run, and they do not
-isolate architecture effects or variation across training seeds.
+The supplied remote GPU was not contacted: the authoring runtime could not resolve
+the SSH host and had no SSH client. No credentials are in source, logs or CI.
+There is no new landing success rate, multi-seed ablation or OOD performance result.
+The original branch, simulator archive and historical checkpoints are unchanged.
 
-This prototype asks whether (1) evidence-grounded uncertainty helps and (2)
-reasoning beyond first contact helps the rocket remain landed. It preserves
-original success and adds a separate metric: final 80 consecutive 40-Hz samples
-settled, without fatal/out-of-bounds failure in the first episode. This is sampled,
-not continuous-time stability. A temporary two-second dwell followed by a crash
-is not durable success. A historical final-settled count does not establish a
-two-second dwell; that metric needs fresh full-episode traces.
+This model has **state observations, not visual/language inputs**. It ports the
+physical-belief/control kernel of the VLA-Physical idea, not a full VLA backbone.
+No disruptive novelty, speedup, calibrated safety probability or flight readiness
+is claimed. Use this research prototype in simulation only.
+
+## Finding that motivates this experiment
+
+The existing comparison file reports DAgger 419/512 official successes and the
+published physical policy 428/512. For the latter, only 3/512 are settled at the
+final state, and 214 episodes succeed then fail. Paired outcomes contain 79 gains
+and 70 losses: exact two-sided McNemar p=0.5123564769. These are old repository
+records, not new experiments or a multi-training-seed architecture comparison.
+A final settled state does not establish a two-second dwell.
+
+The research question is whether factual online parameter inference and prediction
+beyond first contact can improve **remaining landed**, not merely touching the
+success condition once. Original success is always retained as a separate metric.
 
 ## Candidate architecture
 
-`ObservableSurvivalActor` reuses `ConfidenceSequenceActor`, its rigid-body and
-contact operators, mixed discrete/continuous action distribution and PPO loop.
+`ObservableSurvivalActor` extends the existing `ConfidenceSequenceActor` and reuses
+its neural seed policy, rigid-body/contact operators and PPO training loop.
 
-* **Observable physical belief:** 12 effective coefficients with a full 12x12
-  Joseph-form covariance. Local parameter sensitivities are computed through
-  the physical predictor from the actual previous state/action and measured
-  successor. No task-loss gradient changes factual parameter estimates. Invalid
-  reset transitions cannot shrink covariance. Zero sensitivity supplies no
-  information. Contact transitions are excluded from flight identification;
-  contact coefficients are not identified in this version. Noise is predicted
-  from past context, before seeing the new outcome. These are effective gains,
-  not uniquely recovered physical mass and thrust.
-* **Settling continuation:** near the pad, candidate actions are additionally
-  evaluated with a shared engine-off continuation through the existing contact
-  surrogate. This is a fixed-policy counterfactual heuristic, not an optimal
-  value function, invariant set or proof of safety. Wrong contact physics can
-  make it harmful; the no-tail ablation is mandatory.
+1. **Evidence-grounded physical memory.** Twelve effective coefficients and a
+   full 12x12 covariance are updated with a Joseph-form filter using the local
+   parameter Jacobian of the physical predictor. Evidence consists of the actual
+   preceding state, executed action and subsequent observation. Task reward cannot
+   directly change factual parameter estimates. These coefficients are effective
+   corrections, not separately identifiable mass/thrust measurements.
+2. **Observable directions only.** Missing/reset transitions leave the belief
+   unchanged. Zero sensitivity supplies no information. Contact transitions are
+   excluded from flight identification; the contact parameters retain prior
+   uncertainty and are NOT identified in this version. Observation noise is
+   predicted from past context before the outcome is seen.
+3. **Physical action inference.** Twenty-five positive-weight cubature points
+   represent all twelve covariance directions. Candidate continuous controls and
+   the two ignition branches are evaluated through the shared physical model.
+4. **Counterfactual settling continuation.** Near the pad, a common engine-off
+   continuation adds predicted bounce, tipping and residual-motion cost. Research
+   configuration uses forty steps (one second); smoke tests use two. This fixed
+   continuation is a heuristic, not an optimal terminal value or a safety proof.
 
-A 25-point positive-weight cubature rule represents all 12 covariance directions.
-The points are not calibrated posterior samples or confidence bounds. Model bias,
-parameter clipping and robust innovations mean nominal Gaussian intervals require
-empirical coverage checks. State-observation noise remains an important limitation.
-The method may be substantially slower than the seven-hypothesis baseline; no
-speedup is claimed. It does not infer new contact mechanisms.
+Covariance is approximate. Clipping, state-observation error and structural model
+bias prevent unconditional Gaussian coverage claims. Cubature points are not
+confidence bounds. A wrong contact model can make the continuation harmful. Its
+no-tail ablation is mandatory. Twenty-five hypotheses and a longer rollout may
+cost substantially more than the existing policy; runtime must be measured.
 
-## Relationship to the current repository environment
+The default forty-step tail has regression tests for higher-order gradients near
+contact. A norm-at-zero second-derivative failure found during testing was fixed
+by using squared radial excess in the new tail cost. No simulator physics was
+altered to make this test pass. Finite gradients at test points are not global
+numerical-stability guarantees.
 
-The existing packaged actor uses the preserved upstream snapshot from commit
-`39e6bb6fd5d0f5432f7405a76946938a469492ce`. This extension deliberately evaluates
-on that SAME snapshot for comparability. The current `environments/rocket/env.py`
-has different action-interface/reward revisions, so the old normalized ignition
-and throttle channels must NOT be passed to it without a separately tested
-adapter. No claim of evaluation on the current live environment is made here.
+## Environment and action interface
 
-## Code
+For comparability, this experiment uses the existing package's archived environment
+at `39e6bb6fd5d0f5432f7405a76946938a469492ce`, with its original complete episode
+horizon and success/termination checks. It does not silently rewrite the live
+`environments/rocket` package or substitute a different landing task.
 
-- `observable_belief.py`: full-covariance update and covariance-matching cubature.
-- `rocket_observable_survival.py`: actor extension with factual inference and tail cost.
-- `survival_metrics.py`: separate first-episode terminal-dwell metrics.
-- `prepare_experiment.py`: hash-checks reviewed sources, creates a private experiment
-  copy, patches the architecture registry and evaluator, records hashes.
-- `preflight.py`: read-only CUDA/dependency check; no installs or workload launch.
-- `run_gpu_smoke.sh`: explicit bounded foreground smoke training.
-- `synthetic_probe.py`: linear acceleration identification; NOT Genesis or a VLA.
-- `tests/`: unit tests and actual-checkout forward/backward integration tests.
+Both inspected environment implementations accept normalized policy actions in
+[-1,1] and internally map ignition/throttle to [0,1]. An earlier documentation
+draft overstated an interface difference; comparing `_scale_actions` corrected
+that statement. Physical actuator ranges must not be confused with policy input
+ranges. Execution through the current live package's different import layout has
+not been separately validated here.
 
-## Local tests
+## Metrics
+
+`StableLandingMonitor` records the first episode only. Supplemental durable
+success requires the FINAL eighty consecutive 40-Hz observations to satisfy the
+settled condition, with no fatal/out-of-bounds failure. A two-second temporary
+dwell followed by a crash does not pass. This is a sampled condition, not a
+continuous-time certificate. Terminal samples are recorded before auto-reset,
+and nonterminal samples afterward; episodes are not ended on first success.
+
+## Reproduce
+
+Use a clean checkout of `experiment/observable-survival-rocket-v1` and the existing
+experiment's dependencies. The CI workflow records exact installed versions.
+A CPU Genesis run also needs a functioning headless EGL implementation; CI uses
+software Mesa. No changes to simulation physics are required for that renderer.
 
 ```bash
 python -m pytest algorithms/observable_survival_rocket/tests -q -ra
@@ -91,29 +111,31 @@ python algorithms/observable_survival_rocket/synthetic_probe.py \
   --out /tmp/rocket_synthetic_probe.json
 ```
 
-The actual-source integration test explicitly skips when the checkout or `rsl_rl`
-is unavailable. A skip is not a pass. The CPU CI workflow installs the published
-experiment's versions; dependency-install failure must be resolved, not hidden.
+Actual-source tests explicitly skip if their real dependencies are missing. A
+skip is not a pass. The synthetic probe is just a noisy linear acceleration
+model with known inputs and the correct observation equation. It demonstrates
+filter arithmetic, not rocket control or superiority over adaptive MPC.
 
-## GPU smoke test — not already run
-
-Use a clean checkout of this feature branch and the repository's existing
-experiment dependencies. No SSH credentials belong in these commands or files.
+On the GPU machine, with its environment activated:
 
 ```bash
 bash algorithms/observable_survival_rocket/run_gpu_smoke.sh \
   /root/autodl-tmp/observable-survival-smoke-01
 ```
 
-The output directory must be new. This neither overwrites previous experiments
-nor changes the reference environment. The wall-time limit is 45 minutes. The
-smoke run uses 16 environments x 8 steps x 2 updates = 256 new transitions and a
-2-step tail. It is only a software test. Research configs use a 40-step tail.
+The output directory must be NEW. The launcher checks dependencies, runs tests,
+creates an isolated experiment bundle and runs a foreground smoke with a
+45-minute timeout. It does not install packages, use SSH credentials, overwrite
+old experiments or start a background job. GPU smoke: 16 environments x 8 steps
+x 2 updates = 256 NEW transitions. It is still not a performance experiment.
 
-Preparation generates `full.json`, `no_tail.json`, `fixed_belief.json`,
-`no_solver.json`, and `confidence_control.json`, all with the same initialization,
-25 hypotheses, persistent training reward and 131,072 new-transition budget.
-The no-solver setting removes solver execution, not every physical auxiliary loss.
+The preparer generates full/no-tail/fixed-belief/no-solver/confidence-control
+configs, with the same initial checkpoint, twenty-five hypotheses, persistent
+training reward and **131,072 additional transitions**. Existing history is
+accounted separately: the shipped initialization already has 6,225,920 recorded
+transitions. None of these runs is learning from scratch or a small-total-data claim.
+An explicit additional budget prevents short continuation runs from accidentally
+being interpreted as a total budget smaller than their inherited training history.
 
 ```bash
 python /root/autodl-tmp/observable-survival-smoke-01/bundle/scripts/run.py train \
@@ -126,37 +148,29 @@ python /root/autodl-tmp/observable-survival-smoke-01/bundle/scripts/evaluate.py 
   --backend gpu --workers 1
 ```
 
-Evaluate the trained run directly. Do not use `prepare-eval` for a new architecture;
-that entrypoint is for the historical packaged checkpoint. Terminal samples are
-recorded before auto-reset; nonterminal samples afterward. Episodes do not end
-early merely because success occurred once.
+Evaluate the newly trained run directly. `prepare-eval` targets the historical
+packaged checkpoint, not this new architecture. The no-solver setting removes
+solver execution, not all physical auxiliary losses. Preparation verifies source
+hashes and stops on source drift instead of applying an unreviewed patch.
 
-## Pre-registered research comparison
+## Required research validation, not yet completed
 
-Use at least three training seeds, equal new transitions, identical initial
-checkpoints, sensor information, action limits and complete original horizons.
-Keep the four historical 128-environment cohorts as development sets. Freeze
-hyperparameters before using new pre-specified held-out evaluation seeds; a new
-sealed-test runner is not implemented here. Include conventional/adaptive control
-with the same information budget. Primary comparisons are full vs no-tail and
-fixed-belief on durable success without material loss of official success.
+Use at least three training seeds, equal additional interactions and identical
+initialization, sensor access, actuator limits and full episode lengths. Compare
+full versus no-tail and fixed-belief, as well as the existing confidence policy
+and a conventional/adaptive controller with the same information budget.
 
-Report original success, terminal settle, terminal two-second dwell,
-success-then-failure, speed/tilt, predictive errors, covariance coverage and interval
-width, action latency including optimization, and total training time. Pair
-initial states and report training-seed variability separately. Correlated
-transitions are not independent landing trials.
+Report official success, final settle, terminal dwell, success-then-failure,
+terminal velocities/tilt, predictive errors, empirical interval coverage AND
+width, end-to-end latency and training time. Pair initial states by hashes;
+report training-seed variability separately. Time steps are not independent
+landing trials. The historical four 128-environment cohorts are development
+sets, not a fresh sealed test set. A new sealed-test runner is not implemented.
 
-Thrust effectiveness, aerodynamic disturbance and actuator-lag shifts need a
-separately labeled evaluation extension, not hidden edits to the frozen benchmark.
-They are NOT implemented here. Specify feasible ranges before testing.
+Thrust, wind/aerodynamic and actuator-delay distribution shifts require a separately
+labeled evaluation extension with feasible, pre-specified ranges. They are NOT
+silently added to the unchanged reference benchmark and are not implemented here.
 
-## Limits
-
-The contact surrogate is not the Genesis contact solver. A short engine-off tail
-cannot guarantee sustained stability. Full covariance is still approximate and
-does not solve structural model mismatch or unobservable parameter separation.
-The actor requires actual-source integration and GPU smoke tests before research
-training. The synthetic probe only tests elementary filter behavior under a
-correct linear measurement equation; it says nothing about rocket success or
-superiority over adaptive MPC. Use this prototype in simulation only.
+The central hypothesis remains unproven: better factual uncertainty and a
+post-contact continuation might improve durable landing, but the contact surrogate,
+compute cost, partial observability and model mismatch can also make it worse.
