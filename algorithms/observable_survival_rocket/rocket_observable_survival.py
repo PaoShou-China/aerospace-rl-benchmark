@@ -124,7 +124,10 @@ class ObservableSurvivalActor(ConfidenceSequenceActor):
             angular = s[:, 10:13].square().sum(-1)
             tilt = s[:, 6:8].square().sum(-1)
             height = (s[:, 2]-2.575).square()
-            off_pad = nn.functional.relu(s[:, :2].norm(dim=-1)-1.4).square()
+            # Squared radius avoids the undefined second derivative of ||xy||
+            # at the pad center when backpropagating through the optimizer.
+            radial_excess = (s[:, :2].square().sum(-1) - 1.4**2) / (2*1.4)
+            off_pad = nn.functional.relu(radial_excess).square()
             penalty = velocity/.09 + angular/.01 + 80*tilt + height/.04 + 10*off_pad
             tail = tail + penalty.clamp_max(1000)/self.tail_steps
         tail = tail.reshape(n, 2, h)
