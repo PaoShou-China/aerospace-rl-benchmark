@@ -1,7 +1,7 @@
 """RSL-RL PPO training entry for the CWH docking task (SpaceDockingEnv).
 
 Clohessy-Wiltshire-Hill relative motion in the LVLH frame of a 400 km circular
-orbit (pure-tensor symplectic Euler, dt = 1 s): final approach from 50-100 m
+orbit (pure-tensor symplectic Euler, dt = 1 s): final approach from 60-120 m
 separation to range < 1 m with closing speed < 0.1 m/s within 500 steps,
 without exceeding the 200 m failure bound.
 

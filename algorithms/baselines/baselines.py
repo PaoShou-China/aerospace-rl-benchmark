@@ -20,7 +20,7 @@ Methods
     rendezvous  receding-horizon CWH two-impulse terminal guidance (exact
                 symplectic STM, online transfer-time ratchet) to a hold point
                 between the keep-out and success spheres
-    missile     augmented proportional navigation (APN, N=4, half-N gravity
+    missile     augmented proportional navigation (APN, N=15, half-N gravity
                 compensation, first-order LOS-rate filter) mapped through the
                 skid-to-turn kinematic inverse to body-rate commands
 
@@ -330,8 +330,9 @@ class FixedwingAutopilotBaseline(Baseline):
       throttle (a3 + 1) / 2 with thrust = throttle^2 * 18 N.
     * Observation: wb(0:3), quat xyzw(3:7), body velocity vb(7:10), world
       position p(10:13), target deltas in body frame(23:35, slot k = target
-      target_index + k), validity(35:39). No wind field exists in the
-      tensorized plant, so airspeed = ground speed = |vb|.
+      target_index + k), per-target validity(35:39). The tensorized plant
+      supports a wind field; aero evaluates v_air = v - wind, so in calm air
+      (the default) airspeed = ground speed = |vb|.
     * Env euler convention (x fwd, y left, z up): positive roll = right bank,
       positive pitch = nose down, so nose-up commands are negative pitch.
     * Guidance laws: L1 (Park, Deyst & Howe 2004) turns the line-of-sight
@@ -597,9 +598,10 @@ class RocketPDGBaseline(Baseline):
         massless) + fuel*410.9 kg on the fueltank link.  Spawn fuel is 5%
         (20.5 kg), so the booster lifts off at ~158.7 kg: full thrust gives
         T/W = 4.9 (net braking ~43 m/s^2 with drag, probe-measured), and
-        MIN thrust/weight = 1.91 > 1 -- once lit the engine cannot follow a
-        slow descent, so the terminal phase is a min-thrust pulse train with
-        coasting between pulses (hysteresis on the observed ignited flag).
+        MIN thrust/weight = 1.91 > 1 (net +8.9 m/s^2 at the spawn mass) --
+        once lit the engine cannot follow a slow descent, so the terminal
+        phase is a min-thrust pulse train with coasting between pulses
+        (hysteresis on the observed ignited flag).
       * Attitude authority (probe-measured): the grid fins act as a strong
         AERO RESTORING SPRING pulling body +z toward the retrograde flow
         axis, k_aero ~ 3.6*V^2 N m/rad (23e3 N m/rad at 80 m/s); at full
@@ -610,12 +612,16 @@ class RocketPDGBaseline(Baseline):
         allocated by ceiling (fast TVC first, fins for the remainder), and
         the lateral guidance is capped to tilt-consistent demands
         (|a_lat| <= 0.14 * vertical acceleration, i.e. <= ~8 deg).
-      * Control: 40 Hz policy command held for 3 inner steps (120 Hz) at
-        240 Hz physics; the engine relights per physics step (cmd > 0.5).
+      * Control: 60 Hz policy command held for 2 inner steps (120 Hz) at
+        240 Hz physics; 1800 policy steps = 30 s episode limit; the engine
+        relights per physics step (cmd > 0.5).
       * Landing (unchanged criteria): pad contact (radius 2 m, top z = 0.15,
         rest base height ~2.575 m) is fatal iff the pre-contact speed
-        exceeds 1.0 m/s or spin 0.35 rad/s; success requires settling on the
-        pad to speed/spin < 0.02 with tilt < 0.1 rad.
+        exceeds 1.0 m/s or spin 0.35 rad/s; success requires speed/spin < 0.02
+        with tilt < 0.1 rad, judged on the state at the start of the contact
+        inner step (i.e. the previous inner-step state).  Success does not
+        truncate: the rocket keeps earning the settled contact stream until
+        the 30 s limit.
 
     Guidance: closed-form ZEM/ZEV to the pad rest point with zero terminal
     velocity.  Time-to-go is re-solved each step from a constant-decel descent
@@ -1540,9 +1546,10 @@ def _quat_to_matrix(q_xyzw):
 
 @register_baseline('missile')
 class MissileAPNBaseline(Baseline):
-    """APN guidance (N=4) with half-N gravity compensation, mapped to the
-    env's body-rate command interface through the skid-to-turn kinematic
-    inverse ``omega = cross(b_x, a_lat) / V``: rotating the thrust axis toward
+    """APN guidance (N=15, retuned from the N=4/N=10 lineage in the constant
+    below) with half-N gravity compensation, mapped to the env's body-rate
+    command interface through the skid-to-turn kinematic inverse
+    ``omega = cross(b_x, a_lat) / V``: rotating the thrust axis toward
     the commanded lateral-acceleration direction at the turn rate a/V that
     curves the velocity vector accordingly.  Sole internal state: a
     first-order low-pass filter on the body-frame LOS rate (reset_idx-clear).

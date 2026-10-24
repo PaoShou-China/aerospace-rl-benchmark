@@ -3,7 +3,7 @@
 
 Clohessy-Wiltshire-Hill relative motion in the LVLH frame of a 400 km circular
 orbit (pure-tensor symplectic Euler, dt = 1 s): medium-range approach from
-800-1200 m to range < 10 m with speed < 0.5 m/s within 1000 steps, while
+1000-1500 m to range < 10 m with speed < 0.5 m/s within 1000 steps, while
 avoiding the 5 m keep-out sphere around the target and the 2000 m failure
 bound.
 
@@ -40,7 +40,9 @@ Spawn distribution (2026-10-21): the 800-1200 m spawn makes the terminal
 shared wide net) while the same CWH machinery reaches ~94% on docking at
 50-100 m; training runs directly at the benchmark spawn. The
 task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
-eval.py (no env kwargs) always evaluates the full 800-1200 m benchmark.
+eval.py (no env kwargs) always evaluates the full benchmark spawn
+(1000-1500 m since 2026-10-24, widened from 800-1200 m after the baseline
+sat at 100% success).
 
 Narrow net: 64x64 was the only arm that learned this task (22% success vs
 0.8% for 512x256x128), so the shared residual trunk is pinned to 64.

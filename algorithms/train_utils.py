@@ -4,11 +4,12 @@ Importing requires only the repository root on sys.path (so `algorithms.*` and
 `environments.common.*`, including the vendored
 `environments.common.original_pyflyt.*` sources, resolve).
 
-`run_training()` reproduces the exact rsl-rl PPO loop, checkpoint handling
-and run reporting of the original train.py. All run parameters are passed in
-as plain constants from the per-task entry files -- nothing is read from the
-command line -- and the PPO/model configuration is identical across tasks so
-results stay directly comparable.
+`run_training()` drives the rsl-rl PPO loop (or the FlashSAC runner) with the
+checkpoint handling and run reporting of the original train.py. All run
+parameters are passed in as plain constants from the per-task entry files --
+nothing is read from the command line -- and the PPO/model configuration
+defaults are shared across tasks so results stay directly comparable; an entry
+pins only the variables under test.
 """
 import copy
 import json
@@ -75,8 +76,9 @@ def build_cfg(*, lr_schedule='fixed',
     at -377 with 0% success, results/quadx_sweep). Fixed 1e-3 is the A/B
     winner on every task where the two were compared (quadx 300-update sweep,
     fixedwing 150-update A/B, docking, rendezvous), so it is the shared
-    default; entries with a different proven optimum pin it explicitly
-    (docking fixed 3e-4, transfer adaptive 3e-4)."""
+    default; the shipped entries pin their per-task proven optimum
+    (quadx/fixedwing/rocket/satellite/rendezvous/docking/missile fixed 3e-4,
+    transfer fixed 2.5e-4)."""
     if arch not in ('flash_residual', 'mlp'):
         raise ValueError(f'unknown arch {arch!r} (expected flash_residual | mlp)')
     if arch == 'flash_residual':

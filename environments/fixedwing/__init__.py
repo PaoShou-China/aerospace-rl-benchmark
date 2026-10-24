@@ -21,19 +21,31 @@ Action Space (4,)
         elevator [-1, 1] (symmetric tail, pitch command)
         rudder   [-1, 1] (vertical tail, yaw command)
         throttle [-1, 1], remapped to [0, 1]
+    Channel a2 is dead by upstream design (it maps to the main wing, whose
+    deflection limit is zero, so the plant multiplies it by 0): the
+    effective action dimensionality is 3. The mapping is retained verbatim
+    for parity and must not be "fixed".
 
-Observation Space (38,)
+Observation Space (39,)
     float32, unbounded, 'policy' TensorDict group:
     [body angular velocity (3), quaternion xyzw (4), body-frame linear
-    velocity (3), position (3), last action (4), surface actuations (5),
-    remaining-waypoint relative positions in body frame (4 x 3),
-    waypoint validity flags (4)].
+    velocity (3), position (3), last action (4), surface actuations (5,
+    ailerons L/R, horizontal/vertical tail, main wing), throttle (1),
+    remaining-waypoint positions relative to the body (4 x 3, invalid
+    slots zeroed), waypoint validity flags (4)].
 
 Reward
-    Per control step: r_t = r_{t-1} + 3 * max(d_{t-1} - d_t, 0) + 1 / d_t,
-    where d_t is the range to the active waypoint. Waypoint capture
-    (d < 2 m) replaces the accumulated reward with 100; ground contact or
-    out-of-bounds replaces it with -100. -0.1 per-step living cost.
+    Potential-based telescoping shaping. With d_i the range to the active
+    waypoint and L(i) the remaining leg-length suffix,
+        Phi(s) = -(d_i + L(i)),  and 0 once all four waypoints are captured;
+        r_t = Phi(s_{t+1}) - Phi(s_t) + 15 * c_t - 10 * kappa_t,
+    where c_t counts captures during the policy step (capture is tested at
+    120 Hz) and kappa_t marks a crash or out-of-bounds event. The shaping
+    telescopes to the flown route length: progress pays its true value,
+    orbiting a waypoint nets exactly zero, and a crash or timeout forfeits
+    the unrealized potential. The +15 per waypoint keeps a crisp sparse
+    event; the -10 sharpens failure. A capture is a 10 m sphere around the
+    waypoint (about one minimum turn radius).
 
 Episode End
     Termination: ground contact, or ||p|| > 100 m.
@@ -41,8 +53,9 @@ Episode End
     Truncation: 3600 policy steps (120 s).
 
 Difficulty
-    None. Waypoints spawn on the 20-65 m shell (the published benchmark).
-    An optional wind disturbance (steady_wind/dryden ctor kwargs) exists;
+    None. Waypoints spawn on the 20-65 m shell (the published benchmark;
+    altitude floor 20 m). Manual spawn-noise knobs are absent and an
+    optional wind disturbance (steady_wind/dryden ctor kwargs) exists;
     calm air is bit-for-bit with the benchmark.
 
 References
@@ -51,6 +64,7 @@ References
       PyFlyt 0.29.0).
     - Genesis (github.com/Genesis-Embodied-AI/Genesis), rigid-body engine.
     - rsl_rl (github.com/leggedrobotics/rsl_rl), PPO training backend.
+    - Method documentation: docs/method/env-fixedwing-waypoints.md.
 """
 
 from .env import FixedwingWaypointsEnv

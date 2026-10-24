@@ -8,7 +8,7 @@ Transfer using Dynamics-Agnostic Reinforcement Learning" (arXiv:2211.08272,
 IEEE). A 100 kg medium-Earth-orbit satellite with three orthogonal thruster
 pairs (10 mN per pair, Isp 4000 s) fires for 166 control steps of 5 minutes
 (~5 revolutions) to raise the pericenter radius of an initial a=10000 km,
-e=0.1, i=pi/3 orbit while keeping the apocenter radius and propellant use
+e=0.15, i=pi/3 orbit while keeping the apocenter radius and propellant use
 low; the initial mean anomaly is re-sampled uniformly at every reset.
 
 Dynamics: two-body point-mass gravity (WGS84 mu) + constant thrust over
@@ -76,7 +76,9 @@ class LowThrustTransferEnv:
         self.g0=9.80665          # standard gravity [m/s^2]
         self.mass0=100.          # initial mass [kg]
         self.sma0=1.0e7            # initial semi-major axis [m]
-        self.ecc0=0.1
+        # 2026-10-24: e0 raised 0.1 -> 0.15 (baseline sat at 100% success);
+        # rp0 = 8.5e6 m, ra0 = 1.15e7 m. ra_ref/rp_ref/vel_ref below recompute.
+        self.ecc0=0.15
         self.inc0=math.pi/3
         self.raan0=2*math.pi/3
         self.argp0=4*math.pi/3

@@ -16,7 +16,7 @@ constructor argument `num_cmgs` (default $N=4$):
   $200\ \mathrm{rad/s}$ with $h = 0.0125\ \mathrm{kg\,m^2/s}$ per CMG.
 
 At every reset the bus attitude, body rate and gimbal angles are perturbed by
-$10^{-3}$-scale noise about a momentum-neutral home state and a target
+$10^{-2}$-scale noise about a momentum-neutral home state and a target
 attitude is sampled uniformly on $\mathrm{SO}(3)$. The agent commands gimbal
 rates to slew the bus onto the target while steering around internal cluster
 singularities, quantified by the normalized manipulability
@@ -173,7 +173,7 @@ the package `__init__.py`. Constructor defaults: `num_envs=64`,
 | control cost | $5\times10^{-4}\,\lVert\delta\rVert^2$ |
 | success tolerances | $e < 0.05$ rad, $\lVert\omega\rVert < 0.02$ rad/s |
 | settle bonus / fail threshold / fail penalty | $+1.0$ / $10$ rad/s / $-10.0$ |
-| reset noise scale | $10^{-3}$ |
+| reset noise scale | $10^{-2}$ (raised from $10^{-3}$ on 2026-10-24; baseline was at 100% success — initial $\lVert\omega\rVert$ up to $\approx 0.017$ rad/s now sits just under the $0.02$ success tolerance) |
 | 4-CMG: $I$ / rotor / $h$ | $(75,60,113)$ / $0.2\ \mathrm{kg\,m^2}$ @ 100 rad/s / 20 |
 | 6-CMG: $I$ / rotor / $h$ | $(0.055,0.055,0.085)$ / $6.25\times10^{-5}\ \mathrm{kg\,m^2}$ @ 200 rad/s / 0.0125 |
 

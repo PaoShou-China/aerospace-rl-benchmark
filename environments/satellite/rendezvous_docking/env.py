@@ -13,11 +13,11 @@ mu = 3.986e14, n ~ 1.13e-3 rad/s), integrated with the paper's symplectic
 Euler scheme at dt = 1 s (Algorithm 1), fully tensorized on one device
 (no engine, no gym).
 
-Docking: final approach from a 50-100 m separation; success requires
+Docking: final approach from a 60-120 m separation; success requires
 < 1 m and < 0.1 m/s; failure beyond 200 m range or fuel exhaustion
 (2 kg budget: the paper's 50 kg cannot bind at Isp=300 s, where a
 full-thrust episode consumes < 3 kg); 500-step limit. Rendezvous:
-medium-range approach from 800-1200 m to a < 10 m & < 0.5 m/s goal while
+medium-range approach from 1000-1500 m to a < 10 m & < 0.5 m/s goal while
 avoiding a 5 m radius keep-out sphere; failure on keep-out violation,
 fuel depletion (4 kg budget, same rescaling), or 2 km range; 1000-step
 limit. Masked (inactive) replicas are frozen and consume no random
@@ -280,7 +280,9 @@ class SpaceDockingEnv(_CWHBase):
     """
     vehicle='docking'
     max_steps=500
-    init_range=(50.,100.)
+    # 2026-10-24: (50,100) -> (60,120) m (baseline sat at 100% success); the
+    # 120 m top stays 40 m below the 0.8*range_fail shield corridor.
+    init_range=(60.,120.)
     init_vmax=.5
     pos_goal=1.
     vel_goal=.1
@@ -303,7 +305,9 @@ class SpaceRendezvousEnv(_CWHBase):
     early termination over a 1000-step horizon and never trains."""
     vehicle='rendezvous'
     max_steps=1000
-    init_range=(800.,1200.)
+    # 2026-10-24: (800,1200) -> (1000,1500) m (baseline sat at 100% success);
+    # the 1500 m top keeps 500 m margin to range_fail=2000 m.
+    init_range=(1000.,1500.)
     init_vmax=1.
     pos_goal=10.
     vel_goal=.5

@@ -17,8 +17,8 @@ disagrees with the implementation, these documents follow the code.
 | [env-missile-intercept.md](env-missile-intercept.md) | Missile-Intercept (`missile`) | 6-DOF tail-controlled missile vs kinematic maneuvering target, proximity-fuse kill |
 | [env-satellite-attitude.md](env-satellite-attitude.md) | CMG attitude control (`satellite`) | Rigid bus + 4/6-CMG cluster, singularity-aware telescoping reward |
 | [env-orbit-transfer.md](env-orbit-transfer.md) | Low-thrust transfer (`transfer`) | Two-body perigee raising, 10 mN/axis EP, PBRS telescoping onto a terminal orbital-element reward |
-| [env-docking.md](env-docking.md) | Docking (`docking`) | CWH final approach 50–100 m, discrete-symplectic integration, 1 m / 0.1 m/s success gate |
-| [env-rendezvous.md](env-rendezvous.md) | Rendezvous (`rendezvous`) | CWH medium approach 800–1200 m with a 5 m keep-out sphere, 10 m / 0.5 m/s goal |
+| [env-docking.md](env-docking.md) | Docking (`docking`) | CWH final approach 60–120 m, discrete-symplectic integration, 1 m / 0.1 m/s success gate |
+| [env-rendezvous.md](env-rendezvous.md) | Rendezvous (`rendezvous`) | CWH medium approach 1000–1500 m with a 5 m keep-out sphere, 10 m / 0.5 m/s goal |
 
 ## Learning algorithms
 

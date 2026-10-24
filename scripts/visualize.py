@@ -9,10 +9,11 @@ then replays the recording in a visual-only Genesis scene and renders an
 mp4 to results/<task>/vis.mp4.
 
 Scene conventions per task:
-  quadx       cf2x URDF on a dark slate ground plane, translucent sphere at
-              the hover target, yellow nose arrow along body +x, translucent
-              prop disks over the four motor mounts (display-only, no
-              physics), and a close follow camera scaled to the ~9 cm drone
+  quadx       cf2x URDF on a dark slate ground plane, opaque green sphere at
+              the active waypoint (PyFlyt marker scaling), yellow nose arrow
+              along body +x, translucent prop disks over the four motor mounts
+              (display-only, no physics), and a fixed PyFlyt debug-view
+              camera scaled to the ~9 cm drone
   fixedwing   fixedwing URDF, red spheres at the 4 waypoints, camera follows
   rocket      rocket URDF + landing pad on a ground plane, camera follows
   satellite   recognizable bus (grey body, +/-z equipment compartments, +x
@@ -412,7 +413,7 @@ def build_scene(task, extras, first):
     if task == 'quadx':
         # PyFlyt-style visualization (mirrors PyFlyt 0.29 quadx_envs): plain
         # grey ground, the cf2x URDF loaded as-is with no added geometry, an
-        # opaque solid green sphere at the hover point (radius = goal reach
+        # opaque solid green sphere at the active waypoint (radius = goal reach
         # distance / 4, exactly PyFlyt's waypoint_handler scaling), and a
         # fixed camera at PyFlyt's debug-view angles (yaw 30, pitch -30).
         # The drone is ~9 cm across, so cameraDistance is scaled down from
@@ -681,7 +682,7 @@ def render(task, frames, extras, out_path, fps):
         if task == 'quadx':
             # PyFlyt-style: the URDF renders as-is (no display attachments),
             # camera fixed at the debug-view pose (yaw 30, pitch -30 over the
-            # hover point) instead of following the body
+            # initial waypoint) instead of following the body
             rgb_frames.append(cam.render(rgb=True, force_render=True)[0])
             continue
         if space:

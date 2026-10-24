@@ -6,7 +6,8 @@ The off-policy arm is a port of FlashSAC (Kim et al., 2026, arXiv:2604.04539) to
 batched GPU environment protocol (`algorithms/flashsac/flash_sac.py`). FlashSAC is a soft
 actor-critic variant that sharply reduces the number of gradient updates relative to SAC —
 one update per interaction step — and compensates with larger norm-controlled networks, keeping
-bootstrapped critic learning stable by explicitly bounding weight, feature and gradient norms. The
+bootstrapped critic learning stable by bounding weight and feature norms, which in turn keeps
+backpropagated gradient norms in a stable range. The
 port is faithful to the official implementation (`github.com/holiday-robot/flashsac`); documented
 non-algorithmic deviations are a device-resident ring replay buffer in the suite's own env protocol
 (no gym, no CPU round-trips anywhere in the loop) and fp16 AMP wired but disabled by default.

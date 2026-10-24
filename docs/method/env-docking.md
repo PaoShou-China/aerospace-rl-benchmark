@@ -4,7 +4,7 @@
 
 The docking task reproduces the close-range final-approach benchmark of the
 SpaceGym proximity-operations suite (Supreeth & Mehta, CVPR 2026 Workshop on
-AI4Space, Section 3.1). A chaser, initialized 50–100 m from a target on a
+AI4Space, Section 3.1). A chaser, initialized 60–120 m from a target on a
 circular 400 km low-Earth orbit, must close to within 1 m with terminal
 relative speed below 0.1 m/s, without exceeding a 200 m range limit or a
 2 kg propellant budget. Relative motion follows the
@@ -137,7 +137,7 @@ At reset, the position direction is uniform on the unit sphere and the
 separation uniform in the task range; the velocity has an independent
 uniform direction with magnitude uniform on $[0, v_{\max}]$:
 \begin{equation}
-p_0 = d\,\hat u,\quad d\sim\mathcal{U}[50,100]\ \mathrm{m},\quad \hat u\sim\mathcal{U}(S^{2}),\qquad
+p_0 = d\,\hat u,\quad d\sim\mathcal{U}[60,120]\ \mathrm{m},\quad \hat u\sim\mathcal{U}(S^{2}),\qquad
 v_0 = s\,\hat w,\quad s\sim\mathcal{U}[0,0.5]\ \mathrm{m/s},\quad \hat w\sim\mathcal{U}(S^{2}), \tag{9}
 \end{equation}
 with $\hat u,\hat w$ independent. Fuel, step counter, and all episode flags
@@ -158,7 +158,7 @@ of episodes ending this step with `complete` set) and `init_range_hi`;
 | Constant | Value |
 |---|---|
 | `max_steps` | 500 (`max_episode_length` buffer 502) |
-| `init_range` | (50, 100) m |
+| `init_range` | (60, 120) m (widened from (50, 100) m on 2026-10-24; baseline was at 100% success) |
 | `init_vmax` | 0.5 m/s |
 | `pos_goal` / `vel_goal` | 1 m / 0.1 m/s |
 | `range_fail` | 200 m |

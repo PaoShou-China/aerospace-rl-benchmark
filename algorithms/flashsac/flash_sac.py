@@ -1,8 +1,11 @@
 """FlashSAC (Kim et al., 2026, arXiv:2604.04539, RSS'26) ported to the batched
-GPU environment protocol of this suite -- a fast and stable off-policy SAC that
-sharply reduces gradient updates while compensating with larger models, and
-keeps bootstrapped critic learning stable by explicitly bounding weight,
-feature and gradient norms.
+GPU environment protocol of this suite -- a fast and stable off-policy SAC
+that sharply reduces gradient updates while compensating with larger models,
+keeping bootstrapped critic learning stable by bounding weight and feature
+norms (unit-norm linear rows, sqrt(d)-bounded BatchNorm/RMSNorm affines).
+Gradient control is implicit in those bounds -- unit weights and normalized
+features bound each block's Jacobian -- and no gradient clipping is applied
+in the update path.
 
 Faithful to the official implementation (github.com/holiday-robot/flashsac):
 
@@ -27,14 +30,15 @@ Faithful to the official implementation (github.com/holiday-robot/flashsac):
   warmup-cosine-decay learning rate, EMA target critic (tau=0.01).
 
 Differences from the official repo (documented deviations, none
-algorithmic): torch.compile and fp16 AMP are wired but default OFF (the
-2-block 128/256-wide MLPs here are small; AMP made no difference in smoke
-runs and complicates debugging), and the replay buffer is a device-resident
-ring buffer in our own env protocol -- no gym, no CPU round-trips anywhere in
-the loop. Episode boundaries follow this suite's convention: resets happen
-inside ``step()``, so the buffer stores the pre-reset ``next_observation``
-from ``extras['terminal_observations']``; true terminations cut the TD
-bootstrap while time-limit truncations keep bootstrapping.
+algorithmic): fp16 AMP is wired behind `use_amp` (GradScaler) and defaults OFF
+(the 2-block 128/256-wide MLPs here are small; AMP made no difference in smoke
+runs and complicates debugging); there is no torch.compile path in this port.
+The replay buffer is a device-resident ring buffer in our own env protocol --
+no gym, no CPU round-trips anywhere in the loop. Episode boundaries follow
+this suite's convention: resets happen inside ``step()``, so the buffer stores
+the pre-reset ``next_observation`` from ``extras['terminal_observations']``;
+true terminations cut the TD bootstrap while time-limit truncations keep
+bootstrapping.
 """
 import math
 from pathlib import Path

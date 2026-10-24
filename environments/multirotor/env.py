@@ -41,10 +41,14 @@ CRASH_PENALTY = 10.0
 # reachable for both scripted and learned policies.
 CAPTURE_RADIUS = 0.2
 # Waypoint shell: upstream WaypointHandler samples distance uniform in
-# [1, 0.9*dome] with dome = 5 m. Altitude floor: upstream uses 0.1 m, raised
-# to 0.4 m so a capture pass cannot clip the ground-contact termination.
-WAYPOINT_MIN_RADIUS = 1.0
-WAYPOINT_MAX_RADIUS = 4.5
+# [1, 0.9*dome] with dome = 5 m. 2026-10-24: the benchmark shell was widened
+# to [1.5, 4.8] m (the SE(3) baseline sat at 100% success, so the task was
+# made slightly harder: no trivially close targets, and far targets push the
+# capture sphere to 0.2 m from the out-of-bounds wall). Altitude floor:
+# upstream uses 0.1 m, raised to 0.4 m so a capture pass cannot clip the
+# ground-contact termination.
+WAYPOINT_MIN_RADIUS = 1.5
+WAYPOINT_MAX_RADIUS = 4.8
 WAYPOINT_MIN_HEIGHT = 0.4
 
 

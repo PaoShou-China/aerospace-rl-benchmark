@@ -35,10 +35,11 @@ Observation Space (34,)
 Reward
     Per inner (120 Hz) step, active replicas only:
     r = +0.01 * (d_prev - d)      telescoping closing-progress potential
-        - 0.5  * ||LOS rate||_body    PN-consistency pressure
-        - 0.01 * ||action||^2         rate-command effort
-        + 50   on kill (once)         -10 on unrecoverable miss (once)
-    Components are logged as Episode/rew_{progress,los,ctrl,kill,miss}.
+        + 0.02 * (v_hat . r_hat)  velocity/LOS alignment (dense,
+                                  PN-consistent guidance shaping)
+        - 0.01 * ||action||^2     rate-command effort
+        + 50   on kill (once)     -10 on unrecoverable miss (once)
+    Components are logged as Episode/rew_{progress,align,ctrl,kill,miss}.
 
 Episode End
     Success (completes + truncates immediately): miss distance <
@@ -49,11 +50,16 @@ Episode End
     Truncation: 900 policy steps (15 s).
 
 Engagement Geometry
-    Single fixed medium operating point (2026-10-24 user decision): initial
-    range 2500 m, target-heading cone
-    half-width +-37.5 deg around the missile bearing, target lateral
-    acceleration 7.5 g, weave frequency 0.75 Hz. The 15 m kill radius is
-    FIXED and never scaled.
+    Single fixed medium operating point (2026-10-24 decision; the static
+    difficulty kwarg was removed): initial range 2500 m, target-heading
+    cone half-width +-37.5 deg around the missile bearing, target lateral
+    acceleration 7.5 g, weave frequency 0.75 Hz. Fire-control lead aims at
+    the straight-line target extrapolation over
+    t_go = TGO_SCALE * R / (V_M0 + V_T) with TGO_SCALE = 0.8 (about 4.0 s);
+    the kill radius is FIXED at 15 m and never scaled. Reset runs no
+    warmup: the boost engine fires autonomously on the first active
+    physics step, so a zero-command warmup would burn thrust before the
+    first policy step and an airborne missile has no contacts to settle.
 
 References
     - BVR Gym (arXiv:2403.17533): PN-guided BVR missile modelling practice.
@@ -62,6 +68,7 @@ References
       Reinforcement Learning" (PPO, overload/LOS state convention).
     - Genesis (github.com/Genesis-Embodied-AI/Genesis), rigid-body engine.
     - rsl_rl (github.com/leggedrobotics/rsl_rl), PPO training backend.
+    - Method documentation: docs/method/env-missile-intercept.md.
 """
 
 from .env import MissileInterceptEnv

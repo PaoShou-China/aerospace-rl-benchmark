@@ -3,8 +3,9 @@
 Fixedwing-Waypoints (`FixedwingWaypointsEnv`, task id `fixedwing`): a 2.35 kg
 fixed-wing UAV capturing 4 waypoints. URDF rigid-body dynamics on the Genesis
 engine (240 Hz) with blade-element aerodynamics (incl. stall) and a 30 Hz
-policy; 3600 steps = 120 s per episode; success = 4/4 waypoints captured
-(< 2 m). Task spec lives in the package docstring [`__init__.py`](__init__.py).
+policy; 3600 steps = 120 s per episode; obs is 39-dim; success = 4/4 waypoints
+captured (< 10 m capture radius, about one minimum turn radius). Task spec
+lives in the package docstring [`__init__.py`](__init__.py).
 
 ## Files
 

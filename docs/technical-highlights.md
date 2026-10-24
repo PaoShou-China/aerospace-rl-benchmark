@@ -125,8 +125,9 @@
 
 ## 亮点三：风扰是统一 Plant 钩子，不是 per-env 力补丁
 
-**断言**：3 个大气任务（QuadX-Hover、Fixedwing-Waypoints、Rocket-Landing）
-共享同一套风扰接入路径——气动力统一用**空速** `v_air = v - wind` 评估；
+**断言**：4 个大气任务（QuadX-Waypoints、Fixedwing-Waypoints、Rocket-Landing、
+Missile-Intercept）共享同一套风扰接入路径——气动力统一用**空速** `v_air = v - wind` 评估；
+其中 quadx / fixedwing / rocket 的训练入口硬编码 `WIND` 常量为默认风场。
 静风（默认）与发表基准**逐位一致**。
 
 **机制与证据**

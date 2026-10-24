@@ -7,17 +7,19 @@ Usage: python sweep_tune.py <task> [--only algo_arm_name ...]
 For each task this script runs a small, hard-coded candidate grid per
 algorithm and writes one summary JSON per candidate to
 results/sweep/<task>/<algo>_<name>/summary.json, then prints a table.
-Sweep updates are reduced (see SWEEP_UPDATES / FS_UPDATES); envs, seed and
-every non-candidate hyperparameter stay at the production entry's values so
-the winner can be transplanted verbatim into train_*.py.
+Sweep updates are reduced (PPO 200 updates, FlashSAC per-task FS_UPDATES;
+20 / 50 with SWEEP_SMOKE); envs, seed and every non-candidate hyperparameter
+stay at the production entry's values so the winner can be transplanted
+verbatim into train_*.py.
 
 Candidate design (2026-10-22):
-  PPO   -- production baseline + 2 single-knob variants chosen from the
-           project's measured history (fixed 1e-3 beat 3e-4 on quadx /
-           fixedwing / docking / rendezvous A/Bs; docking's 1024-env plateau
-           mirrors the pre-recipe rendezvous config, so a rendezvous-style
-           long-rollout arm is included there; satellite's gate-proven
-           sigma bands get an arm each).
+  PPO   -- production baseline + a few single-knob variants chosen from the
+           project's measured history (1e-3 often beat 3e-4 in local A/Bs on
+           quadx / fixedwing / docking / rendezvous, while the entries now
+           follow the published 3e-4 recipe, so lr1e3 is an explicit arm;
+           docking's 1024-env plateau mirrors the pre-recipe rendezvous
+           config, so a rendezvous-style long-rollout arm is included there;
+           satellite's gate-proven sigma bands get an arm each).
   FlashSAC -- never tuned on these tasks (paper defaults only), so the grid
            is wider: baseline (paper) + peak lr 1e-3 + batch 4096 /
            updates_per_step 2 + n-step 3. Per-task gamma matches the task's
