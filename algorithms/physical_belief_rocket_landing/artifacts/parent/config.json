@@ -1,0 +1,43 @@
+{
+  "num_steps_per_env": 128,
+  "save_interval": 100,
+  "obs_groups": {
+    "actor": [
+      "policy"
+    ],
+    "critic": [
+      "policy"
+    ]
+  },
+  "actor": {
+    "class_name": "common.rocket_phase_policy:RocketPhaseModel",
+    "width": 256,
+    "activation": "swish",
+    "distribution_cfg": {
+      "class_name": "GaussianDistribution",
+      "init_std": 0.03,
+      "std_type": "log"
+    }
+  },
+  "critic": {
+    "class_name": "common.rocket_phase_policy:RocketPhaseModel",
+    "width": 256,
+    "activation": "swish"
+  },
+  "algorithm": {
+    "class_name": "PPO",
+    "learning_rate": 8e-05,
+    "num_learning_epochs": 4,
+    "num_mini_batches": 4,
+    "schedule": "fixed",
+    "desired_kl": 0.01,
+    "entropy_coef": 0.001,
+    "gamma": 0.999,
+    "lam": 0.98,
+    "clip_param": 0.1,
+    "value_loss_coef": 1.0
+  },
+  "logger": "tensorboard",
+  "env_kwargs": {},
+  "difficulty": null
+}

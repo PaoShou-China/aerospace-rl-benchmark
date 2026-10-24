@@ -1,0 +1,27 @@
+{
+  "stage": "self-contained algorithms/physical_belief_rocket_landing integration",
+  "python_sources_compiled": 14,
+  "training_functions_unchanged": [
+    "DynamicBatch",
+    "detached",
+    "joined",
+    "infer",
+    "build",
+    "checkpoint",
+    "train_micro",
+    "nn_huber"
+  ],
+  "core_hashes_match_recorded_experiment": true,
+  "all_three_checkpoint_hashes_match": true,
+  "text_export_scan": "no login credentials or local user paths found",
+  "portable_evaluation_preparation": "passed",
+  "checkpoint_actor_critic_optimizer_load": "passed",
+  "two_sample_cpu_actor_forward_and_backward": "passed",
+  "new_gpu_training_or_full_evaluation_run": false,
+  "archived_evaluation_records_recounted": {
+    "parent": 419,
+    "physical_belief": 428
+  },
+  "paired_initial_states_match": true,
+  "launcher_train_and_evaluation_cli_help": "passed"
+}
