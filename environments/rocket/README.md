@@ -23,6 +23,13 @@ under the official protocol (`scripts/baseline_eval.py rocket`,
 `results/rocket/baseline.json`): 1024 envs, 1800 env steps, 1024 episodes,
 success rate 0.8281, mean episode return 3968.16.
 
+## Genesis replay
+
+Opt-in physical-substep logging and synchronized tracking/pad-camera replay
+are available through `python scripts/rocket_replay.py --help`. See
+[the collection, video and offline HTML guide](../../docs/rocket_genesis_replay.md)
+for commands, data definitions, tests and the outstanding live-integration checks.
+
 ## Run
 
 From the repository root:

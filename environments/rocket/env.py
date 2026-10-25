@@ -190,6 +190,9 @@ class RocketLandingEnv:
         self.cfg=dict(self.task_cfg);self.cfg['reward']=dict(self.reward_cfg)
         self._init_wind(num_envs,seed,steady_wind,dryden,severity)
 
+        # Explicitly opt-in diagnostic observer; no rendering/host copies when None.
+        self.visual_recorder=None
+
         self.reset()
 
     def _init_wind(self,n,seed,steady_wind,dryden,severity):
@@ -216,6 +219,8 @@ class RocketLandingEnv:
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
         physical=self._scale_actions(actions)
+        recorder=self.visual_recorder
+        if recorder is not None:recorder.begin_policy(self,actions,physical)
         # Upstream passes the gym action straight to set_setpoint; the plant
         # applies the ignition>0.5 rule per physics step (240 Hz, reignitable)
         # and the throttle -> [0.39, 1.0] min/max thrust remap (boosters.py
@@ -231,12 +236,16 @@ class RocketLandingEnv:
         complete_start=self.complete.clone()
         contact_any=self.terminated.clone().fill_(False)
         contact_vz=torch.zeros(self.num_envs,device=self.device,dtype=torch.float64)
-        for _ in range(self.inner_steps):
+        for inner_index in range(self.inner_steps):
             active=~(self.terminated|self.truncated)
             p0,q0,v0,w0=self.plant.state();vb0=inverse_rotate(q0,v0);wb0=inverse_rotate(q0,w0)
             self.plant.clear_contacts()
             self.plant.controller(command,active)
-            for _ in range(2):self.plant.physics_step(command,active)
+            for physics_index in range(2):
+                if recorder is not None:visual_pre_state=tuple(x.clone() for x in self.plant.state())
+                self.plant.physics_step(command,active)
+                if recorder is not None:
+                    recorder.after_physics(self,active,visual_pre_state,inner_index,physics_index)
             p,rpy,v,wb,vb=self._observe(active)
             # Upstream compute_base_term_trunc_reward: any contact other than
             # (rocket, pad) is a fatal collision, as is dropping below ground.
@@ -268,6 +277,14 @@ class RocketLandingEnv:
             trunc=torch.zeros_like(fatal)
             self.terminated|=term&active;self.truncated|=trunc&active
             self.collision|=collision&active;self.out_of_bounds|=bounds&active
+            if recorder is not None:
+                recorder.after_control(self,active,inner_index,speed0,spin0,tilt0,{
+                    'ground_contact':self.plant.ground_contact,
+                    'below_ground':p[:,2]<0,
+                    'hard_pad_speed':touch&(speed0>1.),
+                    'hard_pad_spin':touch&(spin0>.35),
+                    'horizontal_bounds':p[:,:2].norm(dim=-1)>200,
+                    'height_bounds':p[:,2]>500})
         # one dense reward per POLICY step over the whole-step state deltas
         shaping,comps=rocket_shaping(self.reward_cfg,p,p_start,v[:,2],vz_start,rpy,wb,
                                      contact_any,contact_vz,self.complete&~complete_start)
@@ -325,6 +342,7 @@ class RocketLandingEnv:
 
         # empty-mask reset is fully safe (warmup early-exits; pause-restore is
         # unconditional); the gate reuses the already-synced done_any for cost
+        if recorder is not None:recorder.after_policy(self)
         if done_any:self.reset_idx(self.reset_buf)
         self._update_observation()
         return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
