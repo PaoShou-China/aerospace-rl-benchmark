@@ -8,7 +8,8 @@ point at the scheduled arrival time, pulse 2 nulls the arrival velocity) and
 realized as finite thrust through the ZEM/ZEV min-energy map with per-axis
 saturation.
 
-Part 1  benchmark: env default spawns (|p0| in [800, 1200] m, |v0| <= 1 m/s),
+Part 1  benchmark: env default spawns (|p0| in [1000, 1500] m since
+        2026-10-24, widened from [800, 1200] m; |v0| <= 1 m/s),
         1024 replicas x 2 episodes = ~2048 samples.
 Part 2  grid: injected initial states, |p0| in {150, 300, 600, 800, 1200,
         1600, 1900} m x |v0| in {0, 0.25, 0.5, 1.0, 2.0} m/s (2.0 is beyond
@@ -91,7 +92,8 @@ def run_condition(name, num_envs, steps, d0=None, v0=None, first_only=False, see
         fuel_acc += tnorm * env.dt / (env.isp * env.g0)
         sat_acc += (a.abs() >= 1. - 1e-6).any(-1).double()
         len_acc += 1
-        obs, _, reset_buf, extras = env.step(a)
+        obs, _, term, trunc, extras = env.step(a)
+        reset_buf = term | trunc
         done = reset_buf & tracked if first_only else reset_buf
         if bool(done.any()):
             term = extras['terminal_observations']['policy'].double()[done]
@@ -148,7 +150,7 @@ def run_condition(name, num_envs, steps, d0=None, v0=None, first_only=False, see
 
 def main():
     results = []
-    print(f'benchmark spawns (|p0| 800-1200 m, |v0| <= 1 m/s), {BENCH_NUM_ENVS} envs x 2 eps')
+    print(f'benchmark spawns (|p0| 1000-1500 m, |v0| <= 1 m/s), {BENCH_NUM_ENVS} envs x 2 eps')
     agg = run_condition('benchmark', BENCH_NUM_ENVS, BENCH_STEPS, first_only=False)
     results.append(agg)
     _print(agg)

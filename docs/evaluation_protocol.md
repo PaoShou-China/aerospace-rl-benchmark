@@ -45,10 +45,10 @@ BC warm-start 数据源 = 各任务 `conventional_controller`（BC 采集器自�
   | rocket | ≥ 30% | v2 奖励重训中，基线 84.1% |
 
   达到阈值记为**已收敛**；未达到记为**未收敛（not converged）**并原样报告，不得以"仍在上升"等叙事替代。阈值修订需在第 5 节登记。
-- **评测间隔**：训练过程每 200 updates 保存一次 `model_*.pt`（rsl-rl save_interval），仅在训练结束后对最终 checkpoint 做一次确定性评测（eval.py，冻结 config.json 里的 difficulty）；训练中不做验证集模型选择。
+- **评测间隔**：训练过程每 200 updates 保存一次 `model_*.pt`（rsl-rl save_interval），仅在训练结束后对最终 checkpoint 做一次确定性评测（eval.py，冻结 config.json 里的 env_kwargs）；训练中不做验证集模型选择。
 - **种子与区间**：正式实验每任务 **3 seeds {7, 13, 21}** 训练；报告 mean 与 [min, max] 区间，不报单 seed 结果。
 - **Held-out 测试集**：训练/验证只用 seed 7/13/21 的 IC 流；最终泛化评测用 eval.py `--seed 101`（未在训练中出现的 RNG 流），每任务只跑一次，只报不改。基线（baseline_eval.py）同样补测 seed 101，保证同分布可比。
-- **报告口径**：成功率必须注明①训练口径还是确定性评测口径②步数窗口（rocket 的 700 步与 2000 步口径差异巨大，报告默认 2000 步/官方 reset 分布）③难度 d。
+- **报告口径**：成功率必须注明①训练口径还是确定性评测口径②步数窗口（rocket 的 700 步与 2000 步口径差异巨大，报告默认 2000 步/官方 reset 分布）③是否带风扰（训练可带风，评测恒为静风基准）。
 
 ## 4. 成本与并行性能的报告口径（学习成本 ≠ 并行性能）
 
@@ -62,3 +62,27 @@ BC 另行报告独立成本，不摊入 RL 训练预算：示范采集墙钟（`
 ## 5. 协议修订记录
 
 - 2026-10-22 初版冻结（成功定义、控制器审计、阈值/预算/种子/测试集、成本口径）。
+- 2026-10-24 修正 env RNG 流种子分配（`environments/common/plant.py` `TensorRandom`）：由 `arange(n)+seed` 改为 `mix32(seed ^ (i·0x9e3779b1))`。旧方案下 base seed s+1 的第 i 个副本复用 seed s 第 i+1 个副本的同一条流，1024 envs 时相邻 seed 重叠 1023/1024，本协议种子 {7,13,21} 两两重叠 1018/1024，多 seed 实际是同一批初始条件（聚合指标可逐位相同）；修复后 {7,13,21,101} 的流集合两两无交集。因此 2026-10-22/23 产生的所有 env-RNG 相关数字（含 `results/<task>/baseline.json`、第 2 节控制器审计成功率与各任务专项 harness 数字）不再逐位可复现。已按新方案重跑 8 任务经典基线（1024 envs / 官方 reset 分布 / seed 7，`scripts/baseline_eval.py`）并覆盖 `results/<task>/baseline.json`；旧值仅作历史参考，不得与新结果混用或拼接区间。
+- 2026-10-24 任务难度修订（用户指令"把成功率100%的任务难度略微加大"）：5 个基线成功率 100% 的任务（quadx / satellite / transfer / docking / rendezvous）只调初始分布/任务参数分布，**成功判据、奖励、时域、失败界一律不动**：
+  - quadx：waypoint 壳层 [1.0, 4.5] m → [1.5, 4.8] m（无近距易点；远点逼近 5 m OOB 界）。
+  - satellite：`reset_noise_scale` 0.001 → 0.01（初始 |ω| 可达 ~0.017 rad/s，贴近 0.02 成功速率容差；动量注入 ≲2 N·m·s 远在 CMG 容量内）。
+  - transfer：`ecc0` 0.1 → 0.15（rp0 9000→8500 km，ra0 11000→11500 km；ra_ref/rp_ref/vel_ref 自动重算）。
+  - docking：`init_range` (50, 100) m → (60, 120) m（顶值距 0.8·range_fail shield 走廊 40 m；range_fail=200 m 不变）。
+  - rendezvous：`init_range` (800, 1200) m → (1000, 1500) m（range_fail=2000 m 不变，余量 500 m）。
+  修订后已重跑 5 任务经典基线（同口径 1024 envs / seed 7）并覆盖对应 `results/<task>/baseline.json`；修订前的 100% 数字仅作历史参考。第 2 节审计表中该 5 行的"100%"为修订前口径。
+
+### 2026-10-26：Rocket benchmark v2（显式新版本）
+
+RocketLandingEnv 默认切换为 v2 六球形脚垫接触模型及连续停稳 2 秒主指标，
+保留原碰撞条资产、v1 瞬时事件及历史结果。该版本升级环境与计分口径，
+v1、v2 成绩分别保留版本标签。当前 main 的 60/120/240 Hz、30 秒、初始分布、
+观测/动作和奖励保留。60 Hz 连续停稳需要 121 个观测点；研究冻结快照的40 Hz需81点。
+
+正式 Rocket 对照采用4×128完整首回合；其他任务保持各自已有样本规模。
+通用评估脚本修正提前失败副本重复计数问题，所有任务都只采每副本首回合。
+完整性不足的报告标为 partial。新训练在开始前保存环境版本；
+旧配置无版本字段时评估/续训采用 v1，避免隐式切换接触模型。
+
+物理扰动范围、版本边界、中文替换原因及逐环境诊断证据见
+[rocket_benchmark_v2_zh.md](rocket_benchmark_v2_zh.md)。以上是新协议修订，
+不追溯改写本文件早先冻结的历史实验。

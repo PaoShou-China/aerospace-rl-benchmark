@@ -4,10 +4,9 @@ Self-contained (no CLI): edit the constants and run
 `~/.conda/envs/genesislab/bin/python eval_docking_lqr.py`.
 
 Protocol
-    1. Natural-distribution arms on the batched GPU env (the env's own
-       spawn distribution via the sanctioned `difficulty` knob; success
-       criteria untouched): difficulty in {0, 0.5, 1} and extra seeds at
-       the benchmark point, plus ablation arms (legacy incumbent gains,
+    1. Benchmark-distribution arms on the batched GPU env (the env's own
+       spawn distribution; success criteria untouched): extra seeds at the
+       benchmark point, plus ablation arms (legacy incumbent gains,
        aggressive Q for the saturation study, shield-off).
     2. Deterministic scripted-IC grid: one episode per scenario; initial
        distance {15, 30, 50, 75, 100} m x direction {radial, along-track,
@@ -39,20 +38,18 @@ from environments.satellite.rendezvous_docking import SpaceDockingEnv
 from algorithms.baselines.baselines import DockingCWHLQRBaseline
 
 NUM_ENVS = 1024
-DIST_STEPS = 2000          # env steps per natural-distribution arm
+DIST_STEPS = 2000          # env steps per benchmark-distribution arm
 SEEDS_MAIN = 7
-DIFFICULTIES = (0., 0.5, 1.)
-SEEDS_BENCH = (7, 13, 21)  # seed repeat at the benchmark difficulty
+SEEDS_BENCH = (7, 13, 21)  # seed repeat at the benchmark distribution
 BACKEND = 'gpu'
 OUT = Path(__file__).resolve().parents[2] / 'results' / 'docking' / 'lqr_report.json'
 
-# arms on the natural distribution: (label, controller kwargs, difficulty, seed)
+# arms on the benchmark distribution: (label, controller kwargs, seed)
 DIST_ARMS = (
-    [('lqr_full', {}, d, SEEDS_MAIN) for d in DIFFICULTIES]
-    + [('lqr_full', {}, 1., s) for s in SEEDS_BENCH[1:]]
-    + [('legacy_incumbent', {'legacy': True}, 1., SEEDS_MAIN),
-       ('aggressive_q', {'kappa': 1., 'w_vel': 1.}, 1., SEEDS_MAIN),
-       ('no_shield', {'shield': False}, 1., SEEDS_MAIN)]
+    [('lqr_full', {}, s) for s in SEEDS_BENCH]
+    + [('legacy_incumbent', {'legacy': True}, SEEDS_MAIN),
+       ('aggressive_q', {'kappa': 1., 'w_vel': 1.}, SEEDS_MAIN),
+       ('no_shield', {'shield': False}, SEEDS_MAIN)]
 )
 
 # scripted IC grid -----------------------------------------------------------
@@ -163,7 +160,8 @@ def _roll(env, ctrl, steps, obs=None, grid_mode=False, labels=None):
         acc.observe(d, v_norm)
         actions = ctrl.actions(obs)
         acc.step(actions, env.dt, env.f_max / env.mass)
-        obs, _, reset_buf, extras = env.step(actions)
+        obs, _, term, trunc, extras = env.step(actions)
+        reset_buf = term | trunc
         done = reset_buf & ~first_done if grid_mode else reset_buf
         first_done |= reset_buf
         if bool(done.any()):
@@ -233,13 +231,11 @@ def _summarize(flat, env_episodes, env_successes):
     return s
 
 
-def run_dist_arm(label, kwargs, difficulty, seed, backend=BACKEND):
+def run_dist_arm(label, kwargs, seed, backend=BACKEND):
     try:
-        env = SpaceDockingEnv(num_envs=NUM_ENVS, backend=backend, seed=seed,
-                              difficulty=difficulty)
+        env = SpaceDockingEnv(num_envs=NUM_ENVS, backend=backend, seed=seed)
     except RuntimeError:
-        env = SpaceDockingEnv(num_envs=NUM_ENVS, backend='cpu', seed=seed,
-                              difficulty=difficulty)
+        env = SpaceDockingEnv(num_envs=NUM_ENVS, backend='cpu', seed=seed)
     torch.manual_seed(seed)
     ctrl = DockingCWHLQRBaseline(env, **kwargs)
     ep0 = env.completed_episodes.clone()
@@ -251,8 +247,8 @@ def run_dist_arm(label, kwargs, difficulty, seed, backend=BACKEND):
     episodes = float((env.completed_episodes - ep0).sum())
     successes = float((env.completed_successes - ok0).sum())
     s = _summarize(flat, episodes, successes)
-    s.update({'arm': label, 'kind': 'distribution', 'difficulty': difficulty,
-              'seed': seed, 'wall_s': round(wall, 1),
+    s.update({'arm': label, 'kind': 'distribution', 'seed': seed,
+              'wall_s': round(wall, 1),
               'env_consistent': abs(successes - sum(r['success'] for r in flat)) < .5
                                 and abs(episodes - len(flat)) < 1.5})
     env.close()
@@ -301,10 +297,10 @@ def main():
                   'projection inside 0.8*range_fail corridor); terminal capture '
                   'net within 2 m; fuel derate past 75% of the 2 kg budget'}}
     dist_out = []
-    for label, kwargs, difficulty, seed in DIST_ARMS:
-        s, _ = run_dist_arm(label, kwargs, difficulty, seed)
+    for label, kwargs, seed in DIST_ARMS:
+        s, _ = run_dist_arm(label, kwargs, seed)
         dist_out.append(s)
-        print(f"[dist] {label:18s} d={difficulty:<3} seed={seed:<2} "
+        print(f"[dist] {label:18s} seed={seed:<2} "
               f"success={s['success_rate']:.3f} ({s['episodes']:.0f} ep) "
               f"range_fails={s['range_fails']} fuel_fails={s['fuel_fails']} "
               f"timeouts={s['timeouts']} t50={_fmt(s.get('time_to_success_p50'), '.0f')} "

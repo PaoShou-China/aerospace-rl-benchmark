@@ -1,6 +1,6 @@
 """Genesis offscreen visualization of one baseline episode per task.
 
-Usage: python visualize.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous
+Usage: python visualize.py quadx|fixedwing|rocket|missile|satellite|transfer|docking|rendezvous
 
 Runs the task's classical baseline on a single CPU replica (same env
 construction as eval.py/baseline_eval.py, incl. results/<task>/config.json
@@ -9,10 +9,11 @@ then replays the recording in a visual-only Genesis scene and renders an
 mp4 to results/<task>/vis.mp4.
 
 Scene conventions per task:
-  quadx       cf2x URDF on a dark slate ground plane, translucent sphere at
-              the hover target, yellow nose arrow along body +x, translucent
-              prop disks over the four motor mounts (display-only, no
-              physics), and a close follow camera scaled to the ~9 cm drone
+  quadx       cf2x URDF on a dark slate ground plane, opaque green sphere at
+              the active waypoint (PyFlyt marker scaling), yellow nose arrow
+              along body +x, translucent prop disks over the four motor mounts
+              (display-only, no physics), and a fixed PyFlyt debug-view
+              camera scaled to the ~9 cm drone
   fixedwing   fixedwing URDF, red spheres at the 4 waypoints, camera follows
   rocket      rocket URDF + landing pad on a ground plane, camera follows
   satellite   recognizable bus (grey body, +/-z equipment compartments, +x
@@ -51,6 +52,11 @@ Scene conventions per task:
               The camera keeps a FIXED direction in the LVLH frame (no
               rotation with the chaser); only its distance follows the
               range so target and chaser always share the frame.
+  missile     missile URDF on the km-scale 4 km-altitude engagement, red
+              marker for the kinematic target aircraft (posed per frame from
+              the recorded target state), engagement trail, and a follow
+              camera looking at the missile-target mid-point so both stay
+              framed throughout the intercept
 Trails are preallocated small spheres; unused markers are parked far away.
 The render scene shares no physics with the sim: it is built with zero
 gravity and never stepped, entities are driven with set_pos/set_quat only.
@@ -68,16 +74,19 @@ import numpy as np
 import torch
 import genesis as gs
 
-from environments.multirotor import QuadXHoverEnv
+from environments.multirotor import QuadXWaypointsEnv
 from environments.fixedwing import FixedwingWaypointsEnv
 from environments.rocket import RocketLandingEnv
+from environments.missile import MissileInterceptEnv
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
 from environments.satellite.orbit_transfer import LowThrustTransferEnv
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
 from algorithms.baselines.baselines import build_baseline
+from algorithms.train_utils import RslVecEnv
 
-ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+ENVS = {'quadx': QuadXWaypointsEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+        'missile': MissileInterceptEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
         'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
 MODELS = Path(__file__).resolve().parent.parent / 'environments' / 'common' / 'original_pyflyt' / 'models'
@@ -97,9 +106,6 @@ def build_env(task):
     out = Path(__file__).resolve().parent.parent / 'results' / task
     cfg = json.loads((out / 'config.json').read_text()) if (out / 'config.json').exists() else {}
     env_kwargs = dict(cfg.get('env_kwargs') or {})
-    env_kwargs.pop('curriculum', None)
-    if cfg.get('difficulty') is not None:
-        env_kwargs['difficulty'] = cfg['difficulty']
     return ENVS[task](num_envs=1, backend='cpu', seed=7, **env_kwargs), cfg
 
 
@@ -132,7 +138,7 @@ class _CkptPolicy:
             runner.load(str(ckpt))
             self._fn = runner.deterministic_action
         else:
-            runner = OnPolicyRunner(env, cfg, log_dir='/tmp/vis_tb', device=str(env.device))
+            runner = OnPolicyRunner(RslVecEnv(env), cfg, log_dir='/tmp/vis_tb', device=str(env.device))
             runner.load(str(ckpt))
             self._fn = runner.alg.actor.eval()
 
@@ -168,7 +174,7 @@ def record(task, env, policy, max_steps):
     frames = []
     extras = {}
     if task == 'quadx':
-        extras['target'] = env.hover_target.cpu().numpy()
+        extras['targets'] = env.targets.cpu().numpy()[0]
     elif task == 'fixedwing':
         extras['targets'] = env.targets.cpu().numpy()[0]
     elif task in ('docking', 'rendezvous'):
@@ -190,7 +196,11 @@ def record(task, env, policy, max_steps):
                                ra0=float(env.ra0.cpu()[0]), rp0=float(env.rp0.cpu()[0]))
 
     def snap():
-        if task in ('quadx', 'fixedwing', 'rocket'):
+        if task == 'missile':
+            frames.append({'pos': env.plant.drone.get_pos().cpu().numpy()[0],
+                           'quat': env.plant.drone.get_quat().cpu().numpy()[0],
+                           'tgt': env.target_pos.cpu().numpy()[0].copy()})
+        elif task in ('quadx', 'fixedwing', 'rocket'):
             frames.append({'pos': env.plant.drone.get_pos().cpu().numpy()[0],
                            'quat': env.plant.drone.get_quat().cpu().numpy()[0]})
         elif task == 'satellite':
@@ -209,7 +219,8 @@ def record(task, env, policy, max_steps):
     steps = 0
     while steps < max_steps:
         actions = policy.actions(obs)
-        obs, _, reset_buf, _ = env.step(actions)
+        obs, _, term, trunc, _ = env.step(actions)
+        reset_buf = term | trunc
         policy.reset_idx(reset_buf)
         steps += 1
         if bool(reset_buf.any()):  # episode ended; state was already reset -- keep the last snap
@@ -402,7 +413,7 @@ def build_scene(task, extras, first):
     if task == 'quadx':
         # PyFlyt-style visualization (mirrors PyFlyt 0.29 quadx_envs): plain
         # grey ground, the cf2x URDF loaded as-is with no added geometry, an
-        # opaque solid green sphere at the hover point (radius = goal reach
+        # opaque solid green sphere at the active waypoint (radius = goal reach
         # distance / 4, exactly PyFlyt's waypoint_handler scaling), and a
         # fixed camera at PyFlyt's debug-view angles (yaw 30, pitch -30).
         # The drone is ~9 cm across, so cameraDistance is scaled down from
@@ -527,6 +538,15 @@ def build_scene(task, extras, first):
         up = np.cross(right, view)
         base = -up * 15. - right
         ents['scalebar'] = [_marker(scene, .1, (1., 1., 1., .9), base + right * i) for i in range(5)]
+    elif task == 'missile':
+        # km-scale air-intercept scene at ~4 km altitude: missile URDF, red
+        # marker for the kinematic target aircraft (posed per frame from the
+        # recorded target state), engagement trail, wide follow camera
+        ents['body'] = _urdf(scene, MODELS / 'vehicles/missile/missile.urdf')
+        ents['target'] = _marker(scene, 8., (.9, .2, .2, .9), tuple(first['tgt']))
+        ents['trail'] = _trail(scene, 1.5, (.2, .4, .9, .5))
+        cam = scene.add_camera(res=(640, 480), pos=tuple(p0 + np.array((0., -800., 300.))),
+                               lookat=tuple(p0), fov=50, far=20000)
     else:  # docking / rendezvous
         # Target station (grey) with two solar panels ATTACHED to the ±y
         # faces (no longer intersecting the core) and a docking port on the
@@ -633,6 +653,8 @@ def render(task, frames, extras, out_path, fps):
         ents['body'].set_pos(tuple(map(float, f['pos'])))
         if f['quat'] is not None:
             ents['body'].set_quat(tuple(map(float, f['quat'])))
+        if task == 'missile':
+            ents['target'].set_pos(tuple(map(float, f['tgt'])))
         if task == 'satellite':
             ents['goal'].set_quat(tuple(map(float, f['target_quat'])))
             q, qt = np.asarray(f['quat'], float), np.asarray(f['target_quat'], float)
@@ -660,7 +682,7 @@ def render(task, frames, extras, out_path, fps):
         if task == 'quadx':
             # PyFlyt-style: the URDF renders as-is (no display attachments),
             # camera fixed at the debug-view pose (yaw 30, pitch -30 over the
-            # hover point) instead of following the body
+            # initial waypoint) instead of following the body
             rgb_frames.append(cam.render(rgb=True, force_render=True)[0])
             continue
         if space:
@@ -799,6 +821,14 @@ def render(task, frames, extras, out_path, fps):
             if terminal is not None and fi == len(frames) - 1:
                 rgb = _overlay(rgb, [f'RESULT: {terminal}'])
             rgb_frames.append(rgb)
+        elif task == 'missile':
+            # follow the missile from between it and the target; the lookat
+            # rides the missile-target mid-point so both stay framed at
+            # km-scale ranges
+            tgt = np.asarray(f['tgt'], dtype=float)
+            mid = .5 * (p + tgt)
+            _follow(cam, p, tuple(.7 * (mid - p) + np.array((0., 0., 100.))), lookat=mid)
+            rgb_frames.append(cam.render(rgb=True, force_render=True)[0])
         elif task != 'quadx':  # quadx is rendered in its own branch above
             _follow(cam, p, (-9, -9, 5))
             rgb_frames.append(cam.render(rgb=True, force_render=True)[0])

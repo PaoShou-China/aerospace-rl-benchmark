@@ -1,25 +1,24 @@
-"""RSL-RL PPO training entry for the QuadX-Hover task (QuadXHoverEnv).
+"""RSL-RL PPO training entry for the QuadX-Waypoints task (QuadXWaypointsEnv).
 
-Crazyflie 2.x quadrotor station keeping on the Genesis rigid-body engine:
-hover at 1 m altitude for 400 policy steps (10 s) without ground contact or
-leaving the 3 m radius bound.
+Crazyflie 2.x quadrotor waypoint navigation on the Genesis rigid-body engine:
+reach a sequence of 4 waypoints sampled in a 5 m flight dome within 800 policy
+steps (20 s), without ground contact or leaving the dome.
 
 Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_quadx.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
-DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
-float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
+WIND configures the wind disturbance passed to the env ctor (steady_wind,
+dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 """
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[1]  # repo root
+_ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
-from environments.multirotor import QuadXHoverEnv
+from environments.multirotor import QuadXWaypointsEnv
 
 TASK = 'quadx'
 NUM_ENVS = 1024          # Genesis hover tutorial uses 8192; kept at 1024 for hardware/wall time
@@ -42,21 +41,20 @@ INIT_STD = 1.0
 NUM_STEPS_PER_ENV = 100
 NUM_LEARNING_EPOCHS = 5
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('quadx', DIFFICULTY)   # validated against environments/common/difficulty.py
+# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
+# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
+WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before
 # PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
-    run_training(TASK, QuadXHoverEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
+    run_training(TASK, QuadXWaypointsEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
                  lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
                  entropy_coef=ENTROPY_COEF, init_std=INIT_STD,
                  num_steps_per_env=NUM_STEPS_PER_ENV,
                  num_learning_epochs=NUM_LEARNING_EPOCHS,
-                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)
+                 env_kwargs=WIND, bc_warmstart=BC_WARMSTART)

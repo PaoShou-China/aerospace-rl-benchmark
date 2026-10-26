@@ -21,11 +21,11 @@ Description
     no engine, no gym.
 
     Docking (SpaceDockingEnv)
-        Final approach from 50-100 m separation with |v0| <= 0.5 m/s.
+        Final approach from 60-120 m separation with |v0| <= 0.5 m/s.
         Success: range < 1 m and closing speed < 0.1 m/s. Failure: range
         > 200 m. Episode limit 500 steps (~8.3 min).
     Rendezvous (SpaceRendezvousEnv)
-        Medium-range approach from 800-1200 m with |v0| <= 1 m/s to a
+        Medium-range approach from 1000-1500 m with |v0| <= 1 m/s to a
         < 10 m, < 0.5 m/s goal while avoiding a 5 m radius keep-out
         sphere around the target. Failure: keep-out violation or range
         > 2000 m. Episode limit 1000 steps (~16.7 min).
@@ -43,31 +43,38 @@ Observation Space (6,)
 
 Reward
     Telescoping potential shaping per control step (both tasks):
-    r_t = progress_weight * (Phi(s_t) - Phi(s_{t+1})) - gamma * ||F|| / F_max
-    with Phi = -(||p|| + ||v||^2 / (2 a_ref)) / d_norm, a_ref = 0.6 * F_max/m,
-    progress_weight = 100, gamma = 0.01; d_norm = 100 m for docking and the
-    per-episode initial separation d0 for rendezvous. The episode sum
-    telescopes to Phi_T - Phi_0: hovering pays ~0, closing distance and
-    braking pay +, retreating pays -, and round trips net 0 (the paper's
-    Eq. 4/5 dense shaping made early failure cheaper than a careful
-    approach and is not used). A +100 terminal bonus is granted on success;
-    violations (including rendezvous keep-out entry) cost a one-time
-    -100 terminal penalty instead of a per-step fee.
+    r_t = progress_weight * (Phi(s_{t+1}) - Phi(s_t)) - gamma * ||F|| / F_max
+    with Phi = -(||p|| + ||v||^2 / (2 a_ref)) / d_norm,
+    progress_weight = 100, gamma = 0.01; d_norm = 100 m for docking and
+    the per-episode initial separation d0 for rendezvous. The brake
+    reference is a_ref = 0.6 F_max/m = 0.012 m/s^2 for docking,
+    overridden to 0.1 m/s^2 for rendezvous so approach progress stays
+    visible under full-authority thrust. The episode sum telescopes to
+    Phi_T - Phi_0: hovering pays ~0, closing distance and braking pay +,
+    retreating pays -, and round trips net 0 (the paper's Eq. 4/5 dense
+    shaping made early failure cheaper than a careful approach and is
+    not used). Success pays a one-time terminal bonus (+100 docking,
+    +20 rendezvous); any other violation costs a one-time terminal
+    penalty (-100 docking, -20 rendezvous) instead of a per-step fee.
 
 Episode End
-    Success (truncation): docking range < 1 m & speed < 0.1 m/s;
-    rendezvous range < 10 m & speed < 0.5 m/s.
-    Termination (failure): docking range > 200 m; rendezvous keep-out
-    sphere violation or range > 2000 m.
+    Success (truncation): the goal is met with no violation -- docking
+    range < 1 m & speed < 0.1 m/s; rendezvous range < 10 m & speed
+    < 0.5 m/s. A violation on the same step overrides success.
+    Termination (failure): docking range > 200 m or fuel exhaustion;
+    rendezvous keep-out sphere (< 5 m) entry, range > 2000 m or fuel
+    exhaustion.
     Truncation: 500 steps (docking) / 1000 steps (rendezvous).
+    Success sets truncated only (never terminated) and is marked
+    complete, so it is excluded from
+    extras['time_outs'] = truncated & ~terminated & ~complete; only
+    plain horizon timeouts bootstrap.
 
 Difficulty
-    Constructor kwarg `difficulty` (float in [0, 1]) modulates
-    only the reset distribution; dynamics, success criteria
-    and reward are untouched. d=0 -> d=1: docking spawn range 15-30 m,
-    |v0| <= 0.1 m/s -> 50-100 m, |v0| <= 0.5 m/s; rendezvous spawn range
-    150-300 m -> 800-1200 m (|v0| bound unchanged); d=1 is the published
-    benchmark.
+    None. The benchmark spawn distributions are fixed: docking 60-120 m,
+    |v0| <= 0.5 m/s; rendezvous 1000-1500 m, |v0| <= 1 m/s. (2026-10-24:
+    widened from 50-100 m / 800-1200 m -- both baselines sat at 100%
+    success, so the tasks were made slightly harder.)
 
 References
     - Supreeth, H. S. G. & Mehta, "SpaceGym: A Gymnasium-Based Benchmark
@@ -78,6 +85,8 @@ References
     - Clohessy, W. H. & Wiltshire, R. S. (1960). "Terminal Guidance
       System for Satellite Rendezvous", Journal of the Aerospace
       Sciences, 27(9), 653-658 -- the linearized relative-motion model.
+    - Method documentation: docs/method/env-docking.md and
+      docs/method/env-rendezvous.md.
 """
 
 from .env import SpaceDockingEnv, SpaceRendezvousEnv

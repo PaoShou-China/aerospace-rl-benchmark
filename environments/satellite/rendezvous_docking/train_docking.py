@@ -1,7 +1,7 @@
 """RSL-RL PPO training entry for the CWH docking task (SpaceDockingEnv).
 
 Clohessy-Wiltshire-Hill relative motion in the LVLH frame of a 400 km circular
-orbit (pure-tensor symplectic Euler, dt = 1 s): final approach from 50-100 m
+orbit (pure-tensor symplectic Euler, dt = 1 s): final approach from 60-120 m
 separation to range < 1 m with closing speed < 0.1 m/s within 500 steps,
 without exceeding the 200 m failure bound.
 
@@ -9,8 +9,6 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_docking.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
-DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
-float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
 """
 import sys
 from pathlib import Path
@@ -21,7 +19,6 @@ _ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
 from environments.satellite.rendezvous_docking import SpaceDockingEnv
 
 # Zero-init the final linear head of FlashResMLPModel (actor mean head and
@@ -82,10 +79,6 @@ ENTROPY_COEF = 0.005
 LEARNING_RATE = 3e-4
 GAMMA = 0.999
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('docking', DIFFICULTY)   # validated against environments/common/difficulty.py
 
 # Architecture A/B (user decision 2026-10-22: docking keeps BOTH arms). CAUTION
 # (measured 2026-10-22): the archived 94% MLP reference predates the 1024-env
@@ -96,7 +89,7 @@ ARMS = (('flash_residual', None), ('mlp', str(Path(__file__).resolve().parents[2
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     for arch, out_dir in ARMS:
@@ -105,4 +98,4 @@ if __name__ == '__main__':
                      out_dir=out_dir, arch=arch,
                      lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
                      entropy_coef=ENTROPY_COEF, gamma=GAMMA,
-                     env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)
+                     bc_warmstart=BC_WARMSTART)

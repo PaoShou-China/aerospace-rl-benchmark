@@ -7,14 +7,14 @@ Collects, per task (whatever exists):
                 training success rate (sum successes / sum episodes)
   baseline.json classical-controller evaluation (same metrics)
   eval.json     eval.py output: deterministic policy success rate / return
-  config.json   env difficulty and checkpoint presence
+  config.json   env kwargs and checkpoint presence
 Prints a markdown table and writes it to --out (default results/summary.md).
 """
 import argparse
 import json
 from pathlib import Path
 
-TASKS = ['quadx', 'fixedwing', 'rocket', 'satellite', 'transfer', 'docking', 'rendezvous']
+TASKS = ['quadx', 'fixedwing', 'rocket', 'missile', 'satellite', 'transfer', 'docking', 'rendezvous']
 
 
 def load(path):
@@ -31,7 +31,6 @@ def collect(task):
     run, base, ev = load(root / 'run.json'), load(root / 'baseline.json'), load(root / 'eval.json')
     cfg = load(root / 'config.json') or {}
     row = {'task': task,
-           'difficulty': cfg.get('difficulty'),
            'trained': (root / 'checkpoint.pt').exists(),
            'algo': (run or {}).get('algo') or cfg.get('algo'),
            'updates': (run or {}).get('updates'),

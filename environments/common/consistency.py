@@ -32,6 +32,22 @@ def verify_installed_reference():
     return 'PyFlyt 0.29.0 source and physical assets verified by SHA-256'
 
 
+def verify_missile_assets():
+    """SHA-256 check for the project-authored missile assets.
+
+    The missile URDF/YAML are NOT PyFlyt 0.29.0 upstream files, so they must
+    NOT be added to source_manifest.json (which certifies upstream provenance).
+    They carry their own manifest next to them; TensorPlant calls this before
+    loading the vehicle.
+    """
+    base=Path(__file__).parent/'original_pyflyt/models/vehicles/missile'
+    manifest=json.loads((base/'asset_manifest.json').read_text())
+    for name,expected in manifest['files'].items():
+        if hashlib.sha256((base/name).read_bytes()).hexdigest()!=expected:
+            raise RuntimeError(f'missile asset changed: {name}')
+    return 'project missile assets verified by SHA-256'
+
+
 def asset_inertials(vehicle):
     name='cf2x' if vehicle=='quadx' else vehicle
     text=(ASSETS/f'reference_{name}.urdf').read_text()
@@ -70,3 +86,13 @@ def contract(vehicle,dt,decimation,mapping='default'):
             'genesis_integrator':'Euler','gravity_m_s2':[0,0,-9.81],
             'ground_contact':'not part of free-flight equivalence certificate'},
             'initial_conditions':'stored separately; fuel, velocities, pose and actuator states must match'}
+
+
+def verify_rocket_v2_assets():
+    """Keep the upstream asset intact; verify the separately versioned contact model."""
+    base=Path(__file__).parent/'original_pyflyt/models/vehicles/rocket'
+    manifest=json.loads((base/'benchmark_v2_manifest.json').read_text())
+    for name,expected in manifest['files'].items():
+        if hashlib.sha256((base/name).read_bytes()).hexdigest()!=expected:
+            raise RuntimeError(f'rocket benchmark asset changed: {name}')
+    return manifest

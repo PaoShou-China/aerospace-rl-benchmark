@@ -107,19 +107,12 @@ def _rotor_axes_ref(num_cmgs):
 
 
 class SatelliteAttitudeEnv:
-    # Difficulty axis (0 easiest -> 1 hardest = the torchrl reference): the
-    # target attitude is pulled toward the start attitude as d drops (rotation
-    # angle cap 0.3 rad -> pi via slerp; at cap=pi the legacy uniform-SO(3)
-    # sampling code path runs untouched) and reset noise shrinks to zero.
-    # Success criteria (att/omega tolerances) are untouched.
-    target_angle_cap=math.pi # target rotation-angle cap [rad] (axis .3 -> pi)
-    benchmark_difficulty=1.
-    difficulty=None          # None = benchmark behavior (no cfg record)
+    target_angle_cap=math.pi # target rotation-angle cap [rad]
     # conventional controller: quaternion PD + singularity-robust damped CMG
     # steering, Schaub & Junkins (baselines.py; gimbal-rate commands)
     conventional_controller=SatelliteCMGBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4):
         if num_cmgs not in (4,6):raise ValueError('num_cmgs must be 4 or 6')
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
@@ -144,7 +137,12 @@ class SatelliteAttitudeEnv:
                                      #   under k1=30, too weak vs advantage noise
                                      #   (assist differential +560 proved capture is
                                      #   worth ~6x the park equilibrium)
-        self.reset_noise_scale=.001
+        # Initial-state noise (quaternion / body rate / gimbal). 2026-10-24:
+        # raised .001 -> .01 (baseline sat at 100% success). Initial |omega|
+        # reaches ~0.017 rad/s -- just under the 0.02 success rate tolerance,
+        # so replicas must actively damp rates; worst-case momentum injection
+        # I*w ~ 2 N m s stays far inside the CMG cluster capacity (4 x 20).
+        self.reset_noise_scale=.01
         self.success_att_tol=.05;self.success_omega_tol=.02
         self.settle_bonus=1.         # one-time bonus on the success-terminating step.
                                      # Was a per-step Gaussian state reward: with no
@@ -229,23 +227,8 @@ class SatelliteAttitudeEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        self._resolve_difficulty(difficulty)
 
         self.reset()
-
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
-
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the target-attitude/noise knobs."""
-        self.difficulty=d
-        self.target_angle_cap=.3+(math.pi-.3)*d
-        self.reset_noise_scale=.001*d
-        self.cfg['difficulty']=d
 
     def _rotor_axes(self,theta):
         """Rotor momentum directions r_i(theta) via Rodrigues rotation; g.r0=0."""
@@ -398,6 +381,8 @@ class SatelliteAttitudeEnv:
         self.completed_episodes+=self.reset_buf.to(torch.long)
         self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
         done=self.reset_buf
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         # snapshot BEFORE reset_idx: reset_idx calls _observe(mask), which would
@@ -413,7 +398,7 @@ class SatelliteAttitudeEnv:
 
         self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def reset_idx(self,envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
@@ -422,12 +407,6 @@ class SatelliteAttitudeEnv:
         s1=torch.sqrt(1-u[:,0]);s2=torch.sqrt(u[:,0])
         ang1=2*math.pi*u[:,1];ang2=2*math.pi*u[:,2]
         target=torch.stack((s1*ang1.sin(),s1*ang1.cos(),s2*ang2.sin(),s2*ang2.cos()),-1)
-        if self.target_angle_cap<math.pi:
-            # difficulty<1: pull the target toward the start attitude (identity
-            # quaternion [1,0,0,0]); at the benchmark cap=pi the legacy
-            # uniform-SO(3) sample passes through untouched
-            home=torch.zeros_like(target);home[:,0]=1.
-            target=quat_slerp(home,target,self.target_angle_cap/math.pi)
         self.target_quat.copy_(torch.where(mask[:,None],target,self.target_quat))
         noise=2*self.rng.uniform(7+self.num_gimbals,mask)-1
         qn=torch.zeros_like(self.q);qn[:,0]=1;qn=qn+self.reset_noise_scale*noise[:,:4]

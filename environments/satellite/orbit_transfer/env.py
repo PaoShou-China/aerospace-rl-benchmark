@@ -8,7 +8,7 @@ Transfer using Dynamics-Agnostic Reinforcement Learning" (arXiv:2211.08272,
 IEEE). A 100 kg medium-Earth-orbit satellite with three orthogonal thruster
 pairs (10 mN per pair, Isp 4000 s) fires for 166 control steps of 5 minutes
 (~5 revolutions) to raise the pericenter radius of an initial a=10000 km,
-e=0.1, i=pi/3 orbit while keeping the apocenter radius and propellant use
+e=0.15, i=pi/3 orbit while keeping the apocenter radius and propellant use
 low; the initial mean anomaly is re-sampled uniformly at every reset.
 
 Dynamics: two-body point-mass gravity (WGS84 mu) + constant thrust over
@@ -54,20 +54,11 @@ from algorithms.baselines.baselines import TransferGaussBaseline
 
 
 class LowThrustTransferEnv:
-    # Difficulty axis (0 easiest -> 1 hardest = the reference orbit): the
-    # initial eccentricity shrinks with d, which shrinks the required perigee
-    # raise (rp = a(1-e)); the reward/success criterion (terminal R > 0) is
-    # untouched and ra0/rp0 are re-derived per episode from the actual state.
-    # At d=1 the reference e=0.1 and its derived reference radii are restored
-    # bit-for-bit.
-    ecc0_min=.02             # axis: ecc0 .02 -> .1
-    benchmark_difficulty=1.
-    difficulty=None          # None = benchmark behavior (no cfg record)
     # conventional controller: Gauss planetary-equation tangential-thrust perigee
     # raising (baselines.py; greedy coast/burn decision on the policy obs)
     conventional_controller=TransferGaussBaseline
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
@@ -85,7 +76,9 @@ class LowThrustTransferEnv:
         self.g0=9.80665          # standard gravity [m/s^2]
         self.mass0=100.          # initial mass [kg]
         self.sma0=1.0e7            # initial semi-major axis [m]
-        self.ecc0=0.1
+        # 2026-10-24: e0 raised 0.1 -> 0.15 (baseline sat at 100% success);
+        # rp0 = 8.5e6 m, ra0 = 1.15e7 m. ra_ref/rp_ref/vel_ref below recompute.
+        self.ecc0=0.15
         self.inc0=math.pi/3
         self.raan0=2*math.pi/3
         self.argp0=4*math.pi/3
@@ -132,27 +125,8 @@ class LowThrustTransferEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        self._resolve_difficulty(difficulty)
 
         self.reset()
-
-    def _resolve_difficulty(self,difficulty):
-        """Shared difficulty resolution (every task env, same shape)."""
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
-
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the initial-orbit eccentricity."""
-        self.difficulty=d
-        self.ecc0=self.ecc0_min+(0.1-self.ecc0_min)*d
-        # derived reference radii/speed follow the eccentricity (declared obs
-        # bounds only; values are returned raw)
-        self.ra_ref=self.sma0*(1+self.ecc0)
-        self.rp_ref=self.sma0*(1-self.ecc0)
-        self.vel_ref=math.sqrt(self.mu*(2/self.rp_ref-1/self.sma0))
-        self.cfg['difficulty']=d
 
     def _kepler_to_cartesian(self,mean_anomaly):
         """Perifocal -> GCRF state for the fixed (a,e,i,raan,argp) and given M."""
@@ -260,6 +234,8 @@ class LowThrustTransferEnv:
         self.completed_episodes+=self.reset_buf.to(torch.long)
         self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
         done=self.reset_buf
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
         n_done=done.sum().clamp_min(1)
         drp_km=torch.where(done,(rp-self.rp0)*1e-3,0.)
         dra_km=torch.where(done,(ra-self.ra0).abs()*1e-3,0.)
@@ -286,7 +262,7 @@ class LowThrustTransferEnv:
 
         self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def reset_idx(self,envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""

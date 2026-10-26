@@ -20,13 +20,11 @@
    另有源码/资产 SHA-256 校验原语。张量 plant 的惯量直接解析自参考 URDF，而非手工抄数。
 2. **多执行路径**：5 个任务是无引擎的纯张量实现，3 个大气任务是 Genesis 刚体实现；
    后者另有一条“原版 NumPy 任务代码不改一行”的共享场景批处理桥，可做实现级交叉校验。
-3. **全库统一的 0–1 课程契约**：只改初始分布，不动成功判据；基准难度处逐位复现；
-   成功率门控自动爬升，进度写入 `run.json`。
-4. **算法对照基础设施**：FlashSAC 完整移植、PPO 架构匹配臂、跨算法同一 LR 调度、
+3. **算法对照基础设施**：FlashSAC 完整移植、PPO 架构匹配臂、跨算法同一 LR 调度、
    确定性评测，以及把“失败配置为什么失败”写进代码的负结果记录。
-5. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
+4. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
    并显式声明数值不等价边界。
-6. **经典（非学习）基线库**：8 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
+5. **经典（非学习）基线库**：8 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
    PDG、CWH-LQR、两脉冲制导等），同一环境、同一奖励、同一成功判据下给出
    非学习参照，并保留基线的诚实失败模式作为 RL 的攻击面。
 
@@ -125,51 +123,45 @@
 
 ---
 
-## 亮点三：静态难度是全库契约，不是 per-env 随机化
+## 亮点三：风扰是统一 Plant 钩子，不是 per-env 力补丁
 
-**断言**：8 个任务共享同一难度语义，且难度是可对照的实验变量。
+**断言**：4 个大气任务（QuadX-Waypoints、Fixedwing-Waypoints、Rocket-Landing、
+Missile-Intercept）共享同一套风扰接入路径——气动力统一用**空速** `v_air = v - wind` 评估；
+其中 quadx / fixedwing / rocket 的训练入口硬编码 `WIND` 常量为默认风场。
+静风（默认）与发表基准**逐位一致**。
 
 **机制与证据**
 
-- 统一构造参数：`difficulty=None`（基准）/ `difficulty=d∈[0,1]`（静态）；
-  每个 env 自带 `benchmark_difficulty`
-  与自己的难度映射（`_apply_difficulty`，或等价的构造期解析）
-  （各任务实现见
-  [quadx/env.py:37](../multirotor/env.py#L37)、
-  [fixedwing/env.py:51](../fixedwing/env.py#L51)、
-  [rocket/env.py:145](../rocket/env.py#L145)、
-  [satellite/env.py:115](../satellite/attitude_control/env.py#L115)、
-  [transfer/env.py:64](../satellite/orbit_transfer/env.py#L64)、
-  [docking/env.py:77](../satellite/rendezvous_docking/env.py#L77)）。
-- 难度轴（d=0 → d=1，均为“易 → 难”；d=1 即发表基准，quadx 例外——
-  其确定性 spawn 基准在 d=0，轴向右延伸为更难）：
-
-| 任务 | 旋钮 | d=0（易） → d=1（难） |
-|---|---|---|
-| QuadX-Hover | spawn 扰动 | 确定性 spawn（基准） → ±0.5 m xy / ±0.25 m z / ±0.5 m/s / ±0.35 rad |
-| Fixedwing | 航点壳层 | 最小半径 50 m → 20 m（最大 65 m 固定） |
-| Rocket-Landing | 初始条件 | xy ±2 m，z 440–450 m，euler ±0.05 → xy ±20 m，z 400–450 m，euler ±0.3 |
-| Satellite | 目标姿态 | 距 home ≤0.3 rad、无噪声 → 均匀 SO(3)、±0.001 噪声 |
-| Transfer | 初始偏心率 | 0.02 → 0.1 |
-| Docking | 初始距离/速度 | 15–30 m，0.1 m/s → 50–100 m，0.5 m/s |
-| Rendezvous | 初始距离 | 150–300 m → 800–1200 m（vmax 不变） |
-
-（与 [README.md:99-110](../README.md#L99-L110) 一致。）
+- `TensorPlant` 持有 `wind`（world 系 (n,3) float64，`None` = 静风）；
+  `_air_velocity` 在世界系减去风后再旋到体轴
+  （[plant.py](../environments/common/plant.py)），因此
+  fixedwing 升力面与 rocket 鳍/体阻力的气动项自动感知风；
+- QuadX 无升力面，其既有体阻力项的变量就叫 `vb_air`——接入前恒等于体轴
+  速度，接入后变为 `vb - R^T·wind`，静风时逐位回到原实现；
+- 风的生成统一走 `environments/common/disturbances.py` 的
+  `WindDisturbance`（定常风 + Dryden 阵风，MIL-F-8785C 低空成形滤波、
+  种子化 RNG 流），env 每个控制步更新一次 `plant.wind`（阵风在物理子步间
+  冻结），`reset_idx` 镜像重置滤波器状态；
+- 训练入口硬编码 `WIND` 常量（3 个大气任务：纯 Dryden 阵风，零均值，
+  30% moderate 档；卫星任务在真空中无风）。
 
 **不变式（这条最关键）**
 
-- 只调节**初始状态分布 / 任务参数分布**；成功判据、终止条件、reward 结构永不动，
-  因此任意训练难度下的评测仍与发表基准可比。
-- `difficulty=benchmark_difficulty` 时，同 seed 的首个 reset 及后续 step
-  与旧实现**逐位一致**（`None` 路径完全不进入难度分支）。
+- 静风路径完全不进入风分支：`wind=None` 时 `_air_velocity` 与 QuadX 阻力
+  项的字节码路径与旧实现一致，同 seed 的首个 reset 及后续 step **逐位一致**；
+- eval.py 构造 env 不传 kwargs（永远静风），因此训练带风、评测静风，
+  评测口径与发表基准可比。
 
-**对审稿人的意义**：难度不是“改题”，而是“改题面难度”；可以单独检验
-“训练分布变化”对最终策略的影响，而不用怀疑评测标准被偷偷放宽。
+**对审稿人的意义**：风扰不是"改 dynamics 的手写补丁"，而是把所有气动力
+改为对空速评估这一物理上正确的表述；可以单独检验"扰动鲁棒性"对策略的
+影响，而不用怀疑评测标准被偷偷放宽。
 
 **边界**
 
-- 难度旋钮是训练期分布选择器，**不声称**提升最终性能；它只是把难度变成可控变量。
-（课程学习机制已于 2026-10-22 移除。）
+- 阵风滤波每控制步推进一次，物理子步间冻结（Dryden 带宽远低于控制频率，
+  误差可忽略）；
+- `WindDisturbance` 的 RNG 在 CPU 上，每步产生一次 CPU→GPU 传输
+  （无 device 同步）；静风路径零开销。
 
 ---
 
@@ -251,7 +243,7 @@
 
 **机制与证据**
 
-- `run.json` 记录：任务配置（显式设置难度/课程时含对应字段）、算法、迭代数、
+- `run.json` 记录：任务配置（env kwargs 原样落盘）、算法、迭代数、
   总 transitions、wall time、逐副本 `completed_episodes` / `completed_successes`、
   真实 `physics_step_calls`、完成 episode 的设备端指标，以及一条数值不等价声明
   （[train_utils.py:276-286](../algorithms/train_utils.py#L276-L286)）。
@@ -261,19 +253,18 @@
 - `eval.py` 使用冻结的确定性策略（均值动作、无探索噪声），
   成功/回报由环境自身在设备端累计，结果写入 `eval.json`
   （[eval.py:1-7](../scripts/eval.py#L1-L7)、[eval.py:66-90](../scripts/eval.py#L66-L90)）。
-  评测构造 env 时不传任何 kwargs，因此**始终落在基准难度**，不受训练课程影响。
+  评测构造 env 时不传任何训练 kwargs，与训练分布解耦。
 - 每个任务入口的超参硬编码在文件中、不暴露 CLI；牺牲灵活性换取可复现性
   （[README.md:125-126](../README.md#L125-L126)）。
 
-**对审稿人的意义**：训练与评测的“输入—配置—统计口径”都可复核；
-课程难度不是隐藏状态，而是实验记录的一部分。
+**对审稿人的意义**：训练与评测的“输入—配置—统计口径”都可复核。
 
 **边界**
 
 - 这不是完整的实验管理平台：没有多 seed 编排、没有自动显著性检验。
 - **记录缺口**：训练入口级开关（如 `lr_cosine`、`freeze_obs_norm`）不写入
   `config.json`/`run.json`，复现时须以对应 `train_<task>.py` 的硬编码常量为准。
-- 为兼容课程统计，`update()` 在 episode 边界会做一次小规模标量同步
+- `update()` 在 episode 边界会做一次小规模标量同步
   （每步至多一次，且仅当有 episode 结束）；逐步训练路径本身无 host 同步。
 
 ---
@@ -343,7 +334,7 @@
    引擎数值不同（[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
 2. **不声称 NumPy 随机位流一致**。`TensorRandom` 与上游分布兼容，
    但位流不同（[plant.py:23-30](../environments/common/plant.py#L23-L30)）。
-3. **不声称课程提升性能**。课程只改初始/任务参数分布，成功判据不变。
+3. **不声称基线与 RL 可比性之外的最优性**。基线是手工设计，不代表性能上界（见第 7 条）。
 4. **不声称原版代码桥接是高性能路径**。它是正确性优先的 host 端桥接。
 5. **不声称算法等价**。PPO+FlashNet 与 FlashSAC 的偏差已在模块文档中列明；
    FlashSAC 移植与官方仓库的偏差也已列明。
@@ -362,7 +353,6 @@
 | 张量 plant 惯量取自参考 URDF | 已接线 | [dynamics.py:25-27](../environments/common/dynamics.py#L25-L27) |
 | 未激活副本不消耗随机数/不推进状态 | 设计保证 + 代码路径 | [plant.py:1-9](../environments/common/plant.py#L1-L9) |
 | 基准难度逐位复现 | 已验证（8 任务，同 seed 首个 reset 及 3 步后状态） | 临时复核脚本未随仓库保留 |
-| 课程难度写入 `run.json` | 已接线（静态难度；课程机制已移除） | [train_utils.py:276-286](../algorithms/train_utils.py#L276-L286) |
 | 评测始终在基准难度 | 已保证（eval 不传 kwargs） | [eval.py:54](../scripts/eval.py#L54) |
 | 双算法共用同一 LR 调度 | 已接线（opt-in `lr_cosine`） | [train_utils.py:216-230](../algorithms/train_utils.py#L216-L230) |
 | 每任务一个经典基线、只读 policy 观测 | 已实现 + 官方口径实测 | `python scripts/baseline_eval.py <task>`，[baselines.py:1495](../algorithms/baselines/baselines.py#L1495) |
@@ -387,8 +377,8 @@ python scripts/eval.py quadx --num-envs 16 --steps 400
 # 3) 查看一次训练的实验记录
 python -c "import json;r=json.load(open('results/quadx/run.json'));print(r['task']);print(r['transitions'], r['physics_step_calls'])"
 
-# 4) 定位课程契约的实现位置
-grep -n "benchmark_difficulty\|_apply_difficulty" environments/*/env.py
+# 4) 定位风扰钩子的实现位置
+grep -n "wind" environments/common/plant.py environments/common/disturbances.py | head -20
 
 # 5) 任一任务的经典基线（1024 envs / 2000 步 / seed 7，写 results/<task>/baseline.json）
 python scripts/baseline_eval.py quadx
@@ -411,4 +401,3 @@ python scripts/baseline_eval.py quadx
 | 基线统一评测入口 | [baseline_eval.py](../scripts/baseline_eval.py) |
 | 基线专项 harness（场景网格/消融） | [eval_docking_lqr.py](../satellite/rendezvous_docking/eval_docking_lqr.py)、[eval_fixedwing_autopilot.py](../fixedwing/eval_fixedwing_autopilot.py)、[eval_rendezvous_baseline.py](../satellite/rendezvous_docking/eval_rendezvous_baseline.py)、[rocket_pdg_test.py](../rocket/rocket_pdg_test.py)、[test_quadx_se3.py](../multirotor/test_quadx_se3.py) |
 | 确定性评测 | [eval.py](../scripts/eval.py) |
-| 任务难度轴与使用约定 | [README.md](../README.md) |

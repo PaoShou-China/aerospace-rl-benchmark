@@ -8,8 +8,8 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_rocket.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
-DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
-float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
+WIND configures the wind disturbance passed to the env ctor (steady_wind,
+dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 """
 import sys
 from pathlib import Path
@@ -20,7 +20,6 @@ _ROOT = Path(__file__).resolve().parents[1]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
 from environments.rocket import RocketLandingEnv
 
 # Zero-init the last linear layer of every MLPModel (actor mean head and critic
@@ -76,9 +75,9 @@ RESUME = False           # upstream-aligned task rewrite (2026-10-20): old
                          # so training restarts from scratch
 CLEAN = True             # wipe results/rocket before this fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0, 1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
+# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
+# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
+WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 # reward (2026-10-22): the redesigned shaping (impact-speed potential, off-axis
 # cost, first-touch bonus, success +100) is now the env's ONLY implementation --
 # the verbatim-upstream arm was deleted from rocket/env.py after the
@@ -87,7 +86,6 @@ DIFFICULTY = None
 # axis farming the absolute holding term (+0.3/(||p_xy||+0.1) -> +1810 of the
 # +1471 mean episode return), burn the 5% fuel in ~305 steps, then hit the pad
 # at ~40 m/s (fatal, touch_speed 41.7, success_rate 0 across all 1000 updates).
-ENV_KWARGS = resolve_env_kwargs('rocket', DIFFICULTY)   # validated against environments/common/difficulty.py
 
 
 class _JsonStd(list):
@@ -121,7 +119,7 @@ INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     # num_steps_per_env=64 (documented deviation from the shared 32 default,
@@ -144,4 +142,4 @@ if __name__ == '__main__':
                  gamma=0.995, lam=0.97, entropy_coef=0.007,
                  num_learning_epochs=10,
                  clip_param=0.2, value_loss_coef=1.0, desired_kl=0.01,
-                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)
+                 env_kwargs=WIND, bc_warmstart=BC_WARMSTART)

@@ -3,17 +3,13 @@
 
 Clohessy-Wiltshire-Hill relative motion in the LVLH frame of a 400 km circular
 orbit (pure-tensor symplectic Euler, dt = 1 s): medium-range approach from
-800-1200 m to range < 10 m with speed < 0.5 m/s within 1000 steps, while
+1000-1500 m to range < 10 m with speed < 0.5 m/s within 1000 steps, while
 avoiding the 5 m keep-out sphere around the target and the 2000 m failure
 bound.
 
 Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_rendezvous.py`.
 Shared PPO machinery lives in algorithms/train_utils.py.
-CURRICULUM / ENV_KWARGS expose the project-wide difficulty contract
-(no separate module; DIFFICULTY constant in each train entry): None = benchmark, float = static difficulty
-in [0, 1], True = success-rate-gated auto-ramp (this task's proven
-default, shipped enabled).
 
 Task-specific deviations from the shared fair-comparison baseline (all
 driven by the 1000-step horizon and verified in short sweep runs; everything
@@ -39,14 +35,14 @@ The env's progress-potential brake_ref (0.1 m/s^2, soft dead-zone) and the
 20-point terminal bonus/violation spread are set on SpaceRendezvousEnv
 itself; see satellite/rendezvous_docking/env.py.
 
-Difficulty (2026-10-21): the 800-1200 m spawn makes the terminal "d<10 m and
-v<0.5 m/s" event too rare to bootstrap (0.8% success with the shared wide
-net) while the same CWH machinery reaches ~94% on docking at 50-100 m. A
-success-rate-gated curriculum (150-300 m start, auto-widening to benchmark)
-was tried and later removed; training now runs directly at the benchmark
-spawn, with the static `difficulty` kwarg kept for controlled experiments.
-The task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
-eval.py (no env kwargs) always evaluates the full 800-1200 m benchmark.
+Spawn distribution (2026-10-21): the 800-1200 m spawn makes the terminal
+"d<10 m and v<0.5 m/s" event too rare to bootstrap (0.8% success with the
+shared wide net) while the same CWH machinery reaches ~94% on docking at
+50-100 m; training runs directly at the benchmark spawn. The
+task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
+eval.py (no env kwargs) always evaluates the full benchmark spawn
+(1000-1500 m since 2026-10-24, widened from 800-1200 m after the baseline
+sat at 100% success).
 
 Narrow net: 64x64 was the only arm that learned this task (22% success vs
 0.8% for 512x256x128), so the shared residual trunk is pinned to 64.
@@ -58,7 +54,6 @@ _ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
 from environments.satellite.rendezvous_docking import SpaceRendezvousEnv
 
 TASK = 'rendezvous'
@@ -78,17 +73,13 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/fla
 PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=.999, num_mini_batches=1,
                      lr_schedule='fixed', learning_rate=3e-4, entropy_coef=.003,
                      trunk_hidden=64, critic_trunk_hidden=64)
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('rendezvous', DIFFICULTY)   # validated against environments/common/difficulty.py
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     run_training(TASK, SpaceRendezvousEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART,
+                 algo=ALGORITHM, bc_warmstart=BC_WARMSTART,
                  **PPO_OVERRIDES)

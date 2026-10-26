@@ -13,11 +13,11 @@ mu = 3.986e14, n ~ 1.13e-3 rad/s), integrated with the paper's symplectic
 Euler scheme at dt = 1 s (Algorithm 1), fully tensorized on one device
 (no engine, no gym).
 
-Docking: final approach from a 50-100 m separation; success requires
+Docking: final approach from a 60-120 m separation; success requires
 < 1 m and < 0.1 m/s; failure beyond 200 m range or fuel exhaustion
 (2 kg budget: the paper's 50 kg cannot bind at Isp=300 s, where a
 full-thrust episode consumes < 3 kg); 500-step limit. Rendezvous:
-medium-range approach from 800-1200 m to a < 10 m & < 0.5 m/s goal while
+medium-range approach from 1000-1500 m to a < 10 m & < 0.5 m/s goal while
 avoiding a 5 m radius keep-out sphere; failure on keep-out violation,
 fuel depletion (4 kg budget, same rescaling), or 2 km range; 1000-step
 limit. Masked (inactive) replicas are frozen and consume no random
@@ -64,18 +64,8 @@ class _CWHBase:
     progress_weight=100.      # progress-mode shaping scale
     viol_penalty=100.         # progress-mode one-time terminal violation cost
     brake_ref=None            # progress-mode reference decel [m/s^2]; resolved in __init__
-    # Difficulty axis (0 easiest -> 1 hardest = the benchmark table): the
-    # |p0| sampling range interpolates linearly from init_range_start (d=0)
-    # to init_range_final (d=1; the benchmark table when unset) and |v0| from
-    # init_vmax_start when the task defines one. Success criteria (goal, keep-
-    # out, horizon) are untouched.
-    init_range_start=None     # easy |p0| sampling range [m] (difficulty 0)
-    init_range_final=None     # benchmark |p0| sampling range [m] (difficulty 1)
-    init_vmax_start=None      # easy |v0| bound [m/s]; None leaves init_vmax fixed
-    benchmark_difficulty=1.
-    difficulty=None           # None = benchmark behavior (no cfg record)
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,difficulty=None):
+    def __init__(self,num_envs=64,backend='cpu',seed=7):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
@@ -129,27 +119,8 @@ class _CWHBase:
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
-        # difficulty resolution; init_range_final falls back to the benchmark
-        # class table when the task doesn't pin one
-        self.init_range_benchmark=tuple(self.init_range)
-        self.init_vmax_benchmark=self.init_vmax
-        if difficulty is not None:
-            if not 0.<=difficulty<=1.:raise ValueError('difficulty must be in [0,1]')
-            self.difficulty=float(difficulty)
-        if self.difficulty is not None:self._apply_difficulty(self.difficulty)
 
         self.reset()
-
-    def _apply_difficulty(self,d):
-        """Map difficulty in [0,1] onto the spawn distribution (range + vmax)."""
-        self.difficulty=d
-        lo0,hi0=self.init_range_start if self.init_range_start is not None else self.init_range_benchmark
-        lo1,hi1=self.init_range_final if self.init_range_final is not None else self.init_range_benchmark
-        self.init_range=(lo0+(lo1-lo0)*d,hi0+(hi1-hi0)*d)
-        if self.init_vmax_start is not None:
-            self.init_vmax=self.init_vmax_start+(self.init_vmax_benchmark-self.init_vmax_start)*d
-        self.cfg['init_range']=list(self.init_range)
-        self.cfg['difficulty']=d
 
     def _accel(self,p,v,thrust):
         """CWH accelerations (paper Eqs. 1-3): x radial, y along-track, z cross-track."""
@@ -240,6 +211,8 @@ class _CWHBase:
         self.completed_episodes+=self.reset_buf.to(torch.long)
         self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
         done=self.reset_buf
+        # snapshot for the step return: reset_idx below clears terminated/truncated
+        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         self.extras['terminal_observations']=TensorDict(
@@ -252,7 +225,7 @@ class _CWHBase:
 
         self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,self.reset_buf,self.extras
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
     def reset_idx(self,envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
@@ -307,12 +280,10 @@ class SpaceDockingEnv(_CWHBase):
     """
     vehicle='docking'
     max_steps=500
-    init_range=(50.,100.)
+    # 2026-10-24: (50,100) -> (60,120) m (baseline sat at 100% success); the
+    # 120 m top stays 40 m below the 0.8*range_fail shield corridor.
+    init_range=(60.,120.)
     init_vmax=.5
-    # difficulty-0 easy endpoints: successes dense enough to bootstrap the
-    # terminal braking maneuver before the benchmark 50-100 m / 0.5 m/s ramp
-    init_range_start=(15.,30.)
-    init_vmax_start=.1
     pos_goal=1.
     vel_goal=.1
     range_fail=200.
@@ -334,12 +305,9 @@ class SpaceRendezvousEnv(_CWHBase):
     early termination over a 1000-step horizon and never trains."""
     vehicle='rendezvous'
     max_steps=1000
-    init_range=(800.,1200.)          # benchmark range; eval always uses this
-    init_range_final=(800.,1200.)
-    # Difficulty-0 easy endpoints: 150-300 m is the docking-scale regime where
-    # the terminal braking maneuver is reachable by exploration; difficulty 1
-    # restores the 800-1200 m benchmark range.
-    init_range_start=(150.,300.)
+    # 2026-10-24: (800,1200) -> (1000,1500) m (baseline sat at 100% success);
+    # the 1500 m top keeps 500 m margin to range_fail=2000 m.
+    init_range=(1000.,1500.)
     init_vmax=1.
     pos_goal=10.
     vel_goal=.5

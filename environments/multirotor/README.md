@@ -1,11 +1,11 @@
 # Multirotor
 
-QuadX-Hover (`QuadXHoverEnv`, task id `quadx`): a 27 g Crazyflie 2.x
-quadrotor holding station at 1 m altitude. URDF rigid-body dynamics on the
-Genesis engine (240 Hz) under an inner-loop body-rate PID with a 40 Hz
-policy; 400 steps = 10 s per episode. Task spec (action/observation layout,
-reward, terminations, difficulty axis) lives in the package docstring
-[`__init__.py`](__init__.py).
+QuadX-Waypoints (`QuadXWaypointsEnv`, task id `quadx`): a 27 g Crazyflie 2.x
+quadrotor flying a sequence of 4 waypoints sampled in a 5 m flight dome.
+URDF rigid-body dynamics on the Genesis engine (240 Hz) under an inner-loop
+body-rate PID with a 40 Hz policy; 800 steps = 20 s per episode. Task spec
+(action/observation layout, reward, terminations, wind) lives in the package
+docstring [`__init__.py`](__init__.py).
 
 ## Files
 

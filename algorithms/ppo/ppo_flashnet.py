@@ -1,26 +1,31 @@
 """FlashSAC-trunk models for rsl-rl PPO (architecture-matched A/B arm).
 
-Gives PPO the FlashSAC network structure (algorithms/flashsac/flash_sac.py): input
-UnitBatchNorm embedder -> `trunk_blocks` residual blocks (UnitLinear
-hidden->4*hidden, UnitBatchNorm, ReLU, UnitLinear 4*hidden->hidden,
-UnitBatchNorm, ReLU, +residual; expansion 4) -> UnitRMSNorm, followed by a
-plain linear head. Actor trunk 2x128, critic trunk 2x256 -- exactly
-mirroring FlashSACActor / FlashSACDoubleCritic.
+Gives PPO the FlashSAC network structure (algorithms/flashsac/flash_sac.py): an
+input embedder (UnitBatchNorm in the shared trunk, replaced by identity when
+`use_bn=False`, which `build_cfg` pins for PPO) -> `trunk_blocks` residual
+blocks (UnitLinear hidden->4*hidden, optional UnitBatchNorm, ReLU, UnitLinear
+4*hidden->hidden, optional UnitBatchNorm, ReLU, +residual; expansion 4) ->
+UnitRMSNorm, followed by a plain linear head. Actor trunk 2x128, critic trunk
+2x256 -- exactly mirroring FlashSACActor / FlashSACDoubleCritic.
 
 Norm-control semantics are replicated on the PPO update path: grad-enabled
-forwards (rsl_rl PPO.update) first re-normalize every unit layer to its
-target norm (UnitLinear rows to unit L2, BN scale/bias and RMSNorm scales
-to sqrt(d)). BatchNorm runs with batch statistics everywhere -- see
-FlashResTrunk for why FlashSAC's act-eval/update-train split cannot be
-kept under PPO's importance ratio.
+forwards first re-normalize every unit layer to its target norm (UnitLinear
+rows to unit L2, BN scale/bias and RMSNorm scales to sqrt(d)). This is lazy:
+re-normalization happens at the first grad-enabled forward after an optimizer
+step, not inside the step itself (rsl-rl PPO takes one optimizer step per
+minibatch). `build_cfg` pins `use_bn=False` for both actor and critic, so
+UnitBatchNorm is replaced by identity and input whitening is delegated to
+rsl-rl's `EmpiricalNormalization`; see FlashResTrunk for why FlashSAC's
+act-eval/update-train statistics split cannot be kept under PPO's importance
+ratio.
 
 Deviations from FlashSAC (algorithmic, not structural): the actor output
 distribution stays rsl-rl's state-independent Gaussian (PPO's entropy/KL
 machinery depends on it) instead of FlashSAC's state-dependent tanh-bounded
 log-std head; the critic head is a scalar linear (rsl-rl's value loss is
 MSE on a scalar) instead of the 101-bin categorical head; weight
-renormalization happens at the first forward after each optimizer step
-(PPO steps twice per minibatch) rather than strictly after every step.
+renormalization is applied at the first grad-enabled forward after each
+optimizer step rather than strictly inside the optimizer step.
 
 Selected via build_cfg(arch='flash_residual') -> class_name
 'common.ppo_flashnet:FlashResMLPModel' (rsl_rl resolve_callable supports

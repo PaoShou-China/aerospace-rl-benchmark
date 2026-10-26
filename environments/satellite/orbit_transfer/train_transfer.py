@@ -16,10 +16,7 @@ task; makes the PBRS return undiscounted and exactly telescoping over the
 166-step episode) and a disabled timeout value bootstrap inside the env
 (timeouts are true terminals). Shared PPO machinery lives in
 algorithms/train_utils.py.
-ALGORITHM / DIFFICULTY / ENV_KWARGS expose the shared switches: the
-algorithm arm ('ppo' | 'flash_sac') and the static difficulty knob:
-None = benchmark, float in [0, 1] = static difficulty (0 easiest,
-1 hardest = benchmark).
+ALGORITHM exposes the shared algorithm arm ('ppo' | 'flash_sac').
 """
 import sys
 from pathlib import Path
@@ -28,7 +25,6 @@ _ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
 from environments.satellite.orbit_transfer import LowThrustTransferEnv
 
 TASK = 'transfer'
@@ -56,17 +52,12 @@ PPO_OVERRIDES = {'gamma': 0.9999, 'lr_schedule': 'fixed', 'learning_rate': 2.5e-
                  'lam': 0.99, 'entropy_coef': 4.75e-8, 'num_learning_epochs': 30,
                  'clip_param': 0.3, 'value_loss_coef': 0.5}
 
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('transfer', DIFFICULTY)   # validated against environments/common/difficulty.py
-
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     run_training(TASK, LowThrustTransferEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART,
+                 algo=ALGORITHM, bc_warmstart=BC_WARMSTART,
                  **PPO_OVERRIDES)

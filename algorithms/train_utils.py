@@ -4,11 +4,12 @@ Importing requires only the repository root on sys.path (so `algorithms.*` and
 `environments.common.*`, including the vendored
 `environments.common.original_pyflyt.*` sources, resolve).
 
-`run_training()` reproduces the exact rsl-rl PPO loop, checkpoint handling
-and run reporting of the original train.py. All run parameters are passed in
-as plain constants from the per-task entry files -- nothing is read from the
-command line -- and the PPO/model configuration is identical across tasks so
-results stay directly comparable.
+`run_training()` drives the rsl-rl PPO loop (or the FlashSAC runner) with the
+checkpoint handling and run reporting of the original train.py. All run
+parameters are passed in as plain constants from the per-task entry files --
+nothing is read from the command line -- and the PPO/model configuration
+defaults are shared across tasks so results stay directly comparable; an entry
+pins only the variables under test.
 """
 import copy
 import json
@@ -18,7 +19,29 @@ import time
 from pathlib import Path
 
 import torch
+from rsl_rl.env import VecEnv
 from rsl_rl.runners import OnPolicyRunner
+
+
+class RslVecEnv(VecEnv):
+    """Adapts the project envs' 5-tuple step (obs, rew, terminated, truncated,
+    extras) to the 4-tuple (obs, rew, dones, extras) rsl_rl expects.
+    dones = terminated | truncated, identical to the env's internal reset_buf;
+    timeout bootstrapping still flows through extras['time_outs'] untouched."""
+
+    def __init__(self, env):
+        self.__dict__['env'] = env  # bypass __getattr__ during construction
+
+    def get_observations(self):
+        return self.env.get_observations()
+
+    def step(self, actions):
+        obs, rew, term, trunc, extras = self.env.step(actions)
+        return obs, rew, term | trunc, extras
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
 
 
 def build_cfg(*, lr_schedule='fixed',
@@ -53,8 +76,9 @@ def build_cfg(*, lr_schedule='fixed',
     at -377 with 0% success, results/quadx_sweep). Fixed 1e-3 is the A/B
     winner on every task where the two were compared (quadx 300-update sweep,
     fixedwing 150-update A/B, docking, rendezvous), so it is the shared
-    default; entries with a different proven optimum pin it explicitly
-    (docking fixed 3e-4, transfer adaptive 3e-4)."""
+    default; the shipped entries pin their per-task proven optimum
+    (quadx/fixedwing/rocket/satellite/rendezvous/docking/missile fixed 3e-4,
+    transfer fixed 2.5e-4)."""
     if arch not in ('flash_residual', 'mlp'):
         raise ValueError(f'unknown arch {arch!r} (expected flash_residual | mlp)')
     if arch == 'flash_residual':
@@ -93,8 +117,8 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     """Train one task end-to-end and write checkpoint.pt / run.json / config.json.
 
     env_kwargs: extra keyword arguments forwarded to the env constructor
-    (e.g. rendezvous's static spawn difficulty); None leaves every other
-    task entry's call signature unchanged.
+    (e.g. the atmospheric tasks' wind disturbance config); None leaves
+    every other task entry's call signature unchanged.
 
     lr_decay_updates: optional exponential lr half-life in updates (opt-in;
     None keeps the constant lr the other task entries use).
@@ -160,7 +184,7 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
     else stays at the shared fair-comparison defaults.
     """
     torch.manual_seed(seed)
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]  # repo root (this file: algorithms/train_utils.py)
     out = Path(out_dir) if out_dir is not None else root / 'results' / task
     out.mkdir(parents=True, exist_ok=True)
     if not resume and clean:
@@ -174,7 +198,17 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         for p in out.glob('events.out.tfevents.*'):
             p.unlink()
 
-    env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **(env_kwargs or {}))
+    env_kwargs = dict(env_kwargs or {})
+    # An unversioned rocket checkpoint belongs to the pre-v2 environment.
+    # Resuming optimization must not silently change its physics/score.
+    if resume and env_cls.__name__ == 'RocketLandingEnv' and (out/'config.json').exists():
+        saved = json.loads((out/'config.json').read_text()).get('env_kwargs') or {}
+        for key, default in (('benchmark_version','v1'),('variation','nominal'),('agent_hz',60)):
+            value = saved.get(key,default)
+            if key in env_kwargs and env_kwargs[key] != value:
+                raise ValueError(f'Cannot change {key} while resuming; start a separate run')
+            env_kwargs[key] = value
+    env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **env_kwargs)
     if algo == 'flash_sac':
         from algorithms.flashsac.flash_sac import FlashSACRunner, flash_sac_cfg
         valid = set(flash_sac_cfg())
@@ -188,10 +222,15 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         cfg = build_cfg(**algo_overrides)
         # OnPolicyRunner mutates cfg in place (resolving/popping class_name); pass a
         # deep copy so the dumped config.json stays a faithful training config.
-        runner = OnPolicyRunner(env, copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
+        runner = OnPolicyRunner(RslVecEnv(env), copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
         steps_per_iter = cfg['num_steps_per_env']
     else:
         raise ValueError(f'unknown algo {algo!r} (expected ppo | flash_sac)')
+    cfg['env_kwargs'] = dict(env_kwargs)
+    cfg['env_kwargs'].update(getattr(env, 'benchmark_env_kwargs', {}))
+    if 'benchmark' in env.cfg:cfg['benchmark'] = env.cfg['benchmark']
+    # Persist the contract before training, including interrupted runs.
+    (out / 'config.json').write_text(json.dumps(cfg, indent=2))
     if resume:
         cands = sorted(out.glob('model_*.pt'), key=lambda p: int(p.stem.split('_')[1]))
         ckpt = cands[-1] if cands else out / 'checkpoint.pt'
@@ -340,10 +379,10 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         report['completed_metrics'] = {k: float(v.detach().sum()) / eps for k, v in env.completed_metrics.items()}
     (out / 'run.json').write_text(json.dumps(report, indent=2))
     cfg['env_kwargs'] = dict(env_kwargs) if env_kwargs else {}
+    cfg['env_kwargs'].update(getattr(env, 'benchmark_env_kwargs', {}))
+    if 'benchmark' in env.cfg:cfg['benchmark'] = env.cfg['benchmark']
     if isinstance(bc_warmstart, dict):
         cfg['bc_warmstart'] = bc_warmstart
-    # the env's resolved difficulty (eval.py freezes evaluation at this level)
-    cfg['difficulty'] = getattr(env, 'difficulty', None)
     (out / 'config.json').write_text(json.dumps(cfg, indent=2))
     print(json.dumps(report, indent=2), flush=True)
     env.close()

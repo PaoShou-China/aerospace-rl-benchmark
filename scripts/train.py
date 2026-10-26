@@ -1,17 +1,18 @@
-"""Legacy quick-sweep PPO entry for all 7 real tasks (CLI aggregator).
+"""Legacy quick-sweep PPO entry for all 8 real tasks (CLI aggregator).
 
 Tasks: the three original-task Genesis RL environments (quadx, fixedwing,
 rocket) plus the fully tensorized space environments (satellite CMG attitude
-control, low-thrust perigee-raising transfer, CWH docking / rendezvous).
+control, low-thrust perigee-raising transfer, CWH docking / rendezvous) and
+the project-authored 6-DOF missile intercept (Genesis rigid body + kinematic
+target).
 
 This is the small-config sweep entry (default 64 envs, 32-step rollouts,
 64x64 MLP, adaptive-KL schedule). For experiment runs use the self-contained
 per-task entries `train_<task>.py` instead -- they share
-algorithms/train_utils.py, ship the project-standard 1024-env configuration
-and expose the DIFFICULTY constant; this file passes no env kwargs (always
-benchmark difficulty).
+algorithms/train_utils.py and ship the project-standard 1024-env
+configuration; this file passes no env kwargs (always benchmark behavior).
 
-Usage: python train.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous [--num-envs 64] [--updates 1000]
+Usage: python train.py quadx|fixedwing|rocket|satellite|transfer|docking|rendezvous|missile [--num-envs 64] [--updates 1000]
 Defaults: GPU backend, seed 7, PPO config verified in the small-scale run.
 """
 import argparse
@@ -27,21 +28,24 @@ sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from environments.multirotor import QuadXHoverEnv
+from algorithms.train_utils import RslVecEnv
+from environments.multirotor import QuadXWaypointsEnv
 from environments.fixedwing import FixedwingWaypointsEnv
 from environments.rocket import RocketLandingEnv
+from environments.missile import MissileInterceptEnv
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
 from environments.satellite.orbit_transfer import LowThrustTransferEnv
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
-ENVS = {'quadx': QuadXHoverEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+ENVS = {'quadx': QuadXWaypointsEnv, 'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
+        'missile': MissileInterceptEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
         'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('vehicle', choices=['quadx', 'fixedwing', 'rocket', 'satellite',
+    parser.add_argument('vehicle', choices=['quadx', 'fixedwing', 'rocket', 'missile', 'satellite',
                                             'transfer', 'docking', 'rendezvous'])
     parser.add_argument('--num-envs', type=int, default=64)
     parser.add_argument('--updates', type=int, default=1000)
@@ -66,7 +70,7 @@ def main():
            'logger': 'tensorboard'}
     # OnPolicyRunner mutates cfg in place (resolving/popping class_name); pass a
     # deep copy so the dumped config.json stays a faithful training config.
-    runner = OnPolicyRunner(env, copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
+    runner = OnPolicyRunner(RslVecEnv(env), copy.deepcopy(cfg), log_dir=str(out), device=str(env.device))
     if args.resume:
         cands = sorted(out.glob('model_*.pt'), key=lambda p: int(p.stem.split('_')[1]))
         ckpt = cands[-1] if cands else out / 'checkpoint.pt'

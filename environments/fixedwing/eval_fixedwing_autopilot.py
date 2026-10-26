@@ -60,7 +60,8 @@ def stat_run(seed, num_envs=NUM_ENVS, steps=STAT_STEPS):
         with torch.no_grad():
             actions = ctl.actions(obs)
             sat_steps += (actions.abs() >= 0.999).any(-1).float().sum()
-            obs, _, reset_buf, extras = env.step(actions)
+            obs, _, term, trunc, extras = env.step(actions)
+            reset_buf = term | trunc
         ctl.reset_idx(reset_buf)
         if not bool(reset_buf.any()):
             continue
@@ -157,7 +158,8 @@ def segment_run(route, repeats=SEGMENT_REPEATS, steps=SEG_STEPS):
             cur['h_err'].append(abs(float(p[2]) - float(route_t[ti][2])))
         cur['v_err'].append(abs(float(vb.norm()) - 20.))
         cur['bank'].append(abs(roll))
-        obs, _, reset_buf, _ = env.step(a)
+        obs, _, term, trunc, _ = env.step(a)
+        reset_buf = term | trunc
         ctl.reset_idx(reset_buf)
         if bool(reset_buf[0]):
             suc_now = int(env.completed_successes[0])

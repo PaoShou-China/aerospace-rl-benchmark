@@ -28,8 +28,8 @@ and train_docking.py):
    rising where the baseline plateaued; cost is +48% wall time (3803 s) and
    2x transitions. Kept. Baseline (nsp=32): results/fixedwing_baseline_nsp32.
 
-DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
-float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
+WIND configures the wind disturbance passed to the env ctor (steady_wind,
+dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 
 Geometry and diagnostics (2026-10-21): the waypoint shell is now 20-65 m
 with a 20 m altitude floor (was 1-90 m and 0.5 m). The old shell sampled
@@ -46,7 +46,6 @@ _ROOT = Path(__file__).resolve().parents[1]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
 from environments.fixedwing import FixedwingWaypointsEnv
 
 TASK = 'fixedwing'
@@ -68,14 +67,13 @@ NUM_STEPS_PER_ENV = 64
 NUM_LEARNING_EPOCHS = 10
 ENTROPY_COEF = 0.0
 VALUE_LOSS_COEF = 0.5
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('fixedwing', DIFFICULTY)   # validated against environments/common/difficulty.py
+# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
+# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
+WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+BC_WARMSTART = None
 
 if __name__ == '__main__':
     run_training(TASK, FixedwingWaypointsEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
@@ -84,4 +82,4 @@ if __name__ == '__main__':
                  num_steps_per_env=NUM_STEPS_PER_ENV,
                  num_learning_epochs=NUM_LEARNING_EPOCHS,
                  entropy_coef=ENTROPY_COEF, value_loss_coef=VALUE_LOSS_COEF,
-                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART)
+                 env_kwargs=WIND, bc_warmstart=BC_WARMSTART)
