@@ -2,8 +2,8 @@
 
 Source: https://github.com/uzh-rpg/marl-racing/blob/master/track.yaml
 Gate1..Gate7 positions and loop=yes are preserved; no scaling or translation.
-Geometry helpers are preparation for racing; the current env still uses only
-sample_waypoints(). Gate-local +X is the proposed forward direction; Y/Z span
+Geometry and index helpers are used by QuadXSplitsEnv; sample_waypoints()
+is retained for callers that only need gate centres. Gate-local +X is the proposed forward direction; Y/Z span
 the gate plane. Source size is retained verbatim, not claimed to specify a
 collision-accurate free aperture. Frame thickness/clearance remain to be defined.
 """

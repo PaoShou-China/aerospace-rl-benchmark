@@ -1,1 +1,1 @@
-from .env import QuadXWaypointsEnv
+from .env import QuadXSplitsEnv

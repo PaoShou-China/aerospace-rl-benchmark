@@ -9,8 +9,7 @@ multirotor/
   random_waypoint/
     __init__.py
     env.py               # full original spatial waypoint environment
-    train.py             # full training configuration and entry
-    train_quadx.py       # moved compatibility training entry
+    train_quadx.py       # full spatial training configuration and entry
     test_quadx_se3.py    # original spatial-task SE(3) tests
   splits/
     __init__.py
@@ -24,15 +23,17 @@ multirotor/
 | `random_waypoint` | Original polar sampling, radius 1..4.5 m, altitude >=0.4 m | 5 m | `results/quadx_random_waypoint/` |
 | `splits` | Random 4 consecutive gates, original coordinates, Gate7 wraps to Gate1 | 15 m | `results/quadx/` |
 
-Both use 37-D observations, the existing progress/waypoint reward, a 0.2 m
-capture radius, and 800 policy steps (20 s). Gate centres are point targets;
-the task does not require directional aperture crossing. Spatial sampling is
-not volume-uniform. Each train.py owns its constants, including wind settings.
+Both use 37-D observations, the existing progress/waypoint reward, and 800
+policy steps (20 s). The spatial task uses a 0.2 m capture radius. Split-S uses
+QuadXSplitsEnv with directed aperture crossing and swept frame collisions;
+full_track=True enables fixed Gate1..Gate7 tests, with optional laps. Its
+frame/clearance geometry is an approximation. Spatial sampling is not
+volume-uniform. Each training entry owns its constants, including wind settings.
 
 From the repository root:
 
 ```powershell
-python environments/multirotor/random_waypoint/train.py
+python environments/multirotor/random_waypoint/train_quadx.py
 python environments/multirotor/splits/train.py
 python environments/multirotor/random_waypoint/test_quadx_se3.py
 ```
