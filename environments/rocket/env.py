@@ -1,3 +1,9 @@
+"""Rocket benchmark v2 defaults to footpads and a sustained-landing metric.
+
+See docs/rocket_benchmark_v2_zh.md. The historical implementation notes below
+refer to the v1 instantaneous event (still used for reward/diagnostics).
+V2 does not change reward, fatal thresholds, initial distribution or interfaces.
+"""
 """Rocket-Landing task: upstream-faithful port of PyFlyt 0.29.0.
 
 Task definition (reward, dynamics, episode logic, initial conditions) follows
@@ -123,7 +129,12 @@ class RocketLandingEnv:
     conventional_controller=RocketPDGBaseline
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate',
-                 reward=None):
+                 reward=None,benchmark_version='v2',variation='nominal',agent_hz=60):
+        if benchmark_version not in ('v1','v2'):raise ValueError(benchmark_version)
+        if agent_hz not in (40,60):raise ValueError('agent_hz must be 40 or 60')
+        from environments.common.rocket_benchmark import VARIATIONS, LandingMetrics
+        if variation not in VARIATIONS:raise ValueError(variation)
+        self.benchmark_version=benchmark_version
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'rocket','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -136,11 +147,13 @@ class RocketLandingEnv:
                              contact_vel=CONTACT_VEL_COEF,success=SUCCESS_BONUS)
         if reward:self.reward_cfg.update(reward)
 
-        self.plant=TensorPlant('rocket',num_envs,backend,seed)
+        self.plant=TensorPlant('rocket',num_envs,backend,seed,
+                               rocket_benchmark=benchmark_version,rocket_variation=variation)
         self.device=self.plant.device
         # 60 Hz policy: the closest divisor of the 120 Hz control loop to the
         # analysed 50 Hz (dt 0.0167 s); 1800 steps = 30 s episode
-        self.agent_hz=60;self.inner_steps=120//self.agent_hz;self.max_steps=1800
+        self.agent_hz=agent_hz;self.inner_steps=120//self.agent_hz;self.max_steps=30*agent_hz
+        self.landing_metrics=LandingMetrics(num_envs,self.device,agent_hz)
         self.max_episode_length=self.max_steps+2
         self.num_actions=7
         # Upstream action_space Box (rocket_base_env.py L85-107): finlet x/y/yaw
@@ -180,6 +193,8 @@ class RocketLandingEnv:
                                 'touch_speed':torch.zeros_like(self.touch_speed),
                                 'touch_ang_vel':torch.zeros_like(self.touch_speed),
                                 'touch_tilt':torch.zeros_like(self.touch_speed)}
+        for key in self.landing_metrics.values(self.complete,self.terminated):
+            self.completed_metrics[key]=torch.zeros_like(self.touch_speed)
         # per-component reward accounting: Episode/rew_* tensorboard scalars and
         # run.json completed_metrics keys, so reward attribution is observable
         keys=REWARD_KEYS
@@ -189,6 +204,17 @@ class RocketLandingEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg);self.cfg['reward']=dict(self.reward_cfg)
         self._init_wind(num_envs,seed,steady_wind,dryden,severity)
+        self.benchmark_env_kwargs=dict(benchmark_version=benchmark_version,variation=variation,agent_hz=agent_hz)
+        from pathlib import Path
+        import hashlib
+        model=Path(__file__).parents[1]/'common/original_pyflyt/models/vehicles/rocket'/('rocket_v2.urdf' if benchmark_version=='v2' else 'rocket.urdf')
+        self.cfg['benchmark']=dict(version=benchmark_version,variation=variation,
+            variation_ranges=VARIATIONS[variation],variation_seed_offset=104729,policy_hz=agent_hz,control_hz=120,physics_hz=240,
+            horizon_seconds=30,stable_samples=self.landing_metrics.required_samples,
+            primary_metric='ever_stable_2s' if benchmark_version=='v2' else 'ever_success',
+            collision_asset_sha256=hashlib.sha256(model.read_bytes()).hexdigest(),
+            physics_and_success_predicate_modified=benchmark_version=='v2',
+            integration='native-main-v2',external_wind=self.cfg.get('wind'))
 
         self.reset()
 
@@ -287,7 +313,12 @@ class RocketLandingEnv:
         self.returns+=self.reward
         self.completed_returns+=torch.where(self.reset_buf,self.returns,0.)
         self.completed_episodes+=self.reset_buf.to(torch.long)
-        self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
+        self.landing_metrics.update(self.obs_pad.bool(),v,wb,rpy[:,:2].norm(dim=-1),self.terminated)
+        metrics=self.landing_metrics.values(self.complete,self.terminated)
+        primary=metrics['ever_stable_2s'] if self.benchmark_version=='v2' else self.complete
+        self.completed_successes+=(self.reset_buf&primary).to(torch.long)
+        for key,value in metrics.items():
+            self.completed_metrics[key]+=(self.reset_buf&value).to(torch.float64)
         landed=self.reset_buf&self.touch_flag
         self.completed_metrics['pad_touch_rate']+=landed.to(torch.float64)
         self.completed_metrics['touch_speed']+=torch.where(landed,self.touch_speed,0.)
@@ -307,7 +338,7 @@ class RocketLandingEnv:
         # gates both the episode extras and the reset path)
         done_any=bool(done.any())
         if done_any:
-            episode={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1),
+            episode={'success_rate':(done&primary).to(torch.float64).sum()/done.sum().clamp_min(1),
                      'pad_touch_rate':landed.to(torch.float64).sum()/done.sum().clamp_min(1)}
             touched=done&self.touch_flag
             n=touched.to(torch.float64).sum()
@@ -371,6 +402,7 @@ class RocketLandingEnv:
         self.terminated.masked_fill_(mask,False);self.truncated.masked_fill_(mask,False)
         self.collision.masked_fill_(mask,False);self.out_of_bounds.masked_fill_(mask,False)
         self.complete.masked_fill_(mask,False);self.fatal_collision.masked_fill_(mask,False)
+        self.landing_metrics.reset(mask)
         self.touch_flag.masked_fill_(mask,False)
         self.touch_speed.masked_fill_(mask,0);self.touch_ang_vel.masked_fill_(mask,0);self.touch_tilt.masked_fill_(mask,0)
         for buf in self.reward_components.values():buf.masked_fill_(mask,0.)

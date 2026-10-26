@@ -86,3 +86,13 @@ def contract(vehicle,dt,decimation,mapping='default'):
             'genesis_integrator':'Euler','gravity_m_s2':[0,0,-9.81],
             'ground_contact':'not part of free-flight equivalence certificate'},
             'initial_conditions':'stored separately; fuel, velocities, pose and actuator states must match'}
+
+
+def verify_rocket_v2_assets():
+    """Keep the upstream asset intact; verify the separately versioned contact model."""
+    base=Path(__file__).parent/'original_pyflyt/models/vehicles/rocket'
+    manifest=json.loads((base/'benchmark_v2_manifest.json').read_text())
+    for name,expected in manifest['files'].items():
+        if hashlib.sha256((base/name).read_bytes()).hexdigest()!=expected:
+            raise RuntimeError(f'rocket benchmark asset changed: {name}')
+    return manifest
