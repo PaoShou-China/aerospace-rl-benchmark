@@ -1,0 +1,62 @@
+{
+  "upstream_repository": "https://github.com/PaoShou-China/aerospace-rl-benchmark",
+  "upstream_commit": "39e6bb6fd5d0f5432f7405a76946938a469492ce",
+  "upstream_archive_sha256": "dfc67c8db21ce866a01974263ff91450f756aa5970bfff57b385b0b240a9f0ff",
+  "actor_source_sha256": {
+    "rocket_phase_policy.py": "11f2dac4f7e312b2caefdd3e93d0f0b4966a7317dd37205ab32f4de13f08b3fe",
+    "rocket_physical_core.py": "a096e8b83fa7249c8f66e7c701840891a41afb31b23b83aa31f1d6b21cb12f5e",
+    "rocket_unified_physics.py": "711a2ad957d24a02b9aaae717eb1b3eeade9ae12dabf18b6874030d4cea54b16",
+    "rocket_flash_ppo.py": "c350963319d230eb396b221692c90ee5e99464585c047007a63d45832f8d59fc",
+    "rocket_reward_candidates.py": "3d5d7f3cb2d358a1acea1f6b7427647d311375950536e35cbb9e249844300e53",
+    "rocket_direct_support.py": "8d63da36bb04021fb310b0b5f35de504180c5b86133af9de189de4808ffd2dfd",
+    "rocket_ppo_practical_support.py": "629267f52ed597bec45f84fc4abeecf78b5b75a02f389e5ff46a70f0c8e7d576"
+  },
+  "original_training_launcher_sha256": "dbd4f3ae66a79074b0b14e106b6e4c7f156ee811d82dcc8e8a6e4b2eaba9619a",
+  "artifact_sha256": {
+    "artifacts/policy.pt": "e8df5fae67071eadf474037e9b9237013185a47be78a6e47f5feb7e220933489",
+    "artifacts/continuation.pt": "5e83ca6b8d0343d3e2db716f72b99a409612cea8a43462df8def6218a5670277",
+    "artifacts/parent/parent.pt": "36439bfeb91b5a8bba1d4fd212ef5addd9712eca41f7cd7bb9d8c217211fb424"
+  },
+  "packaging_changes": [
+    "Core model, reward adapter, and their support modules copied byte-for-byte from v6 sources.",
+    "Frozen upstream archive replaces the local git archive dependency.",
+    "Training defaults use portable parent paths and the recorded eight-step horizon.",
+    "Training completion dispatches the existing independent four-cohort evaluator.",
+    "FirstEpisodes and wilson_interval extracted unchanged into a small standalone helper.",
+    "Added configuration launcher and artifact preparation for evaluation.",
+    "Human-readable records replace the original absolute training directory with <training-workspace>.",
+    "Comparison record excludes unrelated old-branch process status.",
+    "Binary checkpoints remain unchanged; their stored historical paths are metadata only.",
+    "Self-contained integration under algorithms/physical_belief_rocket_landing; no environment files changed.",
+    "Source overlay directory renamed from src/common to core; frozen runtime namespace retained.",
+    "Public entry points, checkpoints, configuration and reports use descriptive names; historical IDs stay in provenance.",
+    "Added an English report and kept the Chinese report."
+  ],
+  "python_minor": "3.11",
+  "dependency_versions": {
+    "torch": "2.14.1",
+    "genesis-world": "1.4.4",
+    "rsl-rl-lib": "5.5.1",
+    "tensordict": "0.15.2",
+    "tensorboard": "2.21.0",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "PyYAML": "6.0.3"
+  },
+  "evaluation_seeds": [
+    1000007,
+    2000007,
+    3000007,
+    4000007
+  ],
+  "method_name": "Physical-Belief Control for Rocket Landing",
+  "submission_directory": "algorithms/physical_belief_rocket_landing",
+  "ongoing_research": {
+    "architecture": "confidence_sequence",
+    "status": "training; evaluation pending",
+    "published_checkpoint_replaced": false,
+    "new_core_module_sha256": "9b244b5d3eb266bae24afafe6e8e4d37197e935eb7b52f2d7baae6bb7d2c8061",
+    "configuration": "configs/confidence_sequence.json",
+    "report": "docs/CONFIDENCE_SEQUENCE_RESEARCH.md"
+  }
+}

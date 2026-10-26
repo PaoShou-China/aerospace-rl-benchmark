@@ -95,7 +95,7 @@ class GenesisBulletClient:
                     scale=globalScaling,merge_fixed_links=False,align=False,recompute_inertia=False,
                     **kwargs),
                     material=gs.materials.Rigid(friction=.5))
-                if name=='rocket.urdf':
+                if name in ('rocket.urdf','rocket_v2.urdf'):
                     pad=Path(__file__).parent/'original_pyflyt/models/landing_pad.urdf'
                     self._pending_pad=self._scene.add_entity(gs.morphs.URDF(file=str(pad),pos=(0,0,.1),fixed=True,align=False),material=gs.materials.Rigid(friction=.5))
         links=[]

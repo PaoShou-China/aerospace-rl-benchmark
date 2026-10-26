@@ -81,10 +81,15 @@ class TensorRatePID:
 
 
 class TensorPlant:
-    def __init__(self,vehicle,n,backend='cpu',seed=7,vel_clamp=None):
+    def __init__(self,vehicle,n,backend='cpu',seed=7,vel_clamp=None,
+                 rocket_benchmark='v1',rocket_variation='nominal'):
         if vehicle not in ('quadx','fixedwing','rocket','missile'):raise ValueError(vehicle)
         if n<1:raise ValueError('n must be positive')
         self.vehicle=vehicle;self.n=n
+        if rocket_benchmark not in ('v1','v2'):raise ValueError(rocket_benchmark)
+        if rocket_benchmark=='v1' and rocket_variation!='nominal':
+            raise ValueError('Physical variation requires rocket benchmark v2')
+        self.rocket_variation=None
         # Optional solver guard (None = disabled): cap world speed and body spin
         # norm before scene.step so exploration-driven tumbling cannot push the
         # rigid contact solver into NaN ("invalid accelerations"). Scale factor is
@@ -101,7 +106,12 @@ class TensorPlant:
         model={'quadx':'cf2x','fixedwing':'fixedwing','rocket':'rocket','missile':'missile'}[vehicle]
         source=Path(__file__).parent/'original_pyflyt/models/vehicles'/model
         self.params=yaml.safe_load((source/f'{model}.yaml').read_text())
-        self.body_id=c.loadURDF(str(source/f'{model}.urdf'),basePosition=(0,0,1 if vehicle=='quadx' else 10 if vehicle=='fixedwing' else 4000 if vehicle=='missile' else 450))
+        model_path=source/f'{model}.urdf'
+        if vehicle=='rocket' and rocket_benchmark=='v2':
+            from .consistency import verify_rocket_v2_assets
+            verify_rocket_v2_assets()
+            model_path=source/'rocket_v2.urdf'
+        self.body_id=c.loadURDF(str(model_path),basePosition=(0,0,1 if vehicle=='quadx' else 10 if vehicle=='fixedwing' else 4000 if vehicle=='missile' else 450))
         self.pad=None;self.target=None
         if vehicle=='rocket':
             pad=Path(__file__).parent/'original_pyflyt/models/landing_pad.urdf'
@@ -182,6 +192,10 @@ class TensorPlant:
                 body=self.params['body_params']
                 self.body_drag_constant=torch.tensor([.5*1.225*body[f'drag_coef_{x}']*body[f'area_{x}'] for x in 'xyz'],device=d,dtype=torch.float64)
                 self.drag_id=self.links['base_link']
+                if rocket_benchmark=='v2':
+                    from .rocket_benchmark import RocketVariation, VARIATION_SEED_OFFSET
+                    self.rocket_variation=RocketVariation(
+                        n,d,TensorRandom(n,d,seed+VARIATION_SEED_OFFSET),rocket_variation)
             else:
                 # missile: boost-coast engine + rate-PID steering (TensorRatePID
                 # on body rates, fin_cmd = normalized (roll, pitch, yaw) surface
@@ -213,6 +227,7 @@ class TensorPlant:
     def _air_velocity(self,ids,q):
         v=self.drone.get_links_vel(links_idx_local=ids,ref=gs.link_ref_frame.link_COM).to(torch.float64)
         if self.wind is not None:v=v-self.wind[:,None,:]
+        if self.rocket_variation is not None:v=v-self.rocket_variation.wind[:,None,:]
         return inverse_rotate(q[:,None,:].expand(-1,len(ids),-1),v)
 
     def controller(self,command,mask):
@@ -274,6 +289,9 @@ class TensorPlant:
             previous=self.surfaces.actuation.clone()
             f,t=self.surfaces.step(cmd,self._air_velocity(self.surface_ids,q))
             self.surfaces.actuation.copy_(torch.where(mask[:,None],self.surfaces.actuation,previous))
+            if self.rocket_variation is not None:
+                f=f*self.rocket_variation.fin[:,None,None]
+                t=t*self.rocket_variation.fin[:,None,None]
             self.force[:,self.surface_ids]=f;self.torque[:,self.surface_ids]=t
             if self.vehicle=='fixedwing':
                 m=self.params['motor_params'];thrust=self.throttle[:,0].abs()*self.throttle[:,0]*m['total_thrust']
@@ -318,20 +336,27 @@ class TensorPlant:
                 # (core/drones/rocket.py L92-116), not the fueltank.
                 vel=self._air_velocity([self.drag_id],q)[:,0]
                 self.force[:,self.drag_id]-=self.body_drag_constant*vel.abs()*vel
-                gimbal=self.gimbal+(1/240/b['gimbal_tau'])*(command[:,5:7]-self.gimbal)
+                variation=self.rocket_variation
+                gimbal_tau=b['gimbal_tau'] if variation is None else variation.gimbal_tau[:,None]
+                booster_tau=b['booster_tau'] if variation is None else variation.booster_tau
+                gimbal=self.gimbal+(1/240/gimbal_tau)*(command[:,5:7]-self.gimbal)
                 self.gimbal.copy_(torch.where(mask[:,None],gimbal,self.gimbal))
                 ignition=(self.ignited if not b['reignitable'] else torch.zeros_like(self.ignited))|(command[:,3]>.5)
                 self.ignited.copy_(torch.where(mask,ignition,self.ignited))
                 minimum=b['min_thrust']/b['max_thrust']
                 target=self.ignited*(minimum+command[:,4]*(1-minimum))
-                throttle=self.throttle[:,0]+(1/240/b['booster_tau'])*(target-self.throttle[:,0])
+                throttle=self.throttle[:,0]+(1/240/booster_tau)*(target-self.throttle[:,0])
                 throttle=throttle*(1+b['noise_ratio']*self.rng.normal(mask,1))*(self.fuel>0)
                 self.throttle[:,0].copy_(torch.where(mask,throttle,self.throttle[:,0]))
                 fuel=(self.fuel-self.throttle[:,0]*b['max_fuel_rate']/b['total_fuel']/240).clamp(0,1)
                 self.fuel.copy_(torch.where(mask,fuel,self.fuel))
-                x,y=(self.gimbal*math.radians(b['gimbal_range_degrees'])).unbind(-1)
+                angles=self.gimbal*math.radians(b['gimbal_range_degrees'])
+                if variation is not None:angles=angles+variation.gimbal_bias
+                x,y=angles.unbind(-1)
                 direction=torch.stack((torch.sin(y),-torch.sin(x)*torch.cos(y),torch.cos(x)*torch.cos(y)),-1)
-                self.force[:,self.links['booster_link']]+=direction*(self.throttle[:,0]*b['max_thrust'])[:,None]
+                thrust=self.throttle[:,0]*b['max_thrust']
+                if variation is not None:thrust=thrust*variation.thrust
+                self.force[:,self.links['booster_link']]+=direction*thrust[:,None]
                 mass=(self.fuel*b['total_fuel']).clamp_min(1e-8)
                 inertia=self.fuel_basis.T@torch.diag_embed((self.fuel[:,None]*self.fuel_inertia).clamp_min(1e-8))@self.fuel_basis
                 # unconditional mass write: set_links_mass/inertia are idempotent,
@@ -404,6 +429,7 @@ class TensorPlant:
             self.surfaces.actuation.masked_fill_(mask[:,None],0)
             if self.vehicle=='rocket':
                 self.fuel.masked_fill_(mask,.05);self.ignited.masked_fill_(mask,False);self.gimbal.masked_fill_(mask[:,None],0)
+                if self.rocket_variation is not None:self.rocket_variation.sample(mask)
 
     def warmup(self,mask,iterations=10):
         """Original 10-Aviary-step warmup with zero command on the masked slots."""
