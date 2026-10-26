@@ -1,27 +1,48 @@
 # Multirotor
 
-QuadX-Waypoints (`QuadXWaypointsEnv`, task id `quadx`): a 27 g Crazyflie 2.x
-quadrotor flying a sequence of 4 waypoints sampled in a 5 m flight dome.
-URDF rigid-body dynamics on the Genesis engine (240 Hz) under an inner-loop
-body-rate PID with a 40 Hz policy; 800 steps = 20 s per episode. Task spec
-(action/observation layout, reward, terminations, wind) lives in the package
-docstring [`__init__.py`](__init__.py).
+Two independent waypoint environments share the Crazyflie/Genesis physics and
+PPO utilities. Select the scenario by running its training file; no sampling
+mode command-line parameter is used.
 
-## Files
+```text
+multirotor/
+  random_waypoint/
+    __init__.py
+    env.py               # full original spatial waypoint environment
+    train.py             # full training configuration and entry
+    train_quadx.py       # moved compatibility training entry
+    test_quadx_se3.py    # original spatial-task SE(3) tests
+  splits/
+    __init__.py
+    env.py               # full Split-S waypoint environment
+    train.py             # full training configuration and entry
+    split_s.py           # original-scale gate coordinates and sampling
+```
 
-- `env.py` / `__init__.py` — environment implementation
-- `train_quadx.py` — self-contained PPO training entry (constants in-file,
-  no CLI arguments); writes `results/quadx/`
-- `test_quadx_se3.py` — SE(3) geometric baseline deep-dive harness
+| Scenario | Targets | Out-of-bounds radius | Training output |
+| --- | --- | --- | --- |
+| `random_waypoint` | Original polar sampling, radius 1..4.5 m, altitude >=0.4 m | 5 m | `results/quadx_random_waypoint/` |
+| `splits` | Random 4 consecutive gates, original coordinates, Gate7 wraps to Gate1 | 15 m | `results/quadx/` |
 
-## Run
+Both use 37-D observations, the existing progress/waypoint reward, a 0.2 m
+capture radius, and 800 policy steps (20 s). Gate centres are point targets;
+the task does not require directional aperture crossing. Spatial sampling is
+not volume-uniform. Each train.py owns its constants, including wind settings.
 
 From the repository root:
 
-```bash
-python environments/multirotor/train_quadx.py        # training -> results/quadx/
-python environments/multirotor/test_quadx_se3.py     # classical baseline deep dive
-python scripts/eval.py quadx            # deterministic checkpoint evaluation
-python scripts/baseline_eval.py quadx   # classical baseline, official protocol
-python scripts/visualize.py quadx       # checkpoint replay / trajectory plot
+```powershell
+python environments/multirotor/random_waypoint/train.py
+python environments/multirotor/splits/train.py
+python environments/multirotor/random_waypoint/test_quadx_se3.py
 ```
+
+The existing `from environments.multirotor import QuadXWaypointsEnv`,
+`scripts/train.py quadx`, `scripts/eval.py quadx`, and video/baseline scripts
+continue to use the Split-S environment. For spatial-task evaluation, import
+`environments.multirotor.random_waypoint.env.QuadXWaypointsEnv` explicitly;
+the generic quadx evaluation entry does not switch scenario based on output path.
+
+Each training file retains `CLEAN=True` by default, which clears old training
+artifacts in its own output directory for a fresh run. Model weights and
+existing result directories are not changed by this source reorganization.

@@ -1,11 +1,11 @@
 """RSL-RL PPO training entry for the QuadX-Waypoints task (QuadXWaypointsEnv).
 
 Crazyflie 2.x quadrotor waypoint navigation on the Genesis rigid-body engine:
-reach a sequence of 4 waypoints sampled in a 5 m flight dome within 800 policy
-steps (20 s), without ground contact or leaving the dome.
+reach 4 consecutive original-scale Split-S gate centres within 800 policy
+steps (20 s), without ground contact or leaving the 15 m boundary.
 
 Self-contained entry: every run parameter is hard-coded below, no CLI
-arguments. Edit the constants and run `python train_quadx.py`.
+arguments. Edit the constants in this file; no command-line arguments are used.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
 WIND configures the wind disturbance passed to the env ctor (steady_wind,
@@ -14,11 +14,11 @@ dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]  # repo root
+_ROOT = Path(__file__).resolve().parents[3]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
-from environments.multirotor import QuadXWaypointsEnv
+from environments.multirotor.splits.env import QuadXWaypointsEnv
 
 TASK = 'quadx'
 NUM_ENVS = 1024          # Genesis hover tutorial uses 8192; kept at 1024 for hardware/wall time

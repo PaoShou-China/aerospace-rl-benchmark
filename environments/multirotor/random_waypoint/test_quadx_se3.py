@@ -23,14 +23,14 @@ import sys
 import time
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]  # repo root
+_ROOT = Path(__file__).resolve().parents[3]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 import math
 
 import torch
 
-from environments.multirotor import QuadXWaypointsEnv
+from environments.multirotor.random_waypoint.env import QuadXWaypointsEnv
 from algorithms.baselines.baselines import QuadXSE3Baseline
 
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else 'gpu'

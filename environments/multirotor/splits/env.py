@@ -1,10 +1,9 @@
 """QuadX-Waypoints original task in the official Genesis RL environment format.
 
-Task: reach a sequence of 4 waypoints sampled in a 5 m flight dome (spawn at
-(0, 0, 1)). Failure (termination): ground contact or |p| > 5 m; success:
-reaching all waypoints before the 800-step (20 s) limit. Waypoint geometry
-follows the upstream PyFlyt QuadXWaypointsEnv (WaypointHandler): polar
-sampling with distance in [1, 0.9*dome] and a floor on target altitude;
+Task: reach 4 consecutive Split-S gate centres at original scale (spawn at
+(0, 0, 1)). Failure (termination): ground contact or |p| > 15 m; success:
+reaching all waypoints before the 800-step (20 s) limit. A random start gate
+is chosen each reset, then the closed track is followed in order (see split_s.py);
 capture radius is the upstream goal_reach_distance = 0.2 m.
 
 Reward redesign (mirrors FixedwingWaypointsEnv, 2026-10-23): the upstream
@@ -32,6 +31,7 @@ from tensordict import TensorDict
 from environments.common.plant import TensorPlant
 from environments.common.dynamics import euler, inverse_rotate, quat_from_euler
 from algorithms.baselines.baselines import QuadXSE3Baseline
+from environments.multirotor.splits.split_s import BOUNDS_RADIUS, sample_waypoints
 
 NUM_TARGETS = 4
 REACH_BONUS = 15.0
@@ -40,12 +40,6 @@ CRASH_PENALTY = 10.0
 # ~0.02-0.05 m steady error, so a 0.2 m capture sphere is comfortably
 # reachable for both scripted and learned policies.
 CAPTURE_RADIUS = 0.2
-# Waypoint shell: upstream WaypointHandler samples distance uniform in
-# [1, 0.9*dome] with dome = 5 m. Altitude floor: upstream uses 0.1 m, raised
-# to 0.4 m so a capture pass cannot clip the ground-contact termination.
-WAYPOINT_MIN_RADIUS = 1.0
-WAYPOINT_MAX_RADIUS = 4.5
-WAYPOINT_MIN_HEIGHT = 0.4
 
 
 class QuadXWaypointsEnv:
@@ -57,7 +51,7 @@ class QuadXWaypointsEnv:
     spawn_z_noise=0.         # spawn z-offset half-range [m] (manual DR knob)
     spawn_vel_noise=0.       # spawn |v0| per-axis half-range [m/s] (manual DR knob)
     spawn_att_noise=0.       # spawn per-axis euler half-range [rad] (manual DR knob)
-    bounds_radius=5.         # out-of-bounds radius [m] (= flight dome)
+    bounds_radius=BOUNDS_RADIUS  # accommodates the unscaled Split-S track [m]
     # conventional controller: SE(3) geometric waypoint tracking, Lee et al.
     # 2010 (baselines.py; reuses the env's rate+collective action convention)
     conventional_controller=QuadXSE3Baseline
@@ -66,6 +60,7 @@ class QuadXWaypointsEnv:
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'quadx','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
+        self.task_cfg['waypoints']='split_s_consecutive_original_scale'
         # Raw policy actions live in [-1, 1] and are mapped onto the original
         # physical action bounds by _scale_actions, mirroring the official
         # clip_actions convention.
@@ -285,13 +280,7 @@ class QuadXWaypointsEnv:
         self.complete.masked_fill_(mask,False);self.fatal_collision.masked_fill_(mask,False)
         self.action.masked_fill_(mask[:,None],0)
         self.plant.zero(mask)
-        # upstream WaypointHandler polar sampling: distance in [1, 0.9*dome],
-        # altitude |r cos(phi)| floored at WAYPOINT_MIN_HEIGHT
-        theta=self.plant.rng.uniform(NUM_TARGETS,mask)*2*math.pi
-        phi=self.plant.rng.uniform(NUM_TARGETS,mask)*2*math.pi
-        radius=WAYPOINT_MIN_RADIUS+self.plant.rng.uniform(NUM_TARGETS,mask)*(WAYPOINT_MAX_RADIUS-WAYPOINT_MIN_RADIUS)
-        targets=torch.stack((radius*torch.sin(phi)*torch.cos(theta),radius*torch.sin(phi)*torch.sin(theta),
-                             (radius*torch.cos(phi)).abs().clamp_min(WAYPOINT_MIN_HEIGHT)),-1)
+        targets=sample_waypoints(self.plant.rng,mask,NUM_TARGETS)
         self.targets.copy_(torch.where(mask[:,None,None],targets,self.targets))
         legs=(self.targets[:,1:]-self.targets[:,:-1]).norm(dim=-1)
         ext=torch.cat((legs,torch.zeros((self.num_envs,2),device=self.device,dtype=torch.float64)),-1)
