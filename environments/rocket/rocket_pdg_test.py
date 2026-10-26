@@ -76,7 +76,9 @@ def spawn(env, xy, z, rpy, vxy=(0., 0.)):
 
 def run_scenario(name, ic, controller_cls=RocketPDGBaseline):
     torch.manual_seed(SEED)
-    env = RocketLandingEnv(num_envs=NUM_ENVS, backend=BACKEND, seed=SEED)
+    # Legacy telemetry uses the instantaneous v1 event. For v2 scoring use
+    # scripts/rocket_benchmark_eval.py (full horizon, sustained landing).
+    env = RocketLandingEnv(num_envs=NUM_ENVS, backend=BACKEND, seed=SEED, benchmark_version='v1')
     ctrl = controller_cls(env)
     dev = env.device
     n = env.num_envs

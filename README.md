@@ -29,7 +29,7 @@ verification conditions lives in
 |---|---|---|---|---|---|---|---|
 | QuadX-Waypoints | `QuadXWaypointsEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID | 37 | 4 | 40 Hz | 800 steps = 20 s | 4/4 waypoints captured (< 0.2 m) |
 | Fixedwing-Waypoints | `FixedwingWaypointsEnv` | URDF rigid body (2.35 kg UAV, 240 Hz) + blade-element aero | 39 | 4 | 30 Hz | 3600 steps = 120 s | 4/4 waypoints captured (< 10 m) |
-| Rocket-Landing | `RocketLandingEnv` | URDF rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 60 Hz | 1800 steps = 30 s | pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad, judged on the previous inner-step state; success does not truncate |
+| Rocket-Landing | `RocketLandingEnv` | URDF rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 60 Hz | 1800 steps = 30 s | v2: pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad for 2 s (121 samples); success does not truncate |
 | Missile-Intercept | `MissileInterceptEnv` | URDF rigid body (150 kg missile, 240 Hz) + tail-fin aero + boost-coast engine, kinematic 3-DOF target | 34 | 3 | 60 Hz | 900 steps = 15 s | miss distance < 15 m (proximity fuse, any physics substep) |
 | Satellite attitude (CMG) | `SatelliteAttitudeEnv` | Rigid body + 4- or 6-CMG cluster, RK4 2.5 ms | 26 / 32 | 4 / 6 | 40 Hz | 1200 steps = 30 s | att. error < 0.05 rad & \|ω\| < 0.02 rad/s, checked every step; \|ω\| > 10 rad/s fails |
 | Low-thrust transfer | `LowThrustTransferEnv` | Two-body gravity + 3-axis 10 mN EP, RK4 10 s | 8 | 3 | 300 s/step | 166 steps ≈ 5 revs | terminal orbital-element return R > 0 at the limit |
@@ -151,7 +151,7 @@ that file):
 |---|---|---|
 | QuadX-Waypoints | SE(3) geometric control (Lee et al. 2010) with integral trim | 100% (1024 episodes, 523-step window) |
 | Fixedwing-Waypoints | L1 lateral + TECS longitudinal autopilot | 95.9% (1024 episodes, 1361-step window) |
-| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | 82.8% (1024 episodes, 1800-step window) |
+| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | historical v1: 82.8% instantaneous ever-success (not a v2 score) |
 | Satellite (CMG) | quaternion PD + Schaub-Junkins damped pseudo-inverse | 100% (1024 episodes, 334-step window) |
 | Transfer | Gauss one-step greedy tangential guidance | 100%, terminal return 0.855 (1024 episodes, 166 steps) |
 | Docking | CWH discrete LQR (symplectic-exact) + shield/fuel derating | 100% (1033 episodes, 223-step window) |
@@ -370,3 +370,22 @@ multi-agent tasks are planned — every task below is a single agent.
 Batch 1 (parallel, independent): missile Intercept + Droneship Landing +
 Docking-Fault. Batch 2: Autoland + Slung Payload. Later batches follow the
 priority order above as infrastructure lands.
+
+### Rocket benchmark v2（2026-10-26）
+
+Rocket 默认使用独立版本的六球形脚垫接触资产，主指标为连续停稳 2 秒。
+原始 `rocket.urdf`、旧模型和历史成绩保留；旧检查点缺少版本字段时按 v1 评估。
+背景、结构性问题证据、物理扰动范围、版本边界及复现命令见
+[benchmark-v2 中文说明](docs/rocket_benchmark_v2_zh.md)。
+当前 main 保留 60 Hz 策略、120 Hz 控制、240 Hz 物理步长及已有 Dryden 风配置。
+Claude 已完成的 v2 评估采用 40 Hz 冻结快照；版本、频率和源码哈希随结果一同保留。
+
+```bash
+# 每个环境的完整首回合，4 x 128，保留逐回合记录
+python scripts/rocket_benchmark_eval.py --backend gpu --variation nominal --out results/rocket-v2-nominal
+python scripts/rocket_benchmark_eval.py --backend gpu --variation shifted --out results/rocket-v2-shifted
+# 无策略、关发动机的接触因果诊断（不计为策略成功率）
+python scripts/rocket_passive_contact.py --version v1 --out results/passive-v1.json
+python scripts/rocket_passive_contact.py --version v2 --out results/passive-v2.json
+python -m unittest discover -s tests -v
+```
