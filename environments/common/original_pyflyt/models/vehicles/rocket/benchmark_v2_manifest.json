@@ -1,0 +1,9 @@
+{
+  "benchmark": "rocket-landing-v2",
+  "source": "rocket.urdf (bundled PyFlyt reference; unchanged)",
+  "changes": "Only three leg collision bars replaced by six radius-0.025 m spherical pads. Visuals, mass and inertia unchanged; collision geometry changed.",
+  "files": {
+    "rocket.urdf": "402e0ef7b31dbc4f1ad5d5490e76e95505bf9aa01f337e21bf55804d9b0bcb4e",
+    "rocket_v2.urdf": "e264b50875ef98d64fdc55baf49af366df86de4fc1fbc170b52328bbb7cdabdb"
+  }
+}

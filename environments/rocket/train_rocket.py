@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 
-_ROOT = Path(__file__).resolve().parents[1]  # repo root
+_ROOT = Path(__file__).resolve().parents[2]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training
@@ -66,18 +66,34 @@ _FlashResMLPModel.__init__ = _flash_res_init_zero_head
 
 TASK = 'rocket'
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 2000           # flash_sac needs the longer run: sweep sizing
+                         # (scripts/sweep_tune.py FS_UPDATES) puts rocket at
+                         # 2000 its (~4 episodes/env); a 1000-it probe ended
+                         # at 0 successes with the policy still unconsolidated
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
+OUT_DIR = 'results/rocket_flashsac'   # separate from results/rocket, which
+                                 # holds the classical-baseline eval records
+                                 # (baseline.json / baseline_pd_landing.json);
+                                 # the ppo arm reuses this entry with
+                                 # ALGORITHM='ppo' and
+                                 # OUT_DIR='results/rocket_ppo'
 RESUME = False           # upstream-aligned task rewrite (2026-10-20): old
                          # checkpoints belong to the dropped staged task, and
                          # the action box changed (ignition/throttle in [0,1]),
                          # so training restarts from scratch
-CLEAN = True             # wipe results/rocket before this fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
-# (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
-WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
+CLEAN = True             # wipe OUT_DIR before this fresh run
+ALGORITHM = 'flash_sac'  # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+# Wind disturbance (environments/common/disturbances.py): calm air for the
+# four-arm comparison (the classical-baseline records in results/rocket were
+# evaluated with env_kwargs={} calm air -- same caliber required; the dryden
+# robustness arm is a separate study, not this benchmark).
+WIND = dict(steady_wind=None, dryden=0., severity='moderate')
+# Rocket benchmark version:
+#   'v2' (default, current Falcon9): 7-dim finlet mixer (finlet x/y/yaw, ignition, throttle, 2 gimbals),
+#     40 Hz, rocket_v2.urdf with 6 spherical footpads, ever_stable_2s primary metric
+#   'v1' (external benchmark): 7-dim finlet mixer, 60 Hz default, rocket.urdf (no footpads), ever_success primary metric
+BENCHMARK_VERSION = 'v2'  # 'v2' (Falcon9 current) | 'v1' (external benchmark)
 # reward (2026-10-22): the redesigned shaping (impact-speed potential, off-axis
 # cost, first-touch bonus, success +100) is now the env's ONLY implementation --
 # the verbatim-upstream arm was deleted from rocket/env.py after the
@@ -102,6 +118,10 @@ class _JsonStd(list):
         return torch.as_tensor(self, dtype=other.dtype, device=other.device) * other
     __rmul__ = __mul__
 
+# Per-dim init_std for the unified 7-dim finlet convention:
+#   [finlet_x, finlet_y, finlet_yaw, ignition, throttle, gimbal_x, gimbal_y]
+# Same rationale as before: 0.2 on ignition/throttle (exploration-critical),
+# 0.05 on finlets/gimbals (attitude reflex is dense-reward, no exploration).
 INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 # Task-specific per-dim exploration std (documented deviation from the shared
 # scalar 0.5 default). Rationale (measured 2026-10-20):
@@ -111,9 +131,9 @@ INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 #     PD reflex on the same noise: 0.0016 -- the fins have ample authority), and
 #     training time agreed (attitude cost ~-14/episode, reward sinking to -33);
 #   * during powered flight the same noise made 94% of pad touches tumbling
-#     (fatal). Noise on fins (0-2) and gimbal (5-6) is pure disturbance -- the
+#     (fatal). Noise on fins (0-3) and gimbal (6-7) is pure disturbance -- the
 #     attitude reflex is dense-reward and needs no exploration -- while the
-#     ignition (3, hysteretic +0.5/-0.5 switch) and throttle depth (4) dims DO
+#     ignition (4, hysteretic +0.5/-0.5 switch) and throttle depth (5) dims DO
 #     need sigma~0.2 to discover the suicide-burn timing. 0.05 on the
 #     disturbance dims cuts the noise-induced tumble ~16x (scales ~sigma^2).
 
@@ -133,13 +153,14 @@ if __name__ == '__main__':
     # Random Annealing Jump Start RL" (arXiv:2407.15083): lr 3e-4, gamma 0.995,
     # lam 0.97, entropy 0.007, clip 0.2, target KL 0.01. The paper uses batch
     # 20000 x 30 gradient steps; 64 steps/env x 1024 envs x 10 epochs gives
-    # ~655k gradient samples/update, close to the paper's ~600k (10 epochs is
+    # 655k gradient samples/update, close to the paper's ~600k (10 epochs is
     # the equivalent of its 30 gradient steps at this batch size).
+    env_kwargs = dict(WIND, benchmark_version=BENCHMARK_VERSION)
     run_training(TASK, RocketLandingEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN,
+                 backend=BACKEND, resume=RESUME, clean=CLEAN, out_dir=OUT_DIR,
                  algo=ALGORITHM, init_std=INIT_STD, num_steps_per_env=64,
                  lr_schedule='fixed', learning_rate=3e-4,
                  gamma=0.995, lam=0.97, entropy_coef=0.007,
                  num_learning_epochs=10,
                  clip_param=0.2, value_loss_coef=1.0, desired_kl=0.01,
-                 env_kwargs=WIND, bc_warmstart=BC_WARMSTART)
+                 env_kwargs=env_kwargs, bc_warmstart=BC_WARMSTART)

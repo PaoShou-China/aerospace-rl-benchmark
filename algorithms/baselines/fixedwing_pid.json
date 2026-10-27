@@ -1,0 +1,38 @@
+{
+  "name": "pid_cascade",
+  "comment": "Conventional cascaded PID autopilot for FixedwingWaypointsEnv. Four SISO loops on the env's public observation group only: (1) course error -> P/I -> bank-angle reference; (2) bank-angle error -> P -> roll-rate reference, roll-rate error -> P/I -> aileron; (3) altitude error -> P/I -> pitch-angle reference; (4) pitch-angle error -> P -> pitch-rate reference, pitch-rate error -> P/I -> elevator. Airspeed (ground-speed feedback |v_b|, equal to true airspeed in calm air) -> P/I -> throttle. No path planning, NMPC, stall-protection layer, learning or adaptation. Angles use the env's euler convention (x fwd, y left, z up): positive roll = right bank, positive pitch = NOSE DOWN, so the climb-side pitch reference is negative. Channel a2 is dead upstream and is driven with exactly 0. Channel a1 drives the horizontal and vertical tails with opposite signs; the rudder coupling is treated as a disturbance. Gains are tuned only on dedicated tuning routes (straight/turn/climb/descent/speed) and the training/dev initial conditions; the formal comparison uses held-out test seeds 2000-2003.",
+  "lateral": {
+    "k_course": 0.9,
+    "k_i_course": 0.05,
+    "i_course_max_deg": 7.0,
+    "max_bank_deg": 50.0,
+    "k_roll_angle": 2.0,
+    "max_roll_rate_deg_s": 50.0,
+    "k_roll_rate": 0.40,
+    "k_i_roll_rate": 0.25,
+    "i_roll_rate_max": 0.30
+  },
+  "longitudinal": {
+    "k_altitude": 0.025,
+    "k_i_altitude": 0.0012,
+    "i_altitude_max_deg": 10.0,
+    "pitch_trim_deg": -2.0,
+    "pitch_up_max_deg": 18.0,
+    "pitch_down_max_deg": 12.0,
+    "k_pitch_angle": 2.0,
+    "max_pitch_rate_deg_s": 50.0,
+    "k_pitch_rate": 0.80,
+    "k_i_pitch_rate": 0.50,
+    "i_pitch_rate_max": 0.90
+  },
+  "speed": {
+    "v_ref": 16.0,
+    "v_min_valid": 2.0,
+    "k_speed": 0.12,
+    "k_i_speed": 0.04,
+    "i_speed_max": 0.30,
+    "throttle_trim": 0.30,
+    "throttle_min": 0.15,
+    "throttle_max": 1.0
+  }
+}

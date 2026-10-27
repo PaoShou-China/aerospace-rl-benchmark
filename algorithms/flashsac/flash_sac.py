@@ -644,7 +644,6 @@ class FlashSACRunner:
         self.agent = FlashSAC(obs_dim, act_dim, cfg, self.device)
         self.log_dir = Path(log_dir)
         self.writer = None
-        self.save_interval = 100
         self._it = 0
 
     def _set_lr(self, step, total_updates):
@@ -725,11 +724,6 @@ class FlashSACRunner:
                 print(f'FlashSAC it {it + 1}/{self._it + num_iterations} | lr {lr:.2e} | '
                       f'episodes {ce} | successes {cs} | recent return {recent:.2f}', flush=True)
                 recent_rew, recent_len = [], []
-            if (it + 1) % self.save_interval == 0 or it + 1 == self._it + num_iterations:
-                # record the ACTUAL completed iteration: _it is only advanced
-                # after the loop, so saving without this arg would stamp every
-                # mid-training checkpoint with the pre-learn iteration count
-                self.save(str(self.log_dir / f'model_{it + 1}.pt'), iteration=it + 1)
         self._it += num_iterations
 
     def save(self, path, iteration=None):

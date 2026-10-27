@@ -26,6 +26,8 @@ BC warm-start 数据源 = 各任务 `conventional_controller`（BC 采集器自�
 
 结论：无"表现很差"的失控控制器；fixedwing / rocket / pendulum 的天花板为控制器结构性局限（已记录成因），BC 只能继承、不会放大这些上限，报告时须与专家成功率并列呈现。
 
+satellite 转向律消融（不改变冻结基线）：同一四元数 PD 与增益下，把阻尼伪逆换成普通 Moore–Penrose 伪逆，注册名 `quat_pd_mp_pinv_cmg`，评测入口 `scripts/satellite_steering_compare.py`；配置与近奇异/精确奇异场景见 [baseline-satellite-mp-pinv.md](method/baseline-satellite-mp-pinv.md)。
+
 ## 3. 冻结评测协议
 
 对每个任务（8 任务统一）：
@@ -70,3 +72,33 @@ BC 另行报告独立成本，不摊入 RL 训练预算：示范采集墙钟（`
   - docking：`init_range` (50, 100) m → (60, 120) m（顶值距 0.8·range_fail shield 走廊 40 m；range_fail=200 m 不变）。
   - rendezvous：`init_range` (800, 1200) m → (1000, 1500) m（range_fail=2000 m 不变，余量 500 m）。
   修订后已重跑 5 任务经典基线（同口径 1024 envs / seed 7）并覆盖对应 `results/<task>/baseline.json`；修订前的 100% 数字仅作历史参考。第 2 节审计表中该 5 行的"100%"为修订前口径。
+
+### 2026-10-26：Rocket benchmark v2
+
+RocketLandingEnv 切换为 v2 六球形脚垫接触模型及连续停稳 2 秒主指标，
+原碰撞条资产保留为对照资产，历史 v1 成绩仅作历史参考。
+当前 main 的 30 秒、初始分布、
+观测/动作和奖励保留。连续停稳 2 秒按 40 Hz 策略步需 81 个观测点（60 Hz 时为 121 点）。
+
+### 2026-10-27：Rocket 策略频率 60→40 Hz；物理步长去硬编码
+
+- Rocket 策略与奖励统一到 40 Hz（研究冻结快照同款；要求的 50 Hz 不能整除
+  120 Hz 控制环，upstream 亦拒绝非整除频率）。时域 30 s 不变，策略步数
+  1800→1200；v4 奖励系数沿用（40 Hz 下纯俯冲净收益为负的安全界
+  u = 0.3/(0.1·0.025) = 120 m/s，仍高于 100 m/s 初始下坠）。
+- 全仓 1/240、/120、range(2) 等频率硬编码改为读取实际构造值：物理步长以
+  `environments/common/original_backend.py` 的 `PHYSICS_HZ` 为唯一定义，
+  `TensorPlant` 读回实际场景步长（`physics_dt`/`physics_hz`/`control_hz`/
+  `physics_per_control`），各 env 的内层物理子步数与 PID 增益缩放均自 plant
+  取值。速率未变（240/120 Hz），除 rocket 策略频率外动力学逐位不变。
+- 此前记录在 60 Hz 口径下的 rocket 数字（含 `results/rocket/baseline.json`）
+  仅作历史参考，与新 40 Hz 结果不可比，需重跑后再比较。
+
+正式 Rocket 对照采用4×128完整首回合；其他任务保持各自已有样本规模。
+通用评估脚本修正提前失败副本重复计数问题，所有任务都只采每副本首回合。
+完整性不足的报告标为 partial。新训练在开始前保存环境配置；
+续训锁定扰动档位与策略频率，跨配置实验使用独立目录。
+
+物理扰动范围、版本边界、中文替换原因及逐环境诊断证据见
+[rocket_benchmark_v2_zh.md](rocket_benchmark_v2_zh.md)。以上是新协议修订，
+不追溯改写本文件早先冻结的历史实验。

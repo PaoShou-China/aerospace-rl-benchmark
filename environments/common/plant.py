@@ -61,7 +61,8 @@ class TensorRandom:
 
 
 class TensorRatePID:
-    def __init__(self,p,n,device):
+    def __init__(self,p,n,device,control_hz):
+        self.control_hz=control_hz
         self.kp=torch.tensor(p['kp'],device=device,dtype=torch.float64)
         self.ki=torch.tensor(p['ki'],device=device,dtype=torch.float64)
         self.kd=torch.tensor(p['kd'],device=device,dtype=torch.float64)
@@ -73,18 +74,22 @@ class TensorRatePID:
         self.previous.copy_(torch.where(mask[:,None],0.,self.previous))
     def step(self,state,target,mask):
         error=target-state
-        integral=(self.integral+self.ki*error/120).clamp(-self.limit,self.limit)
-        out=(self.kp*error+integral+self.kd*(error-self.previous)*120).clamp(-self.limit,self.limit)
+        integral=(self.integral+self.ki*error/self.control_hz).clamp(-self.limit,self.limit)
+        out=(self.kp*error+integral+self.kd*(error-self.previous)*self.control_hz).clamp(-self.limit,self.limit)
         self.integral.copy_(torch.where(mask[:,None],integral,self.integral))
         self.previous.copy_(torch.where(mask[:,None],error,self.previous))
         return out
 
 
 class TensorPlant:
-    def __init__(self,vehicle,n,backend='cpu',seed=7,vel_clamp=None):
-        if vehicle not in ('quadx','fixedwing','rocket','missile'):raise ValueError(vehicle)
+    def __init__(self,vehicle,n,backend='cpu',seed=7,vel_clamp=None,
+                 rocket_variation='nominal',rocket_benchmark='v2'):
+        if vehicle not in ('quadx','fixedwing','rocket','missile','quadplane'):raise ValueError(vehicle)
         if n<1:raise ValueError('n must be positive')
+        if rocket_benchmark not in ('v1','v2'):raise ValueError(rocket_benchmark)
         self.vehicle=vehicle;self.n=n
+        self.rocket_benchmark=rocket_benchmark
+        self.rocket_variation=None
         # Optional solver guard (None = disabled): cap world speed and body spin
         # norm before scene.step so exploration-driven tumbling cannot push the
         # rigid contact solver into NaN ("invalid accelerations"). Scale factor is
@@ -98,10 +103,17 @@ class TensorPlant:
         with engine_configuration(backend):self._geometry=ConfiguredBulletClient()
         c=self._geometry;c._num_envs=n;c.resetSimulation()
         self.ground_id=c.loadURDF('plane.urdf',useFixedBase=True)
-        model={'quadx':'cf2x','fixedwing':'fixedwing','rocket':'rocket','missile':'missile'}[vehicle]
+        model={'quadx':'cf2x','fixedwing':'fixedwing','rocket':'rocket','missile':'missile','quadplane':'quadplane'}[vehicle]
         source=Path(__file__).parent/'original_pyflyt/models/vehicles'/model
         self.params=yaml.safe_load((source/f'{model}.yaml').read_text())
-        self.body_id=c.loadURDF(str(source/f'{model}.urdf'),basePosition=(0,0,1 if vehicle=='quadx' else 10 if vehicle=='fixedwing' else 4000 if vehicle=='missile' else 450))
+        model_path=source/f'{model}.urdf'
+        if vehicle=='rocket':
+            if rocket_benchmark=='v2':
+                from .consistency import verify_rocket_v2_assets
+                verify_rocket_v2_assets()
+                model_path=source/'rocket_v2.urdf'
+            # v1 uses rocket.urdf (no footpads) -- nothing to verify
+        self.body_id=c.loadURDF(str(model_path),basePosition=(0,0,1 if vehicle in ('quadx','quadplane') else 10 if vehicle=='fixedwing' else 4000 if vehicle=='missile' else 450))
         self.pad=None;self.target=None
         if vehicle=='rocket':
             pad=Path(__file__).parent/'original_pyflyt/models/landing_pad.urdf'
@@ -120,11 +132,20 @@ class TensorPlant:
         c._build()
         self.scene=c._scene;self.drone=c._bodies[self.body_id]['entity'];self.ground=c._bodies[0]['entity']
         self.device=gs.device;self.dtype=torch.float64;d=self.device
+        # Rates are READ BACK from what was actually constructed, never
+        # re-hardcoded: physics_dt is the scene's real integration step
+        # (original_backend.PHYSICS_HZ is its single definition), the control
+        # loop is the upstream drone rate, and physics_per_control is their
+        # ratio (the envs' inner physics-substep count).
+        self.physics_dt=c._dt
+        self.physics_hz=round(1./self.physics_dt)
+        self.control_hz=120
+        self.physics_per_control=round(self.physics_hz/self.control_hz)
         self.links={link.name:link.idx_local for link in self.drone.links}
         self.force=torch.zeros((n,self.drone.n_links,3),device=d,dtype=torch.float64)
         self.torque=torch.zeros_like(self.force)
         self.rng=TensorRandom(n,d,seed)
-        self.command_width={'quadx':4,'fixedwing':4,'rocket':7,'missile':3}[vehicle]
+        self.command_width={'quadx':4,'fixedwing':4,'rocket':7,'missile':3,'quadplane':8}[vehicle]
         self.physics_steps=0
         # world-frame wind velocity (n,3) float64; None = calm air. Aerodynamic
         # terms (lifting surfaces, quadx body drag, rocket body drag) evaluate
@@ -132,43 +153,88 @@ class TensorPlant:
         # calm-air dynamics bit-for-bit. The owning env updates the buffer once
         # per control step (gusts are frozen across the physics substeps).
         self.wind=None
-        self.throttle=torch.zeros((n,4 if vehicle=='quadx' else 1),device=d,dtype=torch.float64)
+        # throttle buffer shape: quadplane has 4 quad motors + 1 forward motor;
+        # all others follow their original convention.
+        if vehicle=='quadplane':self.throttle=torch.zeros((n,5),device=d,dtype=torch.float64)
+        else:self.throttle=torch.zeros((n,4 if vehicle=='quadx' else 1),device=d,dtype=torch.float64)
         self.ground_contact=torch.zeros(n,device=d,dtype=torch.bool)
         self.pad_contact=torch.zeros(n,device=d,dtype=torch.bool)
         self.last_contact=torch.zeros(n,device=d,dtype=torch.bool)
-        if vehicle=='quadx':
-            self.pid=TensorRatePID(self.params['control_params']['ang_vel'],n,d)
-            self.motor_map=torch.tensor([[-1,-1,-1,1],[1,1,-1,1],[1,-1,1,1],[-1,1,1,1]],device=d,dtype=torch.float64)
-            self.prop_ids=torch.tensor([self.links[f'prop{i}_link'] for i in range(1,5)],device=d,dtype=torch.long)
-            self.spin=torch.tensor([-1,-1,1,1],device=d,dtype=torch.float64)
-            self.body_drag_id=self.links['center_of_mass_link'] if 'center_of_mass_link' in self.links else self.links['body_link']
-            self.pwm=torch.zeros((n,4),device=d,dtype=torch.float64)
-        else:
-            if vehicle=='fixedwing':
+        if vehicle in ('quadx','quadplane'):
+            if vehicle=='quadx':
+                self.pid=TensorRatePID(self.params['control_params']['ang_vel'],n,d,self.control_hz)
+            else:
+                # Quadplane YAML has no explicit rate-PID params; cf2x gains
+                # (kp=4e-2, kd=1e-4) were tuned for a 27g airframe with tiny
+                # inertia.  This 2.35 kg airframe with I_roll≈0.6 kg·m² needs
+                # much higher gains, especially kd for damping (otherwise it
+                # free-spins on roll/pitch).  Target ζ≈0.7 damping ratio.
+                # With the physically derived pseudoinverse mixer (10× scale),
+                # ±1 PID torque output → ±10 N·m physical torque.  lim=2.0
+                # so that the ~10 N·m inherent roll bias (-10 N·m) can be
+                # fully canceled by integral terms without saturating.
+                pid_p={'kp':[0.5,0.5,1.0],'ki':[0.005,0.005,0.02],
+                       'kd':[0.6,0.6,0.05],'lim':[2.0,2.0,2.0]}
+                self.pid=TensorRatePID(pid_p,n,d,self.control_hz)
+            if vehicle=='quadx':
+                # Symmetric quadx mixer (cf2x style, ±1 pattern)
+                self.motor_map=torch.tensor([[-1,-1,-1,1],[1,1,-1,1],[1,-1,1,1],[-1,1,1,1]],device=d,dtype=torch.float64)
+                self.prop_ids=torch.tensor([self.links[f'prop{i}_link'] for i in range(1,5)],device=d,dtype=torch.long)
+                self.spin=torch.tensor([-1,-1,1,1],device=d,dtype=torch.float64)
+                self.body_drag_id=self.links['center_of_mass_link'] if 'center_of_mass_link' in self.links else self.links['body_link']
+                self.pwm=torch.zeros((n,4),device=d,dtype=torch.float64)
+            else:  # quadplane
+                # Physically derived mixer using pseudoinverse of the rotor
+                # torque mapping τ = A @ ΔT, then linearized around level-
+                # flight pwm to convert ΔT → Δpwm.  Critical notes:
+                #   - ROWS = motors, COLS = inputs (roll, pitch, yaw, collective)
+                #     (convention: mixed = tv @ motor_map.T)
+                #   - Simple clamp is used (no collective redistribution), so
+                #     this mixer is designed to stay within [0.05, 1.0] for
+                #     typical PID outputs (±1 → ±10 N·m physical torque).
+                #   - The asymmetric URDF (y=-0.95 right lever, 4:1 thrust ratio
+                #     front/rear) means uniform collective gives inherent
+                #     negative roll & pitch torque — PID integral terms cancel
+                #     these offsets.
+                self.motor_map=torch.tensor([
+                    [ 0.0055, -0.0991, -0.0496, 0.7],  # motor0: (+0.5, +0.05), kf=69.3
+                    [-0.4167,  0.3970, -0.1985, 0.7],  # motor1: (-0.5, -0.95), kf=17.3
+                    [ 0.0219,  0.3970,  0.1985, 0.7],  # motor2: (-0.5, +0.05), kf=17.3
+                    [-0.1040, -0.0991,  0.0496, 0.7],  # motor3: (+0.5, -0.95), kf=69.3
+                ],device=d,dtype=torch.float64)
+                self.prop_ids=torch.tensor([self.links[f'prop{i}_link'] for i in range(1,5)],device=d,dtype=torch.long)
+                self.spin=torch.tensor([-1,-1,1,1],device=d,dtype=torch.float64)
+                self.pwm=torch.zeros((n,4),device=d,dtype=torch.float64)
+                front_kf=float(self.params['front_motor_params']['thrust_const'])
+                rear_kf=float(self.params['quad_motor_params']['thrust_const'])
+                front_total=float(self.params['front_motor_params']['thrust_to_weight'])
+                rear_total=float(self.params['quad_motor_params']['thrust_to_weight'])
+                total_mass=2.35
+                f_per_motor=front_total*total_mass*9.81/2
+                r_per_motor=rear_total*total_mass*9.81/2
+                self.thrust_kf=torch.tensor([front_kf,rear_kf,rear_kf,front_kf],device=d,dtype=torch.float64)
+                self.motor_max_thrust=torch.tensor([f_per_motor,r_per_motor,r_per_motor,f_per_motor],device=d,dtype=torch.float64)
+                self.forward_motor_id=self.links['motor_link']
+                self.forward_thrust_kf=front_kf
+                self.forward_max_thrust=float(front_total)*total_mass*9.81
+                self.forward_tau=float(self.params['front_motor_params'].get('tau',0.01))
+                self.body_drag_id=self.links['base_link']
+        # Lifting surface init (fixedwing, quadplane, missile, rocket) — skipped
+        # for quadx which has no aerodynamic surfaces.
+        if vehicle in ('fixedwing','quadplane','missile','rocket'):
+            if vehicle in ('fixedwing','quadplane'):
                 names=['ail_left_link','ail_right_link','horizontal_tail_link','vertical_tail_link','main_wing_link']
                 keys=['left_wing_flapped_params','right_wing_flapped_params','horizontal_tail_params','vertical_tail_params','main_wing_params']
                 lifts=[[0,0,1],[0,0,1],[0,0,1],[0,1,0],[0,0,1]];forwards=[[1,0,0]]*5
             elif vehicle=='missile':
-                # Cross tail: +-y fins (lift axis z) -> pitch/roll, +-z fins
-                # (lift axis y) -> yaw/roll; nose along +x like fixedwing.
                 names=['fin_left','fin_right','fin_top','fin_bottom'];keys=['fin_params']*4
                 lifts=[[0,0,1],[0,0,1],[0,1,0],[0,1,0]];forwards=[[1,0,0]]*4
-            else:
-                # Upstream finlet_map (core/drones/rocket.py L152-159) maps
-                # (finlet_x, finlet_y, finlet_yaw) onto FOUR URDF fin links:
-                #   fin_pos_x <- (y+yaw), fin_neg_x <- (y-yaw),
-                #   fin_pos_y <- (x-yaw), fin_neg_y <- (x+yaw)
-                # with lifting axes [0,1,0] for the x-fins and [1,0,0] for the
-                # y-fins (rocket.py L129/L143). The step() cmd stack below
-                # already produces exactly that 4-vector; an earlier mapping
-                # here wrongly attached the first two slots to fueltank/booster
-                # links (near-zero moment arm) and never touched fin_pos_y /
-                # fin_neg_y -- fixed 2026-10-20 to the upstream assignment.
+            else:  # rocket
                 names=['fin_pos_x','fin_neg_x','fin_pos_y','fin_neg_y'];keys=['finlet_params']*4
                 lifts=[[0,1,0],[0,1,0],[1,0,0],[1,0,0]];forwards=[[0,0,-1]]*4
             self.surface_ids=torch.tensor([self.links[name] for name in names],device=d,dtype=torch.long)
-            self.surfaces=LiftingSurfaceBatch([self.params[k] for k in keys],lifts,forwards,n,d,1/240)
-            if vehicle=='fixedwing':
+            self.surfaces=LiftingSurfaceBatch([self.params[k] for k in keys],lifts,forwards,n,d,self.physics_dt)
+            if vehicle in ('fixedwing','quadplane'):
                 self.fixed_index=torch.tensor([0,0,1,1,2],device=d,dtype=torch.long)
                 self.fixed_sign=torch.tensor([1,-1,1,-1,0],device=d,dtype=torch.float64)
             elif vehicle=='rocket':
@@ -182,12 +248,11 @@ class TensorPlant:
                 body=self.params['body_params']
                 self.body_drag_constant=torch.tensor([.5*1.225*body[f'drag_coef_{x}']*body[f'area_{x}'] for x in 'xyz'],device=d,dtype=torch.float64)
                 self.drag_id=self.links['base_link']
-            else:
-                # missile: boost-coast engine + rate-PID steering (TensorRatePID
-                # on body rates, fin_cmd = normalized (roll, pitch, yaw) surface
-                # command). No fuel/throttle channel -- the burn clock below is
-                # the only propulsion state.
-                self.pid=TensorRatePID(self.params['control_params']['ang_vel'],n,d)
+                from .rocket_benchmark import RocketVariation, VARIATION_SEED_OFFSET
+                self.rocket_variation=RocketVariation(
+                    n,d,TensorRandom(n,d,seed+VARIATION_SEED_OFFSET),rocket_variation)
+            elif vehicle=='missile':
+                self.pid=TensorRatePID(self.params['control_params']['ang_vel'],n,d,self.control_hz)
                 self.ignited=torch.zeros(n,device=d,dtype=torch.bool)
                 self.burn_clock=torch.zeros(n,device=d,dtype=torch.float64)
                 self.fin_cmd=torch.zeros((n,3),device=d,dtype=torch.float64)
@@ -213,17 +278,24 @@ class TensorPlant:
     def _air_velocity(self,ids,q):
         v=self.drone.get_links_vel(links_idx_local=ids,ref=gs.link_ref_frame.link_COM).to(torch.float64)
         if self.wind is not None:v=v-self.wind[:,None,:]
+        if self.rocket_variation is not None:v=v-self.rocket_variation.wind[:,None,:]
         return inverse_rotate(q[:,None,:].expand(-1,len(ids),-1),v)
 
     def controller(self,command,mask):
-        if self.vehicle=='quadx':
+        if self.vehicle in ('quadx','quadplane'):
             _,q,_,w=self.state();rates=inverse_rotate(q,w)
             torque=self.pid.step(rates,command[:,:3],mask)
             mixed=torch.cat((torque,command[:,3:4].clamp(0,1)),-1)@self.motor_map.T
-            high=mixed.amax(-1,keepdim=True);low=mixed.amin(-1,keepdim=True)
-            hi=high.clamp_max(1);lo=low.clamp_min(.05)
-            add=(lo-low)/(hi-low)*(hi-mixed);sub=(high-hi)/(high-lo)*(mixed-lo)
-            pwm=torch.where(high!=low,mixed+add-sub,mixed).clamp(.05,1)
+            if self.vehicle=='quadplane':
+                # Simple clamp — the physically derived mixer stays within
+                # [0.05, 1.0] for typical commands; redistribution would
+                # distort the intended torque directions.
+                pwm=mixed.clamp(.05,1)
+            else:
+                high=mixed.amax(-1,keepdim=True);low=mixed.amin(-1,keepdim=True)
+                hi=high.clamp_max(1);lo=low.clamp_min(.05)
+                add=(lo-low)/(hi-low)*(hi-mixed);sub=(high-hi)/(high-lo)*(mixed-lo)
+                pwm=torch.where(high!=low,mixed+add-sub,mixed).clamp(.05,1)
             self.pwm.copy_(torch.where(mask[:,None],pwm,self.pwm))
         elif self.vehicle=='missile':
             # Rate command -> normalized (roll, pitch, yaw) fin command; the
@@ -239,12 +311,24 @@ class TensorPlant:
     def physics_step(self,command,mask,target_state=None):
         p,q,v,w=self.state();vb=inverse_rotate(q,v);wb=inverse_rotate(q,w)
         self.force.zero_();self.torque.zero_()
-        if self.vehicle in ('quadx','fixedwing'):
-            m=self.params['motor_params'];target=self.pwm if self.vehicle=='quadx' else command[:,3:4]
-            throttle=self.throttle+(1/240/m['tau'])*(target-self.throttle)
-            # Upstream normal(*shape) yields one scalar per replica, shared across its motors.
-            noise=self.rng.normal(mask,4 if self.vehicle=='quadx' else 1)
-            throttle=throttle*(1+m['noise_ratio']*noise[:,None])
+        if self.vehicle in ('quadx','fixedwing','quadplane'):
+            if self.vehicle=='quadx':
+                m=self.params['motor_params'];target=self.pwm;noise_shape=4
+                motor_tau=float(m['tau']);noise_ratio=float(m['noise_ratio'])
+            elif self.vehicle=='fixedwing':
+                m=self.params['motor_params'];target=command[:,3:4];noise_shape=1
+                motor_tau=float(m['tau']);noise_ratio=float(m['noise_ratio'])
+            else:
+                # Quadplane: throttle[:, :4] tracks the quad motor pwm,
+                # throttle[:, 4] tracks the forward motor throttle (action a7,
+                # mapped to [0,1] by the env). Noise shape 5 = 4 quad + 1 fwd.
+                m=self.params['front_motor_params']  # shared tau/noise
+                motor_tau=float(m.get('tau',0.01))
+                noise_ratio=float(m.get('motor_noise_ratio',m.get('noise_ratio',0.02)))
+                target=torch.cat((self.pwm,command[:,7:8].clamp(0,1)),-1);noise_shape=5
+            throttle=self.throttle+(self.physics_dt/motor_tau)*(target-self.throttle)
+            noise=self.rng.normal(mask,noise_shape)
+            throttle=throttle*(1+noise_ratio*noise[:,None])
             self.throttle.copy_(torch.where(mask[:,None],throttle,self.throttle))
         if self.vehicle=='quadx':
             m=self.params['motor_params'];thrust=self.throttle.abs()*self.throttle*m['total_thrust']/4
@@ -254,9 +338,29 @@ class TensorPlant:
             vb_air=vb-(inverse_rotate(q,self.wind) if self.wind is not None else 0.)
             self.force[:,self.body_drag_id]=-.5*1.225*drag['drag_coef_xyz']*drag['drag_area_xyz']*vb_air.abs()*vb_air
             self.torque[:,0]=-drag['drag_coef_pqr']*wb.abs()*wb*(~self.last_contact)[:,None]
+        elif self.vehicle=='quadplane':
+            # 4 quad motors (front+rear, different thrust constants) + body drag.
+            # Thrust = kf * throttle² (Newton); torque = thrust * (km/kf) * spin.
+            thrust=self.motor_max_thrust[None,:] * self.throttle[:, :4].abs() * self.throttle[:, :4]
+            self.force[:,self.prop_ids,2]=thrust
+            # torque_coef/thrust_coef is the motor torque-to-thrust ratio; use
+            # front_motor_params as the shared ratio (both YAML sets give 7.94e-12 / 3.16e-10 ≈ 0.025).
+            m_front=self.params['front_motor_params']
+            kt_ratio=float(m_front['torque_const'])/float(m_front['thrust_const'])
+            self.torque[:,self.prop_ids,2]=thrust*kt_ratio*self.spin
+            # Body drag on base_link (no explicit drag params in quadplane.yaml,
+            # so use a reasonable coefficient for a ~2.35 kg airframe).
+            vb_air=vb-(inverse_rotate(q,self.wind) if self.wind is not None else 0.)
+            # drag force: Cd*A for a ~0.2 m² frontal area, Cd ~ 0.3
+            self.force[:,self.body_drag_id]=-.5*1.225*0.3*0.2*vb_air.abs()*vb_air
         else:
             if self.vehicle=='fixedwing':
                 cmd=command.index_select(1,self.fixed_index)*self.fixed_sign
+            elif self.vehicle=='quadplane':
+                # Surface commands live in action slots [4,5,6] of the 8-dim
+                # quadplane action vector; same fixed_index/sign mapping as
+                # fixedwing (a0=a4 -> ail diff, a1=a5 -> htail+vtail, a2=a6 -> main wing dead).
+                cmd=command[:,4:7].index_select(1,self.fixed_index)*self.fixed_sign
             elif self.vehicle=='missile':
                 # skid-to-turn mixer. Torque signs from the fin geometry
                 # (nose +x, y-fins: lift z at y=+-0.13, z-fins: lift y at
@@ -270,15 +374,29 @@ class TensorPlant:
                 g=self.roll_gear
                 cmd=torch.stack((pitch+g*roll,pitch-g*roll,-yaw-g*roll,-yaw+g*roll),-1).clamp(-1,1)
             else:
+                # rocket: upstream finlet mixer (7-dim action convention).
+                # finlet (x, y, yaw) maps onto FOUR URDF fin links:
+                #   fin_pos_x <- (y+yaw), fin_neg_x <- (y-yaw),
+                #   fin_pos_y <- (x-yaw), fin_neg_y <- (x+yaw)
                 a=command;cmd=torch.stack((a[:,1]+a[:,2],a[:,1]-a[:,2],a[:,0]-a[:,2],a[:,0]+a[:,2]),-1).clamp(-1,1)
             previous=self.surfaces.actuation.clone()
             f,t=self.surfaces.step(cmd,self._air_velocity(self.surface_ids,q))
             self.surfaces.actuation.copy_(torch.where(mask[:,None],self.surfaces.actuation,previous))
+            if self.rocket_variation is not None:
+                f=f*self.rocket_variation.fin[:,None,None]
+                t=t*self.rocket_variation.fin[:,None,None]
             self.force[:,self.surface_ids]=f;self.torque[:,self.surface_ids]=t
             if self.vehicle=='fixedwing':
                 m=self.params['motor_params'];thrust=self.throttle[:,0].abs()*self.throttle[:,0]*m['total_thrust']
                 self.force[:,self.links['motor_link'],0]=thrust
                 self.torque[:,self.links['motor_link'],0]=thrust*m['torque_coef']/m['thrust_coef']
+            elif self.vehicle=='quadplane':
+                # Forward motor thrust along body +x (nose direction).
+                thrust=self.forward_max_thrust*self.throttle[:,4].abs()*self.throttle[:,4]
+                self.force[:,self.forward_motor_id,0]=thrust
+                # Forward motor spin torque (same ratio as front_motor_params).
+                m_front=self.params['front_motor_params']
+                self.torque[:,self.forward_motor_id,0]=thrust*float(m_front['torque_const'])/float(m_front['thrust_const'])
             elif self.vehicle=='missile':
                 # Axial body drag (rocket-style), then the slender-body normal
                 # force F = -0.5*rho*|v|*A*Cn*v_lat applied at the aft CP:
@@ -311,27 +429,35 @@ class TensorPlant:
                 burning=self.ignited&(self.burn_clock<self.burn_time)
                 thrust=self.max_thrust*(1.+self.boost_noise_ratio*noise)*burning.to(torch.float64)
                 self.force[:,self.drag_id,0]+=thrust
-                self.burn_clock.copy_(torch.where(mask,self.burn_clock+1/240,self.burn_clock))
+                self.burn_clock.copy_(torch.where(mask,self.burn_clock+self.physics_dt,self.burn_clock))
             else:
                 b=self.params['booster_params'];body=self.params['body_params']
                 # Upstream body drag acts on body_ids=[0] == base_link
                 # (core/drones/rocket.py L92-116), not the fueltank.
                 vel=self._air_velocity([self.drag_id],q)[:,0]
                 self.force[:,self.drag_id]-=self.body_drag_constant*vel.abs()*vel
-                gimbal=self.gimbal+(1/240/b['gimbal_tau'])*(command[:,5:7]-self.gimbal)
+                variation=self.rocket_variation
+                gimbal_tau=b['gimbal_tau'] if variation is None else variation.gimbal_tau[:,None]
+                booster_tau=b['booster_tau'] if variation is None else variation.booster_tau
+                # 7-dim convention: finlet (0,1,2), ignition=3, throttle=4, gimbals=5,6
+                gimbal=self.gimbal+(self.physics_dt/gimbal_tau)*(command[:,5:7]-self.gimbal)
                 self.gimbal.copy_(torch.where(mask[:,None],gimbal,self.gimbal))
                 ignition=(self.ignited if not b['reignitable'] else torch.zeros_like(self.ignited))|(command[:,3]>.5)
                 self.ignited.copy_(torch.where(mask,ignition,self.ignited))
                 minimum=b['min_thrust']/b['max_thrust']
                 target=self.ignited*(minimum+command[:,4]*(1-minimum))
-                throttle=self.throttle[:,0]+(1/240/b['booster_tau'])*(target-self.throttle[:,0])
+                throttle=self.throttle[:,0]+(self.physics_dt/booster_tau)*(target-self.throttle[:,0])
                 throttle=throttle*(1+b['noise_ratio']*self.rng.normal(mask,1))*(self.fuel>0)
                 self.throttle[:,0].copy_(torch.where(mask,throttle,self.throttle[:,0]))
-                fuel=(self.fuel-self.throttle[:,0]*b['max_fuel_rate']/b['total_fuel']/240).clamp(0,1)
+                fuel=(self.fuel-self.throttle[:,0]*b['max_fuel_rate']/b['total_fuel']*self.physics_dt).clamp(0,1)
                 self.fuel.copy_(torch.where(mask,fuel,self.fuel))
-                x,y=(self.gimbal*math.radians(b['gimbal_range_degrees'])).unbind(-1)
+                angles=self.gimbal*math.radians(b['gimbal_range_degrees'])
+                if variation is not None:angles=angles+variation.gimbal_bias
+                x,y=angles.unbind(-1)
                 direction=torch.stack((torch.sin(y),-torch.sin(x)*torch.cos(y),torch.cos(x)*torch.cos(y)),-1)
-                self.force[:,self.links['booster_link']]+=direction*(self.throttle[:,0]*b['max_thrust'])[:,None]
+                thrust=self.throttle[:,0]*b['max_thrust']
+                if variation is not None:thrust=thrust*variation.thrust
+                self.force[:,self.links['booster_link']]+=direction*thrust[:,None]
                 mass=(self.fuel*b['total_fuel']).clamp_min(1e-8)
                 inertia=self.fuel_basis.T@torch.diag_embed((self.fuel[:,None]*self.fuel_inertia).clamp_min(1e-8))@self.fuel_basis
                 # unconditional mass write: set_links_mass/inertia are idempotent,
@@ -379,6 +505,7 @@ class TensorPlant:
 
     def auxiliary(self):
         if self.vehicle=='quadx':return self.throttle
+        if self.vehicle=='quadplane':return torch.cat((self.surfaces.actuation,self.throttle),-1)
         if self.vehicle=='fixedwing':return torch.cat((self.surfaces.actuation,self.throttle),-1)
         if self.vehicle=='missile':
             burn_left=(self.burn_time-self.burn_clock).clamp_min(0.)/self.burn_time
@@ -395,6 +522,10 @@ class TensorPlant:
         self.throttle.masked_fill_(mask[:,None],0)
         if self.vehicle=='quadx':
             self.pid.reset(mask);self.pwm.masked_fill_(mask[:,None],0)
+        elif self.vehicle=='quadplane':
+            # Quadplane is both: quad motor path (pid + pwm) AND fixedwing path (surfaces).
+            self.pid.reset(mask);self.pwm.masked_fill_(mask[:,None],0)
+            self.surfaces.actuation.masked_fill_(mask[:,None],0)
         elif self.vehicle=='missile':
             self.pid.reset(mask);self.surfaces.actuation.masked_fill_(mask[:,None],0)
             self.ignited.masked_fill_(mask,False)
@@ -404,6 +535,7 @@ class TensorPlant:
             self.surfaces.actuation.masked_fill_(mask[:,None],0)
             if self.vehicle=='rocket':
                 self.fuel.masked_fill_(mask,.05);self.ignited.masked_fill_(mask,False);self.gimbal.masked_fill_(mask[:,None],0)
+                if self.rocket_variation is not None:self.rocket_variation.sample(mask)
 
     def warmup(self,mask,iterations=10):
         """Original 10-Aviary-step warmup with zero command on the masked slots."""
@@ -417,6 +549,6 @@ class TensorPlant:
         command=torch.zeros((self.n,self.command_width),device=self.device,dtype=torch.float64)
         for _ in range(iterations):
             self.controller(command,mask)
-            for _ in range(2):self.physics_step(command,mask)
+            for _ in range(self.physics_per_control):self.physics_step(command,mask)
 
     def close(self):self._geometry.disconnect()

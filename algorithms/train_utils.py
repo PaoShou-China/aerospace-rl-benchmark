@@ -100,7 +100,7 @@ def build_cfg(*, lr_schedule='fixed',
         actor = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True,
                  'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
         critic = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True}
-    return {'num_steps_per_env': num_steps_per_env, 'save_interval': 100, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
+    return {'num_steps_per_env': num_steps_per_env, 'save_interval': 10_000_000, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
             'actor': actor,
             'critic': critic,
             'algorithm': {'class_name': 'PPO', 'learning_rate': learning_rate, 'num_learning_epochs': num_learning_epochs, 'num_mini_batches': num_mini_batches,
@@ -198,7 +198,17 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         for p in out.glob('events.out.tfevents.*'):
             p.unlink()
 
-    env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **(env_kwargs or {}))
+    env_kwargs = dict(env_kwargs or {})
+    # A saved rocket contract pins the physical variation and policy rate.
+    # Resuming optimization must not silently change its physics/score.
+    if resume and env_cls.__name__ == 'RocketLandingEnv' and (out/'config.json').exists():
+        saved = json.loads((out/'config.json').read_text()).get('env_kwargs') or {}
+        for key, default in (('variation','nominal'),('agent_hz',40)):
+            value = saved.get(key,default)
+            if key in env_kwargs and env_kwargs[key] != value:
+                raise ValueError(f'Cannot change {key} while resuming; start a separate run')
+            env_kwargs[key] = value
+    env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **env_kwargs)
     if algo == 'flash_sac':
         from algorithms.flashsac.flash_sac import FlashSACRunner, flash_sac_cfg
         valid = set(flash_sac_cfg())
@@ -216,6 +226,11 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         steps_per_iter = cfg['num_steps_per_env']
     else:
         raise ValueError(f'unknown algo {algo!r} (expected ppo | flash_sac)')
+    cfg['env_kwargs'] = dict(env_kwargs)
+    cfg['env_kwargs'].update(getattr(env, 'benchmark_env_kwargs', {}))
+    if 'benchmark' in env.cfg:cfg['benchmark'] = env.cfg['benchmark']
+    # Persist the contract before training, including interrupted runs.
+    (out / 'config.json').write_text(json.dumps(cfg, indent=2))
     if resume:
         cands = sorted(out.glob('model_*.pt'), key=lambda p: int(p.stem.split('_')[1]))
         ckpt = cands[-1] if cands else out / 'checkpoint.pt'
@@ -349,6 +364,10 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         runner.learn(updates)
     elapsed = time.perf_counter() - start
     runner.save(str(out / 'checkpoint.pt'))
+    # keep results concise: drop periodic mid-training checkpoints, only the
+    # final checkpoint.pt stays (PPO/rsl_rl saves model_{it}.pt along the way)
+    for p in out.glob('model_*.pt'):
+        p.unlink()
 
     report = {'task': env.cfg, 'device': str(env.device), 'updates': updates, 'algo': algo,
               'transitions': updates * steps_per_iter * num_envs,
@@ -364,6 +383,8 @@ def run_training(task, env_cls, num_envs=64, updates=1000, seed=7, backend='gpu'
         report['completed_metrics'] = {k: float(v.detach().sum()) / eps for k, v in env.completed_metrics.items()}
     (out / 'run.json').write_text(json.dumps(report, indent=2))
     cfg['env_kwargs'] = dict(env_kwargs) if env_kwargs else {}
+    cfg['env_kwargs'].update(getattr(env, 'benchmark_env_kwargs', {}))
+    if 'benchmark' in env.cfg:cfg['benchmark'] = env.cfg['benchmark']
     if isinstance(bc_warmstart, dict):
         cfg['bc_warmstart'] = bc_warmstart
     (out / 'config.json').write_text(json.dumps(cfg, indent=2))

@@ -2,7 +2,7 @@
 
 Rocket-Landing (`RocketLandingEnv`, task id `rocket`): an F9-class booster
 returning to a landing pad. URDF rigid-body dynamics on the Genesis engine
-(240 Hz) with grid fins and engine gimbal, 60 Hz policy; 1800 steps = 30 s
+(240 Hz) with grid fins and engine gimbal, 40 Hz policy; 1200 steps = 30 s
 per episode; success = pad contact with |v| < 0.02 m/s, |omega| < 0.02 rad/s
 and tilt < 0.1 rad. Success does not truncate: the episode continues and the
 settled booster keeps earning the contact stream until the time limit. Task
@@ -21,7 +21,9 @@ spec lives in the package docstring [`__init__.py`](__init__.py).
 Classical ZEM/ZEV powered-descent guidance (`RocketPDGBaseline`, `zem_zev_pdg`)
 under the official protocol (`scripts/baseline_eval.py rocket`,
 `results/rocket/baseline.json`): 1024 envs, 1800 env steps, 1024 episodes,
-success rate 0.8281, mean episode return 3968.16.
+success rate 0.8281, mean episode return 3968.16. Recorded before the
+2026-10-27 policy-rate switch (60 Hz then); re-run before comparing with
+current 40 Hz numbers.
 
 ## Run
 

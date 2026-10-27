@@ -162,6 +162,11 @@ lists it as the frozen behavior-cloning data source for this task.
 - The law is tuned to the frozen cluster geometry and inertia taken from
   the env at construction; it carries no online identification.
 - Diagnostic metrics are global accumulators, not per-episode state.
+- A steering-law ablation that keeps this controller's PD path and gains
+  but replaces the damped inverse with an ordinary Moore–Penrose
+  pseudo-inverse is documented in
+  [baseline-satellite-mp-pinv.md](baseline-satellite-mp-pinv.md)
+  (`SatelliteOrdinaryPinvBaseline`, `quat_pd_mp_pinv_cmg`).
 
 ## 7. Implementation
 

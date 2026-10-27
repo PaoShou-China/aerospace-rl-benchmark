@@ -34,6 +34,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from scipy.linalg import logm, solve_discrete_are
+from scipy.optimize import linear_sum_assignment
+from scipy.signal import place_poles
 
 
 # --------------------------------------------------------------------------- #
@@ -152,6 +154,104 @@ def _cwh_symplectic_Ad(env):
     return Ad
 
 
+def _cwh_discrete_model(env, dt=None):
+    """Exact symplectic-Euler CWH model (Ad, Bd) with u = acceleration.
+
+    Stacked state x = [p, v]; the plant advances
+        v+ = v + dt (G p + H v + u),   p+ = p + dt v+,
+    hence
+        Ad = [[I + dt^2 G, dt (I + dt H)], [dt G, I + dt H]],
+        Bd = [[dt^2 I], [dt I]].
+    This is bit-for-bit the env's integrator for piecewise-constant u, so the
+    design model carries no discretization error.
+    """
+    n = env.n
+    dt = env.dt if dt is None else dt
+    G = np.diag((3. * n * n, 0., -n * n))
+    H = np.array(((0., 2. * n, 0.), (-2. * n, 0., 0.), (0., 0., 0.)))
+    I3 = np.eye(3)
+    Ad = np.zeros((6, 6))
+    Ad[:3, :3] = I3 + dt * dt * G
+    Ad[:3, 3:] = dt * (I3 + dt * H)
+    Ad[3:, :3] = dt * G
+    Ad[3:, 3:] = I3 + dt * H
+    Bd = np.zeros((6, 3))
+    Bd[:3] = dt * dt * I3
+    Bd[3:] = dt * I3
+    return Ad, Bd
+
+
+def _cwh_pole_gain(env, wn, zeta=.9, ratios=(.8, 1.), dt=None):
+    """Full-state pole placement on the exact discrete CWH model.
+
+    The six-state model is block-decoupled into the in-plane pair (x, y) and
+    the out-of-plane axis z (the CWH coupling matrix H only links x and y).
+    Each block gets distinct damped pairs s = -zeta w +- j w sqrt(1-zeta^2),
+    with w = wn * ratios[i] in-plane and w = wn out-of-plane, mapped to the
+    discrete plane by z = exp(s dt) (exact for the zero-order-hold
+    acceleration command).  ``place_poles`` (Kautsky-Nichols-Van Dooren,
+    method 'YT') yields K for u = -K x with u in m/s^2.  Placing the blocks
+    separately keeps the gain block-diagonal, so a radial error never
+    commands spurious cross-track thrust.
+
+    Controllability is checked on the full six-state pair (rank 6) and on
+    each block.  Returns (K float64 torch gain 3x6, design report dict);
+    raises if a rank is deficient, the placed eigenvalues do not match the
+    requested poles, or the closed loop leaves the unit disc.
+    """
+    Ad, Bd = _cwh_discrete_model(env, dt)
+    dt = env.dt if dt is None else dt
+    ctrb = np.hstack([np.linalg.matrix_power(Ad, i) @ Bd for i in range(6)])
+    rank = int(np.linalg.matrix_rank(ctrb))
+    if rank != 6:
+        raise ValueError(f'CWH pair is not controllable (rank {rank}/6)')
+    ii, oo = [0, 1, 3, 4], [2, 5]
+    Aii, Bii = Ad[np.ix_(ii, ii)], Bd[ii][:, [0, 1]]
+    Aoo, Boo = Ad[np.ix_(oo, oo)], Bd[oo][:, [2]]
+    ctrb_i = np.hstack([np.linalg.matrix_power(Aii, i) @ Bii for i in range(4)])
+    ctrb_o = np.hstack([Boo, Aoo @ Boo])
+    rank_i = int(np.linalg.matrix_rank(ctrb_i))
+    rank_o = int(np.linalg.matrix_rank(ctrb_o))
+    if rank_i != 4 or rank_o != 2:
+        raise ValueError(f'CWH block controllability deficient '
+                         f'(in-plane {rank_i}/4, out-of-plane {rank_o}/2)')
+
+    def _poles(w_list):
+        out = []
+        for w in w_list:
+            s = -zeta * w + 1j * w * math.sqrt(max(0., 1. - zeta * zeta))
+            out.extend((np.exp(s * dt), np.exp(s.conjugate() * dt)))
+        return np.array(out)
+
+    w_in = [wn * r for r in ratios]
+    w_out = [wn]
+    poles_in, poles_out = _poles(w_in), _poles(w_out)
+    K = np.zeros((3, 6))
+    K[np.ix_([0, 1], ii)] = place_poles(Aii, Bii, poles_in, method='YT').gain_matrix
+    K[np.ix_([2], oo)] = place_poles(Aoo, Boo, poles_out, method='YT').gain_matrix
+    eig = np.linalg.eigvals(Ad - Bd @ K)
+    poles = np.concatenate((poles_in, poles_out))
+    # order-invariant eigenvalue matching (two blocks share the wn pair)
+    cost = np.abs(poles[:, None] - eig[None, :])
+    rows, cols = linear_sum_assignment(cost)
+    err = float(cost[rows, cols].max())
+    if err > 1e-6:
+        raise ValueError(f'pole placement residual {err:.2e} exceeds 1e-6')
+    max_eig = float(np.max(np.abs(eig)))
+    if max_eig >= 1.:
+        raise ValueError(f'placed closed loop is unstable (max |z| = {max_eig:.6f})')
+    cont_poles = [[float(-zeta * w), float(w * math.sqrt(max(0., 1. - zeta * zeta)))]
+                  for w in w_in + w_out]
+    report = {'wn': float(wn), 'zeta': float(zeta), 'ratios': list(ratios),
+              'controllability_rank': rank, 'controllability_cond': float(np.linalg.cond(ctrb)),
+              'block_ranks': {'in_plane': rank_i, 'out_of_plane': rank_o},
+              'poles_continuous': cont_poles,
+              'poles_discrete': [[float(z.real), float(z.imag)] for z in poles],
+              'placement_residual': err, 'max_abs_eig': max_eig,
+              'gain': K.tolist()}
+    return torch.as_tensor(K, device=env.device, dtype=torch.float64), report
+
+
 # --------------------------------------------------------------------------- #
 # base class
 # --------------------------------------------------------------------------- #
@@ -250,16 +350,23 @@ class QuadXSE3Baseline(Baseline):
         self.trim.masked_fill_(mask, 0.)
 
     def actions(self, obs):
+        return self._track(self.env.current_target, obs)
+
+    def _track(self, reference, obs, v_ff=None):
         o = _vec(obs).to(torch.float64)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         R = _quat_to_R(q)                       # body -> world
         b3 = R[:, :, 2]                         # body thrust axis in world
         v_w = torch.einsum('nij,nj->ni', R, vb)
-        e_x = p - self.env.current_target
+        e_x = p - reference
         # cascade outer loop: position error -> speed-capped velocity setpoint
         # (raw PD accelerates to ~KX/KV*|e_x| ~ 6 m/s toward a 4.5 m waypoint,
-        # overshooting the 5 m dome; the cap keeps transit <= V_MAX)
+        # overshooting the 5 m dome; the cap keeps transit <= V_MAX).  v_ff is
+        # an optional world-frame velocity feedforward (used by the moving
+        # target tracker; stationary waypoint tasks leave it at zero).
         v_d = -self.KX / self.KV * e_x
+        if v_ff is not None:
+            v_d = v_d + v_ff
         v_d = v_d * (self.V_MAX / v_d.norm(dim=-1, keepdim=True).clamp_min(self.V_MAX))
         e_v = v_w - v_d            # waypoint setpoint with cruise feedforward
 
@@ -310,6 +417,302 @@ class QuadXSE3Baseline(Baseline):
         self.sat_rate += w_sat.to(torch.float64)
         w_cmd = w_cmd.clamp(-math.pi, math.pi)
         return torch.cat((w_cmd / math.pi, (thr / self.THR_MAX * 2. - 1.)[:, None]),
+                         -1).clamp(-1., 1.).to(torch.float32)
+
+
+class QuadXTrackKFBaseline(QuadXSE3Baseline):
+    """Constant-velocity Kalman filter + fixed-offset SE(3) tracking.
+
+    Method
+        State x = [p_t, v_t] in R^6 (target position and velocity, world
+        frame).  Standard linear constant-velocity prediction
+            F = [[I, dt I], [0, I]],
+            Q = q_a [[dt^3/3 I, dt^2/2 I], [dt^2/2 I, dt I]],
+        with q_a = SIGMA_ACCEL^2 (continuous white-acceleration PSD), and a
+        position-only measurement H = [I, 0], R = SIGMA_MEAS^2 I.
+        The filter predicts on every policy step.  When the visibility flag
+        is set it updates with y = p_uav + rel_meas (the same 3-D camera
+        measurement every other method receives, in world axes); when the
+        flag is clear it only predicts.  It starts from the first detection
+        with a broad prior -- no target state is read from the environment.
+
+    Control reference
+        p_ref = [x_hat + REF_OFFSET_X, y_hat + REF_OFFSET_Y, ALT_REF] with
+        the environment's fixed altitude and fixed horizontal offset.  The
+        SE(3) position loop tracks p_ref with the estimated target velocity
+        as world-frame feedforward, i.e. v_d = v_hat + -(KX/KV)(p - p_ref),
+        speed-capped at V_MAX.
+
+    Fixed timeout hold (public, no active search)
+        If no detection has arrived for HOLD_TIMEOUT seconds, the reference
+        freezes at the estimate held at that instant and the vehicle hovers
+        there until a new detection arrives.  There is no search, information
+        gathering, or replanning behaviour.
+
+    All filter noise parameters and control gains are constants selected on
+    an independent tuning seed set (see environments/multirotor/eval_quadx_track_kf.py).
+    """
+
+    name = 'cv_kf_pid'
+    SIGMA_ACCEL = 1.5        # m/s^2, white-acceleration std (process model), tuned
+    SIGMA_MEAS = 0.15        # m, camera position noise std (matches the sensor)
+    VEL_PRIOR_STD = 0.5      # m/s, first-detection velocity prior std
+    HOLD_TIMEOUT = 3.0       # s without detection before the fixed hold
+    V_MAX = 3.0              # m/s, tracking cruise cap
+    KX, KV = 4.0, 2.0        # position PD, tuned on the seed-101 set
+
+    def __init__(self, env, sigma_accel=None, sigma_meas=None, kx=None, kv=None,
+                 v_max=None, hold_timeout=None):
+        super().__init__(env)
+        d, n = self.device, env.num_envs
+        if sigma_accel is not None:
+            self.SIGMA_ACCEL = float(sigma_accel)
+        if sigma_meas is not None:
+            self.SIGMA_MEAS = float(sigma_meas)
+        if kx is not None:
+            self.KX = float(kx)
+        if kv is not None:
+            self.KV = float(kv)
+        if v_max is not None:
+            self.V_MAX = float(v_max)
+        if hold_timeout is not None:
+            self.HOLD_TIMEOUT = float(hold_timeout)
+
+        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=torch.float64)
+        self.home = torch.tensor((0., 0., env.ALT_REF), device=d, dtype=torch.float64)
+        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=torch.float64)
+        self.eye3 = torch.eye(3, device=d, dtype=torch.float64)
+        self.mu = torch.zeros((n, 6), device=d, dtype=torch.float64)
+        self.P = torch.eye(6, device=d, dtype=torch.float64).expand(n, 6, 6).clone() * 1e6
+        self.initialized = torch.zeros(n, device=d, dtype=torch.bool)
+        self.since_seen = torch.zeros(n, device=d, dtype=torch.float64)
+        self.frozen = torch.zeros(n, device=d, dtype=torch.bool)
+        self.hold = self.home.expand(n, 3).clone()
+        self._build_filter()
+
+    def _build_filter(self):
+        dt = self.dt
+        F = torch.eye(6, device=self.device, dtype=torch.float64)
+        F[:3, 3:] = torch.eye(3, device=self.device, dtype=torch.float64) * dt
+        q = self.SIGMA_ACCEL ** 2
+        I3 = torch.eye(3, device=self.device, dtype=torch.float64)
+        Q = torch.zeros((6, 6), device=self.device, dtype=torch.float64)
+        Q[:3, :3] = I3 * (dt ** 3 / 3.)
+        Q[:3, 3:] = I3 * (dt ** 2 / 2.)
+        Q[3:, :3] = I3 * (dt ** 2 / 2.)
+        Q[3:, 3:] = I3 * dt
+        self.F = F
+        self.Q = Q * q
+        prior = torch.zeros((6, 6), device=self.device, dtype=torch.float64)
+        prior[:3, :3] = I3 * (self.SIGMA_MEAS ** 2)
+        prior[3:, 3:] = I3 * (self.VEL_PRIOR_STD ** 2)
+        self.prior = prior
+
+    def reset_idx(self, mask):
+        super().reset_idx(mask)
+        self.mu.masked_fill_(mask[:, None], 0.)
+        self.P = torch.where(mask[:, None, None],
+                             torch.eye(6, device=self.device, dtype=torch.float64).expand_as(self.P) * 1e6,
+                             self.P)
+        self.initialized.masked_fill_(mask, False)
+        self.since_seen.masked_fill_(mask, 0.)
+        self.frozen.masked_fill_(mask, False)
+        self.hold.copy_(torch.where(mask[:, None], self.home.expand_as(self.hold), self.hold))
+
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        p = o[:, 10:13]
+        rel = o[:, 21:24]
+        vis = o[:, 24] > .5
+        dt = self.dt
+
+        # ---- prediction (every step) -------------------------------------
+        self.mu = self.mu @ self.F.T
+        FP = self.F @ self.P
+        self.P = FP @ self.F.T + self.Q
+
+        # ---- first detection: initialize from the measurement --------------
+        fresh = vis & ~self.initialized
+        y = p + rel
+        init_mu = torch.cat((y, torch.zeros((y.shape[0], 3), device=o.device, dtype=torch.float64)), -1)
+        self.mu = torch.where(fresh[:, None], init_mu, self.mu)
+        self.P = torch.where(fresh[:, None, None], self.prior.expand_as(self.P), self.P)
+        self.initialized |= vis
+
+        # ---- measurement update (detections only) -------------------------
+        upd = vis & self.initialized & ~fresh
+        S = self.P[:, :3, :3] + self.SIGMA_MEAS ** 2 * self.eye3
+        K = self.P[:, :, :3] @ torch.linalg.inv(S)
+        innov = y - self.mu[:, :3]
+        mu_new = self.mu + (K @ innov[..., None])[..., 0]
+        P_new = self.P - K @ self.P[:, :3, :]
+        P_new = .5 * (P_new + P_new.transpose(-1, -2))
+        self.mu = torch.where(upd[:, None], mu_new, self.mu)
+        self.P = torch.where(upd[:, None, None], P_new, self.P)
+
+        # ---- fixed timeout hold -------------------------------------------
+        self.since_seen = torch.where(vis, torch.zeros_like(self.since_seen),
+                                     self.since_seen + dt)
+        timed_out = self.initialized & (self.since_seen > self.HOLD_TIMEOUT)
+        freeze_now = timed_out & ~self.frozen
+        ref_est = torch.cat((self.mu[:, :2] + self.offset,
+                             self.alt.expand(self.mu.shape[0], 1)), -1)
+        self.hold = torch.where(freeze_now[:, None], ref_est, self.hold)
+        self.frozen = timed_out
+
+        ref = torch.where(self.frozen[:, None], self.hold, ref_est)
+        ref = torch.where(self.initialized[:, None], ref, self.home.expand_as(ref))
+        v_ff = torch.cat((self.mu[:, 3:5], torch.zeros((self.mu.shape[0], 1), device=o.device,
+                                                       dtype=torch.float64)), -1)
+        v_ff = torch.where((self.initialized & ~self.frozen)[:, None], v_ff,
+                           torch.zeros_like(v_ff))
+        return self._track(ref, obs, v_ff)
+
+
+# --------------------------------------------------------------------------- #
+# quadx: position -> attitude cascade with the env's inner rate PID
+# --------------------------------------------------------------------------- #
+class QuadXCascadePIDBaseline(Baseline):
+    """Position-attitude cascaded PID on the native rate+collective interface.
+
+    Outer loop (world frame).  A PID on the active-waypoint position error
+    produces a desired acceleration
+        a_des = -(Kp e_p + Ki int e_p dt + Kd v_w),
+    with the derivative taken on the measured world velocity (so a waypoint
+    switch is not a derivative kick), a norm clamp A_MAX, an integral clamp
+    I_MAX, and conditional integration frozen while the command is clipped.
+
+    Guidance.  Gravity compensation gives the specific-force command
+        a_cmd = a_des + g e3.
+    With the yaw reference psi_r fixed, resolving a_cmd in the heading frame
+    yields the desired roll/pitch and collective
+        u = ( a_x cos psi_r + a_y sin psi_r,
+             -a_x sin psi_r + a_y cos psi_r,
+              a_z ),
+        theta_d = atan2(u_x, u_z),   phi_d = atan2(-u_y, sqrt(u_x^2 + u_z^2)),
+        f = m |a_cmd|.
+    f maps back through the plant's quadratic thrust law and the measured
+    motor-lag/noise dc gain
+        throttle = sqrt(f / F_total) / G_pwm,
+    which is the physical collective (pwm) the env expects.
+
+    Attitude loop.  A P/PD on the ZYX Euler errors produces body-rate
+    commands that the env's existing 120 Hz rate PID executes:
+        w_cmd = K_att (phi_d - phi, theta_d - theta, psi_r - psi) - K_d w_b,
+    clipped to the +-pi rate-command window.
+
+    Action map.  The returned four-vector is the exact inverse of the env's
+    affine action scaling: rates / pi and 2 throttle / T_max - 1, clipped to
+    [-1, 1].  There is no learning, no prediction, no waypoint lookahead and
+    no command-safety layer; the only internal state is the clamped
+    position-error integral, cleared on reset and on a waypoint-index change.
+    """
+
+    name = 'cascaded_pid'
+
+    # frozen cf2x plant constants (same reference model as QuadXSE3Baseline)
+    MASS = 0.027                   # kg
+    G = 9.81                       # m/s^2, world -z
+    TOTAL_THRUST = 2.0             # N at pwm = 1 on all four rotors
+    THR_MAX = 0.8                  # env collective command ceiling
+    PWM_GAIN = 1.216               # motor-lag dc gain under noise mean 1.08
+
+    # outer position PID [s^-2, s^-3, s^-1] and output/integral clamps
+    KP_POS = 3.0                   # position error -> acceleration [1/s^2]
+    KI_POS = 0.10                  # position integral [1/s^3]
+    KD_POS = 4.0                   # measured-velocity damping [1/s]
+    A_MAX = 4.0                    # desired-acceleration norm cap [m/s^2]
+    I_MAX = 0.5                    # integral clamp [m/s^2]
+    # attitude P/PD -> body-rate commands [1/s, dimensionless]
+    KP_ATT = 4.0                   # roll/pitch attitude P [1/s]
+    KD_ATT = 0.35                  # roll/pitch rate damping [-]
+    KP_YAW = 2.0                   # yaw attitude P [1/s]
+    KD_YAW = 0.20                  # yaw rate damping [-]
+    YAW_REF = 0.0                  # fixed yaw reference [rad]
+    RATE_MAX = math.pi             # env rate-command window [rad/s]
+
+    def __init__(self, env, gains=None):
+        """``gains`` optionally overrides the hard-coded defaults (tuning tests)."""
+        super().__init__(env)
+        d, n = self.device, env.num_envs
+        self.dt = 1. / env.agent_hz
+        g = dict(kp_pos=self.KP_POS, ki_pos=self.KI_POS, kd_pos=self.KD_POS,
+                 a_max=self.A_MAX, i_max=self.I_MAX, kp_att=self.KP_ATT,
+                 kd_att=self.KD_ATT, kp_yaw=self.KP_YAW, kd_yaw=self.KD_YAW)
+        if gains:
+            g.update(gains)
+        self.kp_pos, self.ki_pos, self.kd_pos = g['kp_pos'], g['ki_pos'], g['kd_pos']
+        self.a_max, self.i_max = g['a_max'], g['i_max']
+        self.rate_max = self.RATE_MAX
+        self.e3 = torch.tensor((0., 0., 1.), device=d, dtype=torch.float64)
+        # attitude gains per axis: roll, pitch, yaw
+        self.k_att = torch.tensor((g['kp_att'], g['kp_att'], g['kp_yaw']),
+                                  device=d, dtype=torch.float64)
+        self.kd_att = torch.tensor((g['kd_att'], g['kd_att'], g['kd_yaw']),
+                                   device=d, dtype=torch.float64)
+        self.f_max = self.TOTAL_THRUST * self.THR_MAX ** 2
+        self.i_acc = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        self.last_target_index = env.target_index.clone()
+        # cumulative clipped-command fractions (diagnostics only)
+        self.sat_acc = torch.zeros(n, device=d, dtype=torch.float64)
+        self.sat_rate = torch.zeros(n, device=d, dtype=torch.float64)
+        self.sat_thrust = torch.zeros(n, device=d, dtype=torch.float64)
+
+    def reset_idx(self, mask):
+        self.i_acc.masked_fill_(mask[:, None], 0.)
+        self.last_target_index.masked_fill_(mask, 0)
+
+    @torch.no_grad()
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
+        R = _quat_to_R(q)                       # body -> world
+        roll, pitch, yaw = _rot_to_rpy(R)
+        v_w = torch.einsum('nij,nj->ni', R, vb)
+
+        # waypoint handoff: clear the integral when the env advances its index
+        idx = self.env.target_index
+        switched = idx != self.last_target_index
+        self.i_acc.masked_fill_(switched[:, None], 0.)
+        self.last_target_index.copy_(idx)
+        e_p = p - self.env.current_target
+
+        # outer PID -> desired acceleration (conditional anti-windup)
+        a_prev = -self.kp_pos * e_p - self.kd_pos * v_w + self.i_acc
+        clipped_prev = a_prev.norm(dim=-1) > self.a_max
+        i_new = (self.i_acc + self.ki_pos * e_p * self.dt).clamp(-self.i_max, self.i_max)
+        self.i_acc.copy_(torch.where(clipped_prev[:, None], self.i_acc, i_new))
+        a_raw = -self.kp_pos * e_p - self.kd_pos * v_w + self.i_acc
+        a_norm = a_raw.norm(dim=-1)
+        clipped = a_norm > self.a_max
+        self.sat_acc += clipped.to(torch.float64)
+        a_des = a_raw * (self.a_max / a_norm.clamp_min(self.a_max))[:, None]
+
+        # gravity compensation -> desired roll/pitch and total thrust
+        a_cmd = a_des + self.G * self.e3
+        f_cmd = self.MASS * a_cmd.norm(dim=-1)
+        self.sat_thrust += (f_cmd > self.f_max).to(torch.float64)
+        f = f_cmd.clamp_max(self.f_max)
+        # env collective: quadratic thrust with the measured lag/noise dc gain
+        throttle = (torch.sqrt(f / self.TOTAL_THRUST) / self.PWM_GAIN) \
+            .clamp(0., self.THR_MAX)
+        cy, sy = math.cos(self.YAW_REF), math.sin(self.YAW_REF)
+        u_x = a_cmd[:, 0] * cy + a_cmd[:, 1] * sy
+        u_y = -a_cmd[:, 0] * sy + a_cmd[:, 1] * cy
+        u_z = a_cmd[:, 2]
+        pitch_d = torch.atan2(u_x, u_z)
+        roll_d = torch.atan2(-u_y, torch.sqrt(u_x * u_x + u_z * u_z))
+
+        # attitude P/PD -> body-rate command executed by the env's rate PID
+        e_att = torch.stack((_wrap(roll_d - roll), _wrap(pitch_d - pitch),
+                             _wrap(torch.full_like(yaw, self.YAW_REF) - yaw)), -1)
+        w_cmd = self.k_att * e_att - self.kd_att * wb
+        self.sat_rate += (w_cmd.abs() > self.rate_max).to(torch.float64).sum(-1)
+        w_cmd = w_cmd.clamp(-self.rate_max, self.rate_max)
+
+        # inverse of the env action scaling: [-pi, pi] rates, [0, 0.8] throttle
+        return torch.cat((w_cmd / self.rate_max,
+                          (2. * throttle / self.THR_MAX - 1.)[:, None]),
                          -1).clamp(-1., 1.).to(torch.float32)
 
 
@@ -581,6 +984,186 @@ class FixedwingAutopilotBaseline(Baseline):
 
 
 # --------------------------------------------------------------------------- #
+# fixedwing: conventional cascaded PID autopilot
+# --------------------------------------------------------------------------- #
+class FixedwingPIDBaseline(Baseline):
+    """Conventional cascaded PID autopilot (no guidance heuristics).
+
+    Five single-input/single-output loops, each closed on the public
+    ``'policy'`` observation group only:
+
+    1. course error -> P/I -> bank-angle reference, clamped to
+       ``max_bank_deg``;
+    2. bank-angle error -> P -> roll-rate reference -> P/I -> aileron;
+    3. altitude error -> P/I -> pitch-angle reference, clamped to the
+       nose-up/nose-down authority;
+    4. pitch-angle error -> P -> pitch-rate reference -> P/I -> elevator;
+    5. airspeed -> P/I -> throttle.
+
+    Interface facts (verified against the plant; see also
+    ``docs/method/baseline-fixedwing-l1-tecs.md``):
+
+    * Actions a in [-1,1]^4: a0 > 0 rolls right (positive bank), a1 > 0 is a
+      nose-down elevator, a2 is a dead channel (main-wing deflection limit 0)
+      and is driven with exactly 0, a3 is throttle remapped by the env as
+      (a3+1)/2.
+    * Euler convention (x fwd, y left, z up): positive roll = right bank,
+      positive pitch = nose down.  A left turn therefore needs negative bank
+      and a climb needs a negative pitch reference.
+    * Airspeed feedback: the observation exposes body-frame velocity v_b and
+      attitude q.  This controller uses V = ||v_b||, i.e. GROUND speed.  In
+      calm air (the benchmark default) it equals true airspeed; when the
+      optional wind disturbance is enabled it remains a public ground-speed
+      measurement, deliberately NOT the internal air-relative truth
+      (v_air = v - wind), which the controller never reads.  Course is
+      likewise the ground track atan2(v_y, v_x) when the horizontal speed
+      exceeds 2 m/s (yaw fallback below that).
+
+    No path planning, NMPC, stall-protection layer, learning compensation or
+    adaptive scheduling is present: every gain is constant and the only
+    state is five clamp-limited integrators, cleared by ``reset_idx``.
+    """
+
+    name = 'pid_cascade'
+    CONFIG_PATH = Path(__file__).parent / 'fixedwing_pid.json'
+
+    def __init__(self, env):
+        super().__init__(env)
+        cfg = json.loads(self.CONFIG_PATH.read_text())
+        lat, lon, spd = cfg['lateral'], cfg['longitudinal'], cfg['speed']
+        self.g = 9.81
+        self.dt = 1. / 30.
+        # lateral
+        self.k_course = float(lat['k_course'])
+        self.k_i_course = float(lat['k_i_course'])
+        self.i_course_max = math.radians(float(lat['i_course_max_deg']))
+        self.max_bank = math.radians(float(lat['max_bank_deg']))
+        self.k_roll_angle = float(lat['k_roll_angle'])
+        self.max_roll_rate = math.radians(float(lat['max_roll_rate_deg_s']))
+        self.k_roll_rate = float(lat['k_roll_rate'])
+        self.k_i_roll_rate = float(lat['k_i_roll_rate'])
+        self.i_roll_rate_max = float(lat['i_roll_rate_max'])
+        # longitudinal
+        self.k_altitude = float(lon['k_altitude'])
+        self.k_i_altitude = float(lon['k_i_altitude'])
+        self.i_altitude_max = math.radians(float(lon['i_altitude_max_deg']))
+        self.pitch_trim = math.radians(float(lon['pitch_trim_deg']))
+        self.pitch_up_max = math.radians(float(lon['pitch_up_max_deg']))
+        self.pitch_down_max = math.radians(float(lon['pitch_down_max_deg']))
+        self.k_pitch_angle = float(lon['k_pitch_angle'])
+        self.max_pitch_rate = math.radians(float(lon['max_pitch_rate_deg_s']))
+        self.k_pitch_rate = float(lon['k_pitch_rate'])
+        self.k_i_pitch_rate = float(lon['k_i_pitch_rate'])
+        self.i_pitch_rate_max = float(lon['i_pitch_rate_max'])
+        # speed
+        self.v_ref = float(spd['v_ref'])
+        self.v_min_valid = float(spd['v_min_valid'])
+        self.k_speed = float(spd['k_speed'])
+        self.k_i_speed = float(spd['k_i_speed'])
+        self.i_speed_max = float(spd['i_speed_max'])
+        self.throttle_trim = float(spd['throttle_trim'])
+        self.throttle_min = float(spd.get('throttle_min', 0.))
+        self.throttle_max = float(spd.get('throttle_max', 1.))
+        # integrators (one scalar per replica, float64, device-resident)
+        self.i_course = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
+        self.i_roll_rate = torch.zeros_like(self.i_course)
+        self.i_altitude = torch.zeros_like(self.i_course)
+        self.i_pitch_rate = torch.zeros_like(self.i_course)
+        self.i_speed = torch.zeros_like(self.i_course)
+
+    def reset_idx(self, mask):
+        for state in (self.i_course, self.i_roll_rate, self.i_altitude,
+                      self.i_pitch_rate, self.i_speed):
+            state.masked_fill_(mask, 0.)
+
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
+        delta = o[:, 23:35].reshape(-1, 4, 3)
+        R = _quat_to_R(q)
+        v_w = torch.einsum('nij,nj->ni', R, vb)
+        # Public speed feedback: body-frame speed = world ground speed.
+        V = vb.norm(dim=-1)
+        roll, pitch, yaw = _rot_to_rpy(R)
+        target = p + torch.einsum('nij,nj->ni', R, delta[:, 0])
+
+        # ---- lateral: bearing -> course -> bank -> roll rate -> aileron ----
+        d = target[:, :2] - p[:, :2]
+        bearing = torch.atan2(d[:, 1], d[:, 0])
+        v_h = v_w[:, :2].norm(dim=-1)
+        course = torch.where(v_h > self.v_min_valid, torch.atan2(v_w[:, 1], v_w[:, 0]), yaw)
+        e_course = _wrap(bearing - course)
+        i_course = (self.i_course + self.k_i_course * e_course * self.dt).clamp(
+            -self.i_course_max, self.i_course_max)
+        drive = self.k_course * e_course + i_course
+        # Conditional integration: do not wind up while the bank reference is
+        # saturated by this same error.
+        over = (drive.abs() > self.max_bank) & (drive * e_course > 0.)
+        i_course = torch.where(over, self.i_course, i_course)
+        self.i_course.copy_(i_course)
+        # Env convention: positive roll = right bank turns the course negative,
+        # so a positive (left) course error needs a negative bank reference.
+        roll_ref = (-drive).clamp(-self.max_bank, self.max_bank)
+
+        e_roll = _wrap(roll_ref - roll)
+        p_ref = (self.k_roll_angle * e_roll).clamp(-self.max_roll_rate, self.max_roll_rate)
+        e_p = p_ref - wb[:, 0]
+        i_roll = (self.i_roll_rate + self.k_i_roll_rate * e_p * self.dt).clamp(
+            -self.i_roll_rate_max, self.i_roll_rate_max)
+        raw_ail = self.k_roll_rate * e_p + i_roll
+        over = ((raw_ail.abs() > 1.) & (raw_ail * e_p > 0.))
+        i_roll = torch.where(over, self.i_roll_rate, i_roll)
+        self.i_roll_rate.copy_(i_roll)
+        aileron = (self.k_roll_rate * e_p + i_roll).clamp(-1., 1.)
+
+        # ---- longitudinal: altitude -> pitch -> pitch rate -> elevator ----
+        h_err = target[:, 2] - p[:, 2]
+        i_alt = (self.i_altitude + self.k_i_altitude * h_err * self.dt).clamp(
+            -self.i_altitude_max, self.i_altitude_max)
+        drive_h = self.k_altitude * h_err + i_alt
+        # Climb = negative pitch reference (positive pitch is nose down).
+        raw_pitch = self.pitch_trim - drive_h
+        over = (((raw_pitch < -self.pitch_up_max) & (h_err > 0.))
+                | ((raw_pitch > self.pitch_down_max) & (h_err < 0.)))
+        i_alt = torch.where(over, self.i_altitude, i_alt)
+        self.i_altitude.copy_(i_alt)
+        pitch_ref = (self.pitch_trim - drive_h).clamp(-self.pitch_up_max, self.pitch_down_max)
+
+        e_pitch = pitch_ref - pitch
+        q_ref = (self.k_pitch_angle * e_pitch).clamp(-self.max_pitch_rate, self.max_pitch_rate)
+        # Coordinated-turn kinematics: in a banked turn the body pitch rate
+        # contains q_coord = r tan(phi) that does not change the Euler pitch.
+        # Removing it lets the inner loop regulate the angle-of-attack-bearing
+        # pitch instead of chasing the turn itself (constant, non-adaptive).
+        q_coord = wb[:, 2] * torch.tan(roll)
+        e_q = q_ref - (wb[:, 1] - q_coord)
+        i_q = (self.i_pitch_rate + self.k_i_pitch_rate * e_q * self.dt).clamp(
+            -self.i_pitch_rate_max, self.i_pitch_rate_max)
+        raw_ele = self.k_pitch_rate * e_q + i_q
+        over = ((raw_ele.abs() > 1.) & (raw_ele * e_q > 0.))
+        i_q = torch.where(over, self.i_pitch_rate, i_q)
+        self.i_pitch_rate.copy_(i_q)
+        elevator = (self.k_pitch_rate * e_q + i_q).clamp(-1., 1.)
+
+        # ---- airspeed (ground speed) -> throttle ----
+        e_v = self.v_ref - V
+        i_v = (self.i_speed + self.k_i_speed * e_v * self.dt).clamp(
+            -self.i_speed_max, self.i_speed_max)
+        raw_thr = self.throttle_trim + self.k_speed * e_v + i_v
+        over = (((raw_thr > self.throttle_max) & (e_v > 0.))
+                | ((raw_thr < self.throttle_min) & (e_v < 0.)))
+        i_v = torch.where(over, self.i_speed, i_v)
+        self.i_speed.copy_(i_v)
+        throttle = (self.throttle_trim + self.k_speed * e_v + i_v).clamp(
+            self.throttle_min, self.throttle_max)
+
+        # a2 is the dead upstream channel and stays exactly zero.
+        a = torch.stack((aileron, elevator, torch.zeros_like(aileron),
+                         2. * throttle - 1.), -1)
+        return a.clamp(-1., 1.).to(torch.float32)
+
+
+# --------------------------------------------------------------------------- #
 # rocket: powered-descent guidance (ZEM/ZEV) + attitude hold
 # --------------------------------------------------------------------------- #
 class RocketPDGBaseline(Baseline):
@@ -612,8 +1195,8 @@ class RocketPDGBaseline(Baseline):
         allocated by ceiling (fast TVC first, fins for the remainder), and
         the lateral guidance is capped to tilt-consistent demands
         (|a_lat| <= 0.14 * vertical acceleration, i.e. <= ~8 deg).
-      * Control: 60 Hz policy command held for 2 inner steps (120 Hz) at
-        240 Hz physics; 1800 policy steps = 30 s episode limit; the engine
+      * Control: 40 Hz policy command held for 3 inner steps (120 Hz) at
+        240 Hz physics; 1200 policy steps = 30 s episode limit; the engine
         relights per physics step (cmd > 0.5).
       * Landing (unchanged criteria): pad contact (radius 2 m, top z = 0.15,
         rest base height ~2.575 m) is fatal iff the pre-contact speed
@@ -750,8 +1333,8 @@ class RocketPDGBaseline(Baseline):
     def actions(self, obs):
         o = _vec(obs).to(torch.float64)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
-        # aux tail: [13:20] raw-action echo, [20:24] the FOUR finlet actuation
-        # states, then ignited=24, fuel=25, throttle=26, gimbal=27:29
+        # aux tail: [13:20] 7-dim action echo, [20:24] FOUR finlet actuation
+        # states, then ignited=24, fuel=25, throttle=26, gimbal=27:29, pad=29
         ignited_obs = o[:, 24] > .5
         fuel = o[:, 25].clamp(0., 1.)
         m = self.M_DRY + fuel * self.FUEL_FULL
@@ -937,7 +1520,7 @@ class RocketPDGBaseline(Baseline):
         # cancelling the force: fins lock torque to force (tau = z_fin x J F),
         # so a coast-phase pre-compensation would close that lock against the
         # very force this channel exists to create.
-        # observed actuator states (aux tail): o[26] is the throttle state --
+        # observed actuator states (aux tail): o[27] is the throttle state --
         # ALREADY the fraction of max thrust (plant applies thrust = throttle *
         # T_MAX, and the state keeps decaying after cutoff, so no ignition
         # gate); o[27:29] are the gimbal states in NORMALIZED action units
@@ -991,6 +1574,9 @@ class RocketPDGBaseline(Baseline):
         gy = torch.where(T_now > 1., -tau_gim[:, 1] / k_gim,
                          torch.zeros_like(tau_gim[:, 1]))
         yaw = -self.KD_Z * wb[:, 2] / k_yaw
+        # Unified 7-dim finlet mixer convention (plant.py applies the mixer
+        # internally: finlet x,y,yaw -> 4 hinge servos). Ignition/throttle in
+        # [-1,1] — the env _scale_actions maps to [0,1] at step time.
         raw = torch.stack((fx, fy, yaw,
                            torch.where(ign, torch.ones_like(u_thr), -torch.ones_like(u_thr)),
                            2. * u_thr - 1., gx, gy), -1)
@@ -999,10 +1585,268 @@ class RocketPDGBaseline(Baseline):
 
 
 # --------------------------------------------------------------------------- #
+# rocket: plain position/velocity PD landing (second, simpler rocket baseline)
+# --------------------------------------------------------------------------- #
+class RocketPDLandingBaseline(Baseline):
+    """Simple conventional PD landing law (no guidance optimisation).
+
+    Structure (one policy step, 40 Hz):
+      1. horizontal position/velocity PD -> desired world lateral acceleration
+         a_xy = -K_xy (p_xy - pad_xy) - D_xy v_xy, norm-capped;
+      2. height-scheduled descent-speed reference
+         v_z_ref = -min(V_MAX, K_H max(h, 0)), h = max(p_z - REST_Z, 0),
+         vertical velocity feedback plus gravity compensation
+         a_z = K_v (v_z_ref - v_z), specific force f_z = a_z + g;
+      3. desired thrust vector sigma = (a_xy, f_z); thrust magnitude
+         T = clamp(m|sigma|, T_min, T_MAX) and desired thrust axis from the
+         specific-thrust vector s = T/m: sin(tilt) = a_xy/s, so the delivered
+         lateral acceleration equals the command at unit plant gain (the
+         min-thrust clamp must enter the tilt reference, or it multiplies
+         the lateral loop gain by s/f_z);
+      4. attitude/rate PD -> torque demand tau = K_att e_tilt - D_att w_xy
+         (plus yaw damping); torque is split with fixed physical gains:
+         engine TVC first (k_gim = lever T sin(gimbal_max)), grid fins carry
+         the remainder (k_fin = FIN_K z_fin V^2) and the yaw channel;
+      5. ignition: the braking-distance switch h <= h_need + M_ON is an EDGE
+         trigger for the first descent burn (descending only, v_dn =
+         max(0,-v_z), h_need = max(0, v_dn^2 - v_ref_dn^2)/(2 a_brake),
+         a_brake = BRAKE_FRAC (T_MAX/m - g)); afterwards a fixed speed-band
+         hysteresis modulates the burn (cut when v_dn < lo, relight when
+         v_dn > hi; lo/hi = reference -/+ V_BAND, replaced by the fixed
+         terminal band [V_TERM_OFF, V_TERM_ON] below H_TERM).  The engine is
+         off (zero thrust) when cut and clamps to the plant's min-thrust
+         floor when lit; no learning anywhere in the switch;
+      6. the public pad-contact flag (obs[29]) is the engine switch on the
+         pad: the engine is forced off while ANY contact is sensed (per
+         policy step; no permanent cut latch -- after a micro-bounce launch
+         the flag clears and the speed band re-catches the rebound on the
+         way down, keeping every re-contact inside the 1.0 m/s budget);
+         and the episode is allowed to run to its own end, so any post-touch
+         bounce/topple is observed rather than hidden.
+
+    Deliberate approximations versus ``RocketPDGBaseline`` (documented, not
+    hidden): no fin aerodynamic-spring feed-forward, no fin lateral-force
+    split / coupling-torque pre-compensation, no ZEM/ZEV or virtual-pad
+    manifold, and no terminal pulse servo beyond the fixed speed-band
+    hysteresis above -- the only ignition logic is the edge-triggered
+    braking-distance hysteresis above.  Torque allocation reuses the
+    sign-verified plant map and the same physical gains (lever, FIN_K,
+    FIN_YAW_K) as the PDG baseline, but without its force-split terms.
+
+    Constants verified against the plant/YAML: dry mass 138.2 kg, fuel-tank
+    mass 410.9 kg at f=1 (spawn 5% -> 158.7 kg), max thrust 7607 N, min thrust
+    2966.7 N (ratio 0.39), reignitable ignition (command > 0.5 each 240 Hz
+    physics step), throttle remap 0.39..1 with tau 0.01 s and 1% noise,
+    two-axis gimbal +/-5 deg with tau 0.01 s, four grid fins with 45 deg
+    deflection, tau 0.05 s and the upstream mixing
+    (ax+/-ay, ay-/+ayaw) already applied by the plant.  The raw action
+    convention is (fx, fy, fyaw, ign, thr, gx, gy) in [-1,1]^7; the env maps
+    it affinely onto the upstream box (ignition/throttle in [0,1]).
+    """
+
+    name = 'pd_landing'
+
+    # ---- vehicle constants (same probe-verified values as RocketPDGBaseline)
+    M_DRY = 138.2
+    FUEL_FULL = 410.9
+    T_MAX = 7607.0
+    MIN_RATIO = 2966.7 / 7607.0
+    GIMBAL_RAD = math.radians(5.)
+    G = 9.81
+    FIN_K = 0.22668
+    FIN_YAW_K = 0.1587
+    REST_Z = 2.575
+
+    # ---- tunable guidance gains (selected in rocket_pd_tune.py)
+    KP_XY = 0.25         # horizontal position gain [1/s^2]
+    KD_XY = 1.00         # horizontal velocity damping [1/s]
+    V_MAX = 20.0         # descent-speed reference saturation [m/s]
+    K_H = 0.50           # descent-speed slope [1/s]
+    KV_Z = 3.0           # vertical velocity-error gain [1/s]
+    A_LAT_MAX = 5.0      # absolute lateral acceleration cap [m/s^2]
+    LAT_TILT = 0.14      # lateral cap as a fraction of the vertical specific force
+    KP_ATT = 12000.0     # attitude (tilt) proportional gain [N m/rad]
+    KD_ATT = 8000.0      # attitude (tilt) rate damping [N m s/rad] (sweep:
+                         # 6000 -> 0.50, 8000 -> 0.58, 10000 -> 0.45 at 64
+                         # envs; without the aero FF the loop wants this)
+    KD_YAW = 6.0         # yaw-rate damping [N m s/rad]
+    BRAKE_FRAC = 0.90    # braking-distance uses this fraction of max net decel
+    M_ON = 15.0          # ignition margin [m] (lights earlier -> safety margin)
+    V_BAND = 0.15        # fixed speed-band hysteresis on the descent-speed error
+    V_CUT = 0.10         # absolute cut-off floor (never thrust while stopped)
+    H_TERM = 2.0         # terminal pulse-leg altitude [m]
+    V_TERM_OFF = 0.30    # terminal pulse cut speed [m/s]
+    V_TERM_ON = 0.40     # terminal pulse relight speed [m/s] (fixed hysteresis)
+    KV_LAT = 1.5         # pulse-leg lateral VELOCITY damping [1/s]
+    A_LAT_PULSE = 1.0    # pulse-leg lateral accel cap [m/s^2] (tune grid:
+                         # 1.0 -> 0.531 vs 1.5 -> 0.484 tuning-seed success)
+    FIN_CAP = 0.95       # share of the fin torque authority used by the loop
+    GIM_CAP = 0.95       # share of the gimbal torque authority used by the loop
+
+    def __init__(self, env):
+        super().__init__(env)
+        d = self.device
+        f64 = torch.float64
+        self.ez = torch.tensor((0., 0., 1.), device=d, dtype=f64)
+        # started: edge latch for the braking-distance ignition switch (cleared
+        # by reset_idx, mirroring the env)
+        self.started = torch.zeros(self.num_envs, device=d, dtype=torch.bool)
+        z = torch.zeros(self.num_envs, device=d, dtype=f64)
+        self.diag = {k: z.clone() for k in
+                     ('steps', 'sat_max', 'coast', 'ignitions', 'pad_cut',
+                      'fin_sat', 'gim_sat', 'lat_cap')}
+
+    def reset_idx(self, mask):
+        self.started.masked_fill_(mask, False)
+
+    @torch.no_grad()
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
+        ignited_obs = o[:, 24] > .5
+        fuel = o[:, 25].clamp(0., 1.)
+        pad_c = o[:, 29] > .5
+        m = self.M_DRY + fuel * self.FUEL_FULL
+        R = _quat_to_R(q)
+        v_w = torch.einsum('nij,nj->ni', R, vb)
+        h = (p[:, 2] - self.REST_Z).clamp_min(0.)
+
+        # ---- 1. horizontal position-velocity PD
+        a_xy = -self.KP_XY * p[:, :2] - self.KD_XY * v_w[:, :2]
+
+        # ---- 2. height-scheduled descent speed + vertical velocity feedback
+        v_ref = -torch.minimum(torch.full_like(h, self.V_MAX), self.K_H * h)
+        a_z = self.KV_Z * (v_ref - v_w[:, 2])
+        f_z = a_z + self.G                       # specific force along world +z
+        f_z_att = f_z.clamp_min(self.G)          # attitude reference stays upright
+        lat_cap = (self.LAT_TILT * f_z_att).clamp(1., self.A_LAT_MAX)
+        n_xy = a_xy.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+        a_xy = a_xy * (lat_cap[:, None] / n_xy).clamp_max(1.)
+        # pulse leg (below H_TERM): damp lateral VELOCITY only, never chase
+        # position.  With min thrust > weight every degree of commanded tilt is
+        # attitude work the gimbal must redo after every relight, and a
+        # position chase goes into a grow-and-reverse limit cycle that skates
+        # the legs across the pad -- the drift must simply stop.
+        a_lat_pulse = (-self.KV_LAT * v_w[:, :2]).clamp(
+            -self.A_LAT_PULSE, self.A_LAT_PULSE)
+        a_xy = torch.where((h < self.H_TERM)[:, None], a_lat_pulse, a_xy)
+        self.diag['lat_cap'] += (n_xy[:, 0] > lat_cap).to(torch.float64)
+
+        # ---- 5. ignition by braking distance (fixed hysteresis, no learning)
+        v_dn = (-v_w[:, 2]).clamp_min(0.)
+        v_ref_dn = (-v_ref).clamp_min(0.)
+        a_brake = (self.BRAKE_FRAC * (self.T_MAX / m - self.G)).clamp_min(1.)
+        h_need = ((v_dn.square() - v_ref_dn.square()).clamp_min(0.)
+                  / (2. * a_brake))
+        # the distance switch is an EDGE trigger: it fires the first descent
+        # burn (only while descending, so the altitude margin cannot relight
+        # the engine on a bounce); afterwards the speed band alone decides
+        # cut/relight as a proper hysteresis (cut at lo < relight at hi), so
+        # the engine cannot chatter between lo and the distance floor.
+        first = ((h <= h_need + self.M_ON) & (v_dn > self.V_BAND)
+                 & ~self.started)
+        lo = (v_ref_dn - self.V_BAND).clamp_min(self.V_CUT)
+        hi = (v_ref_dn + self.V_BAND).clamp_min(self.V_CUT + self.V_BAND)
+        # close to the pad the linear speed reference is below the 40 Hz pulse
+        # resolution, so the same switch uses a fixed terminal band instead of
+        # a vanishing distance; it is still a fixed hysteresis, not a tuner.
+        term = h < self.H_TERM
+        lo = torch.where(term, torch.full_like(lo, self.V_TERM_OFF), lo)
+        hi = torch.where(term, torch.full_like(hi, self.V_TERM_ON), hi)
+        ign = torch.where(ignited_obs,
+                          v_dn >= lo,
+                          first | (self.started & (v_dn > hi)))
+        # the public pad-contact flag is the engine switch on the pad: the
+        # engine is forced off while ANY contact is sensed.  There is NO
+        # permanent cut latch on purpose: after a micro-bounce launch the flag
+        # clears and the speed band re-catches the rebound on the way down
+        # (relight at hi, brake at min thrust) so it can never re-contact past
+        # the 1.0 m/s pre-contact budget -- a hard cut-after-touchdown latch
+        # turns the rebound into an uncaught fatal re-contact.
+        ign &= ~pad_c
+        self.started |= ign
+        n_on = ign.sum().to(torch.float64)
+        self.diag['ignitions'] += (ign & ~ignited_obs).to(torch.float64).sum()
+        self.diag['coast'] += (self.num_envs - n_on)
+        self.diag['pad_cut'] += pad_c.sum().to(torch.float64)
+
+        # ---- 3. thrust magnitude and desired axis
+        sig = torch.cat((a_xy, f_z.clamp_min(0.)[:, None]), -1)
+        T_req = m * sig.norm(dim=-1)
+        T_min = self.MIN_RATIO * self.T_MAX
+        T_cmd = torch.where(ign, T_req.clamp(T_min, self.T_MAX),
+                            torch.zeros_like(T_req))
+        u_thr = ((T_cmd / self.T_MAX - self.MIN_RATIO)
+                 / (1. - self.MIN_RATIO)).clamp(0., 1.)
+        self.diag['sat_max'] += (ign & (u_thr >= .999)).to(torch.float64).sum()
+
+        # ---- desired thrust axis: the specific-thrust vector the engine
+        # produces when lit, s = T/m = clamp(|sigma|, T_min/m, T_MAX/m) with
+        # sigma = (a_xy, f_z).  The body must tilt sin(tilt) = a_xy / s so the
+        # DELIVERED lateral acceleration equals the command at a unit plant
+        # gain.  Referencing f_z instead (atan(a_xy/f_z)) leaves the
+        # min-thrust clamp to multiply the loop gain by s/f_z: ~2x overgained
+        # in the pulse leg (s ~ 20.5 vs f_z ~ 9.8 specific force, so up to
+        # 8.7 deg of stale tilt per relight -- the tilted min-thrust pulses
+        # skate the legs across the pad in a grow-and-reverse limit cycle)
+        # and ~3x undergained at full brake.  The reference is kept across
+        # coast/burn transitions (the next light is on the same clamp), so
+        # the pulse train never chases an upright setpoint it cannot track.
+        s_ref = (T_req / m).clamp(self.MIN_RATIO * self.T_MAX / m,
+                                  self.T_MAX / m)
+        a_lat2 = a_xy.square().sum(-1, keepdim=True)
+        f_vert = (s_ref[:, None].square() - a_lat2).clamp_min(1e-6).sqrt()
+        f_att = torch.cat((a_xy, f_vert), -1)
+        n_att = f_att.norm(dim=-1).clamp_min(1e-9)
+        b3 = f_att / n_att[:, None]
+        b3 = torch.where((b3[:, 2] > .15)[:, None], b3, self.ez.expand_as(b3))
+        u = torch.einsum('nji,nj->ni', R, b3)     # desired body +z in body frame
+        e_tilt = torch.stack((-u[:, 1], u[:, 0], torch.zeros_like(u[:, 0])), -1)
+
+        # ---- 4. attitude/rate PD -> torque demand
+        tau = torch.cat((self.KP_ATT * e_tilt[:, :2] - self.KD_ATT * wb[:, :2],
+                         -self.KD_YAW * wb[:, 2:3]), -1)
+
+        # ---- torque allocation with fixed physical gains (TVC first, fins rest)
+        V2 = vb.square().sum(-1)
+        cm_z = (47. * -2. + 0.2 * 2.051) / m
+        z_fin = 2.051 - cm_z
+        lever = 2. + cm_z
+        k_gim = (lever * T_cmd * self.GIMBAL_RAD).clamp_min(1e-9)
+        k_fin = (self.FIN_K * z_fin * V2).clamp_min(1e-9)
+        k_yaw = (self.FIN_YAW_K * V2).clamp_min(1e-9)
+        tau_gim = tau[:, :2].clamp(-self.GIM_CAP * k_gim[:, None],
+                                   self.GIM_CAP * k_gim[:, None])
+        tau_fin = (tau[:, :2] - tau_gim).clamp(-self.FIN_CAP * k_fin[:, None],
+                                               self.FIN_CAP * k_fin[:, None])
+        self.diag['fin_sat'] += ((tau_fin.abs() >= self.FIN_CAP * k_fin[:, None]
+                                  - 1e-12).any(-1) & (V2 > .04)).to(torch.float64)
+        self.diag['gim_sat'] += ((tau_gim.abs() >= self.GIM_CAP * k_gim[:, None]
+                                  - 1e-12).any(-1) & (T_cmd > 1.)).to(torch.float64)
+        fx = tau_fin[:, 1] / k_fin
+        fy = -tau_fin[:, 0] / k_fin
+        gx = torch.where(T_cmd > 1., -tau_gim[:, 0] / k_gim,
+                         torch.zeros_like(k_gim))
+        gy = torch.where(T_cmd > 1., -tau_gim[:, 1] / k_gim,
+                         torch.zeros_like(k_gim))
+        yaw = -self.KD_YAW * wb[:, 2] / k_yaw
+        # Unified 7-dim finlet mixer convention (plant.py applies the mixer
+        # internally). Ignition/throttle in [-1,1]; env scales to [0,1].
+        raw = torch.stack((fx, fy, yaw,
+                           torch.where(ign, torch.ones_like(u_thr),
+                                       -torch.ones_like(u_thr)),
+                           2. * u_thr - 1., gx, gy), -1)
+        self.diag['steps'] += 1.
+        return raw.clamp(-1., 1.).to(torch.float32)
+
+
+# --------------------------------------------------------------------------- #
 # satellite: quaternion PD + singularity-robust CMG steering
 # --------------------------------------------------------------------------- #
-class SatelliteCMGBaseline(Baseline):
-    """Quaternion PD + singularity-robust damped-pseudoinverse CMG steering.
+class _SatelliteCMGPDBase(Baseline):
+    """Shared quaternion-PD torque command + CMG geometry for satellite
+    steering-law A/Bs (``SatelliteCMGBaseline`` damped inverse vs
+    ``SatelliteOrdinaryPinvBaseline`` Moore-Penrose inverse).
 
     Convention audit (every item verified against SatelliteAttitudeEnv):
     - quaternions are (w,x,y,z) Hamilton with qdot = 0.5*q(x)omega and omega in
@@ -1015,24 +1859,23 @@ class SatelliteCMGBaseline(Baseline):
       I and stored rotor momentum h*sum r_i(theta); the required CMG torque is
       tau = I*wd + w x (I w) + w x (h sum r) (exact cancellation feedforward).
     - the action is NEVER a body torque: the plant maps gimbal rates to
-      tau = -h_dyn * G delta with G columns g_i x r_i(theta).  The steering is
-      the damped pseudoinverse delta = -(1/h) G (G G^T + lam~^2 I)^-1 tau,
-      written below in a rotor_speed-scaled factorization that is algebraically
-      identical (gr = rotor_speed*G, kappa = h/rotor_speed, lam = rotor_speed*
-      lam~); G is reconstructed from the observed gimbal angles bit-exactly
-      against env._manipulability (probe-verified, 4- and 6-CMG).
-    - damping lam~ = lam0 + 0.15*exp(-3 m_norm) grows as manipulability
-      collapses: torque relay error 0.05% far from singularities, ~3% fully
-      damped, with gimbal rates bounded throughout (Schaub & Junkins SR steering).
+      tau = -h_dyn * G delta with G columns g_i x r_i(theta).  In the scaled
+      factorization used below gr = rotor_speed*G and kappa = h/rotor_speed, so
+      tau = -kappa gr^T delta; G is reconstructed from the observed gimbal
+      angles bit-exactly against env._manipulability (probe-verified, 4- and
+      6-CMG).
     - gimbal limits: the plant has no hard stops (angles wrap at +-pi); the
-      +-action_scale (3 rad/s) rate limit is enforced by the final clamp and
-      every saturation is counted in metrics['clamp_envsteps'].
+      +-action_scale (3 rad/s) rate limit is enforced by the final clamp in
+      ``_apply_rate_limit`` and every saturation is counted.
+    - torque accounting: the reported torque is the ACTUAL torque produced
+      after the rate clamp, tau_actual = -kappa gr^T delta_applied, evaluated
+      at the pre-step gimbal angles.  ``tau_cmd`` is the PD command and
+      tau_err = tau_actual - tau_cmd is reported (not silently dropped).
     - numerical protection: tau and the observed m_norm are passed through
       nan_to_num (nonfinite inputs steer toward zero rate instead of poisoning
-      the solve), the damped 3x3 system stays SPD with lam~ >= lam0, and every
-      nonfinite intermediate is counted in metrics['nonfinite_envsteps'].
+      the solve) and every nonfinite intermediate is counted.
     """
-    name = 'quat_pd_damped_cmg'
+    kp, kd = 3., 4.
 
     def __init__(self, env):
         super().__init__(env)
@@ -1044,18 +1887,35 @@ class SatelliteCMGBaseline(Baseline):
         self.rotor_ref = env.rotor_axes_ref.to(torch.float64)
         self.g_cross_r0 = env.g_cross_r0.to(torch.float64)
         self.action_scale = env.action_scale
-        self.kp, self.kd = 3., 4.
-        self.lam0 = .02
+        # Standard numerical rank threshold for the Moore-Penrose solve: the
+        # LAPACK/pinv convention rtol = max(m, n) * eps(dtype), atol = 0.  The
+        # threshold is RELATIVE to the largest singular value, so it is
+        # independent of the rotor-speed scaling of gr.
+        self.pinv_rtol = max(3, self.n_cmg) * torch.finfo(torch.float64).eps
+        self.pinv_atol = 0.0
+        self.last_rate_request = torch.zeros(env.num_envs, device=self.device,
+                                             dtype=torch.float64)
         # on-device diagnostic accumulators (no host sync in the step loop)
         z = lambda: torch.zeros((), device=self.device, dtype=torch.float64)
         self.metrics = {'steps': z(), 'clamp_envsteps': z(), 'nonfinite_envsteps': z(),
                         'm_below_envsteps': z(),
                         'm_min': torch.full((), float('inf'), device=self.device,
                                             dtype=torch.float64),
-                        'hsum_max': z()}
+                        'hsum_max': z(),
+                        # steering-law / torque accounting
+                        'sat_gimbal_envsteps': z(), 'rank_def_envsteps': z(),
+                        'rate_request_max': z(), 'rate_request_norm_sum': z(),
+                        'rate_applied_norm_sum': z(),
+                        'tau_cmd_norm_sum': z(), 'tau_act_norm_sum': z(),
+                        'tau_err_norm_sum': z(), 'tau_err_max': z(),
+                        'tau_err_rel_sum': z(), 'm_norm_sum': z(),
+                        'sigma_min_ratio_sum': z(),
+                        'sigma_min_ratio_min': torch.full((), float('inf'),
+                                                          device=self.device,
+                                                          dtype=torch.float64)}
 
-    def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+    def _pd_command(self, o):
+        """Quaternion PD + exact gyroscopic feed-forward (shared, gains fixed)."""
         err, w = o[:, 4:7], o[:, 7:10]
         n = self.n_cmg
         sin, cos = o[:, 10:10 + n], o[:, 10 + n:10 + 2 * n]
@@ -1076,6 +1936,53 @@ class SatelliteCMGBaseline(Baseline):
         wd = self.kp * err - self.kd * w
         tau = self.I[None, :] * wd + torch.linalg.cross(w, self.I[None, :] * w, dim=-1) \
             + torch.linalg.cross(w, h_sum, dim=-1)
+        return tau, gr, m_norm, h_sum
+
+    def _steer(self, tau, gr, m_norm):
+        raise NotImplementedError
+
+    def _record_rank(self, gr):
+        """Rank diagnostics for the 3xN Jacobian (no effect on the command)."""
+        s = torch.linalg.svdvals(gr)
+        ratio = s[:, -1] / s[:, 0].clamp_min(torch.finfo(torch.float64).tiny)
+        self.metrics['sigma_min_ratio_sum'] += ratio.sum()
+        self.metrics['sigma_min_ratio_min'] = torch.minimum(
+            self.metrics['sigma_min_ratio_min'], ratio.min())
+        self.metrics['rank_def_envsteps'] += (ratio < self.pinv_rtol).sum()
+
+    def _apply_rate_limit(self, delta, tau_cmd, gr):
+        """Clip to the env's gimbal-rate bound and account the ACTUAL torque."""
+        self.metrics['steps'] += 1
+        over = delta.abs() > self.action_scale
+        self.metrics['clamp_envsteps'] += over.any(-1).sum()
+        self.metrics['sat_gimbal_envsteps'] += over.sum()
+        self.metrics['rate_request_max'] = torch.maximum(
+            self.metrics['rate_request_max'], delta.abs().max())
+        self.metrics['rate_request_norm_sum'] += delta.norm(dim=-1).sum()
+        # per-replica peak PRE-clamp rate, exposed for external harnesses that
+        # need the requested (unclipped) rate of the last call
+        self.last_rate_request = delta.abs().max(dim=-1).values.detach()
+
+        action = (delta / self.action_scale).clamp(-1., 1.)
+        # the env casts the action to float32 then scales by action_scale; use
+        # exactly the delivered rate for the torque accounting
+        delta_applied = action.to(torch.float32).to(torch.float64) * self.action_scale
+        self.metrics['rate_applied_norm_sum'] += delta_applied.norm(dim=-1).sum()
+        tau_act = -self.kappa * (gr.transpose(1, 2) @ delta_applied.unsqueeze(-1)).squeeze(-1)
+
+        err = tau_act - tau_cmd
+        err_norm = err.norm(dim=-1)
+        self.metrics['tau_cmd_norm_sum'] += tau_cmd.norm(dim=-1).sum()
+        self.metrics['tau_act_norm_sum'] += tau_act.norm(dim=-1).sum()
+        self.metrics['tau_err_norm_sum'] += err_norm.sum()
+        self.metrics['tau_err_max'] = torch.maximum(self.metrics['tau_err_max'], err_norm.max())
+        self.metrics['tau_err_rel_sum'] += (
+            err_norm / tau_cmd.norm(dim=-1).clamp_min(1e-12)).sum()
+        return action.to(torch.float32)
+
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        tau, gr, m_norm, h_sum = self._pd_command(o)
 
         # diagnostics: nonfinite inputs, manipulability floor, stored momentum
         bad = ~torch.isfinite(tau).all(-1) | ~torch.isfinite(m_norm)
@@ -1086,24 +1993,97 @@ class SatelliteCMGBaseline(Baseline):
                         torch.full_like(m_norm, float('inf'))).min())
         self.metrics['m_below_envsteps'] += (m_norm < .1).sum()
         self.metrics['hsum_max'] = torch.maximum(self.metrics['hsum_max'], h_sum.norm(dim=-1).max())
+        self.metrics['m_norm_sum'] += torch.nan_to_num(m_norm).sum()
 
+        tau = torch.nan_to_num(tau)
+        delta = self._steer(tau, gr, m_norm)
+        self.metrics['nonfinite_envsteps'] += (~torch.isfinite(delta).all(-1)).sum()
+        delta = torch.nan_to_num(delta)
+        self._record_rank(gr)
+        return self._apply_rate_limit(delta, tau, gr)
+
+    def config(self):
+        """Reproducibility record for reports (no effect on the control law)."""
+        return {'name': self.name, 'steering_law': 'damped_moore_penrose_pinv',
+                'num_cmgs': self.n_cmg, 'kp': self.kp, 'kd': self.kd,
+                'pinv_rtol': self.pinv_rtol, 'pinv_atol': self.pinv_atol,
+                'rank_threshold_rule': 'max(m,n)*eps(float64) (LAPACK/pinv default)',
+                'rate_limit_rad_s': self.action_scale,
+                'rotor_speed_rad_s': self.rotor_speed,
+                'rotor_h_dyn': self.h_dyn, 'kappa': self.kappa,
+                'inertia': self.I.tolist(),
+                'torque_metric': 'tau_actual = -kappa * gr^T @ delta_applied at pre-step gimbal angles'}
+
+
+class SatelliteCMGBaseline(_SatelliteCMGPDBase):
+    """Quaternion PD + singularity-robust damped-pseudoinverse CMG steering.
+
+    The damped pseudoinverse is delta = -(1/kappa) gr (gr^T gr + lam^2 I)^-1 tau
+    (Schaub & Junkins), written in the rotor_speed-scaled factorization that is
+    algebraically identical to delta = -(1/h) G (G G^T + lam~^2 I)^-1 tau.
+    Damping lam~ = lam0 + 0.15*exp(-3 m_norm) grows as manipulability
+    collapses: torque relay error 0.05% far from singularities, ~3% fully
+    damped, with gimbal rates bounded throughout (SR steering).
+    """
+    name = 'quat_pd_damped_cmg'
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.lam0 = .02
+
+    def _steer(self, tau, gr, m_norm):
         # singularity-robust damped pseudoinverse (Schaub & Junkins):
         # tau = -kappa gr^T delta  =>  delta = -(1/kappa) gr (gr^T gr + lam^2 I)^-1 tau
-        # lam grows as the manipulability m -> 0, trading torque accuracy for
-        # bounded gimbal rates near singular configurations.
-        tau = torch.nan_to_num(tau)
         lam = self.rotor_speed * (self.lam0 + .15 * torch.exp(-3. * m_norm))
         JtJ = gr.transpose(1, 2) @ gr
         JtJ = JtJ + torch.eye(3, device=self.device, dtype=torch.float64)[None] * (lam ** 2)[:, None, None]
-        delta = -(1. / self.kappa) * (gr @ torch.linalg.solve(JtJ, tau.unsqueeze(-1))).squeeze(-1)
-        self.metrics['nonfinite_envsteps'] += (~torch.isfinite(delta).all(-1)).sum()
-        delta = torch.nan_to_num(delta)
+        return -(1. / self.kappa) * (gr @ torch.linalg.solve(JtJ, tau.unsqueeze(-1))).squeeze(-1)
 
-        # gimbal-rate limit: the env multiplies the action by action_scale, so
-        # |action| = 1 is exactly the +-action_scale rad/s rate bound
-        self.metrics['steps'] += 1
-        self.metrics['clamp_envsteps'] += (delta.abs() > self.action_scale).any(-1).sum()
-        return (delta / self.action_scale).clamp(-1., 1.).to(torch.float32)
+    def config(self):
+        cfg = super().config()
+        cfg.update(steering_law='damped_moore_penrose_pinv', lam0=self.lam0,
+                   damping_schedule='lam = rotor_speed*(lam0 + 0.15*exp(-3*m_norm))')
+        return cfg
+
+
+class SatelliteOrdinaryPinvBaseline(_SatelliteCMGPDBase):
+    """Quaternion PD + ORDINARY Moore-Penrose CMG steering (ablation baseline).
+
+    Same quaternion-error convention, same PD gains (kp=3, kd=4) and same exact
+    gyroscopic feed-forward as ``SatelliteCMGBaseline``; only the torque ->
+    gimbal-rate steering law differs, so the comparison isolates the steering
+    law.  The Moore-Penrose pseudoinverse is the SVD-based ``torch.linalg.pinv``
+    with the standard numerical rank threshold rtol = max(m, n)*eps(float64),
+    atol = 0 (LAPACK/pinv convention), applied to the 3 x N scaled Jacobian:
+
+        delta = -(1/kappa) pinv(gr) tau,   tau = -kappa gr^T delta.
+
+    No damping schedule, no null-space motion, no singularity avoidance, no
+    predictive control and no reference time scaling.  When the Jacobian is
+    near rank-deficient the pseudoinverse legitimately produces large rates;
+    those rates are clipped to the env's +-action_scale bound and the resulting
+    torque shortfall (tau_actual - tau_cmd) is recorded rather than remedied.
+    Works for the 4-CMG pyramid and the 6-CMG orthogonal cluster directly from
+    the matrix dimensions (3 x N -> N x 3).
+    """
+    name = 'quat_pd_mp_pinv_cmg'
+
+    def _steer(self, tau, gr, m_norm):
+        # ordinary Moore-Penrose pseudoinverse (SVD, truncated at the standard
+        # relative rank threshold).  gr holds the N Jacobian ROWS (n, N, 3), so
+        # the torque map is tau = -kappa * gr^T delta and the steering uses
+        # pinv(gr^T) = pinv(gr)^T -> (n, N, 3).
+        gr_pinv = torch.linalg.pinv(gr.transpose(1, 2),
+                                     rtol=self.pinv_rtol, atol=self.pinv_atol)
+        return -(1. / self.kappa) * (gr_pinv @ tau.unsqueeze(-1)).squeeze(-1)
+
+    def config(self):
+        cfg = super().config()
+        cfg.update(steering_law='ordinary_moore_penrose_pinv',
+                   damping_schedule=None, null_space_motion=False,
+                   singularity_avoidance=False, predictive_control=False,
+                   reference_time_scaling=False)
+        return cfg
 
 
 # --------------------------------------------------------------------------- #
@@ -1191,6 +2171,177 @@ class TransferGaussBaseline(Baseline):
         if self.target_rp is not None:
             s = torch.where(a * (1. - e) < self.target_rp, s, torch.zeros_like(s))
         return (s * that).to(torch.float32)
+
+
+# --------------------------------------------------------------------------- #
+# transfer variant: Petropoulos Q-law Lyapunov guidance
+# --------------------------------------------------------------------------- #
+class TransferQLawBaseline(Baseline):
+    """Q-law proximity-quotient guidance (Petropoulos, AAS 04-278, "Low-Thrust
+    Orbit Transfers Using Candidate Lyapunov Functions with a Mechanism for
+    Coasting"; AAS 05-130, "Simple Control Laws for Low-Thrust Orbit
+    Transfers") for the perigee-raising transfer task, restricted to the
+    planar element subset (a, e): the task requires no plane change, so
+    i, Omega, omega are left free (their Gauss rates carry only out-of-plane
+    or e-singular terms, irrelevant here).
+
+        Q = W_a [S_a (a - a_T)/a_xx]^2 + W_e [(e - e_T)/e_xx]^2,
+        S_a = (1 + ((a - a_T)/(3 a_T))^4)^(1/2),
+
+    where z_xx = max over thrust direction AND true anomaly of z-dot on the
+    current osculating orbit -- the best-case local velocity of each element,
+    making Q a weighted sum of optimistic per-element transfer times.  The
+    maxima are evaluated on a dense true-anomaly grid of the osculating orbit
+    (batched; the semi-major-axis maximum coincides with the analytic
+    (1 + e) form, checked in the validation harness).  The thrust direction
+    is the analytic steepest descent of Q through the Gauss variational
+    equations,
+
+        u_hat = -(D_r, D_t)/|D|,   D = Q_a G_a(nu) + Q_e G_e(nu),
+
+    with G_a/G_e the Gauss rate row vectors in the radial-transverse frame
+    (evaluated at the current true anomaly nu) and Q_a, Q_e the exact
+    partials of Q w.r.t. (a, e), obtained by autodiff through the grid maxima
+    (envelope theorem; finite-difference checked in the harness).  The thrust
+    acceleration f_max/m multiplies every rate, so it cancels in both the
+    normalized direction and the coast ratio and is omitted from the
+    scalings (standard Q-law treatment: mass is not a Q coordinate).
+
+    Coasting (Petropoulos's effectivity mechanism): the instantaneous optimal
+    decrease rate is compared against the best rate achievable anywhere on
+    the osculating orbit,
+
+        eta = |Q_dot_min(nu)| / max_nu |Q_dot_min| = |D| / D_xx,
+
+    and the thruster shuts off when eta < eta_min, concentrating the burn on
+    the efficient arc (near apogee for a perigee raise).  eta_min and the
+    weights are fixed scalars -- no scheduling, no learning.
+
+    Task-oriented references (the gain-type objective R has no unique target
+    orbit): the perigee reference rp_ref is a public fixed parameter
+    (constructor argument, frozen after selection on independent tuning
+    seeds); the apogee reference is the INITIAL apogee of the spawn orbit, so
+    the implied target elements a_T = (ra0 + rp_ref)/2 and
+    e_T = (ra0 - rp_ref)/(ra0 + rp_ref) encode "raise perigee while holding
+    apogee".  This is a Q-law configuration FOR THIS TASK and is not claimed
+    to be equivalent to the untargeted gain-type objective.
+
+    Interface contract (identical to TransferGaussBaseline): reads only the
+    'policy' group o = [t, r, v, m] (float32 buffer, cast to float64);
+    constants mu/dt/f_max/isp/g0 and the spawn radii are taken from the env
+    at construction; the emitted action is the Euclidean-unit thrust
+    direction rotated from the orbital (RSW) frame to inertial,
+    u = u_r r^ + u_t t^ with t^ = h^ x r^, so every component lies within the
+    env's per-axis [-1, 1] bound and propellant follows the env's own
+    f_max |u|_1/(isp g0) mass-flow model.  Stateless; reset_idx is the
+    base-class no-op.
+    """
+    name = 'q_law_petropoulos'
+
+    A_SCALE_M, A_SCALE_N, A_SCALE_R = 3., 4., 2.  # S_a hyperparameters (Petropoulos nominal m, n, r)
+    N_GRID = 2048      # true-anomaly grid for the xx scalings / coast reference
+    RP_RAISE = 20e3    # perigee-reference raise above rp0 [m] (frozen via tuning seeds)
+    W_A, W_E = 1., 1.  # element weights (frozen via tuning seeds)
+    ETA_MIN = .1       # effectivity coast threshold (frozen via tuning seeds)
+
+    def __init__(self, env, rp_ref=None, w_a=None, w_e=None, eta_min=None):
+        super().__init__(env)
+        self.mu, self.dt = env.mu, env.dt
+        self.f_max, self.isp, self.g0 = env.f_max, env.isp, env.g0
+        self.rp0 = env.sma0 * (1. - env.ecc0)
+        self.ra_ref = env.sma0 * (1. + env.ecc0)     # apogee reference = initial apogee
+        self.rp_ref = float(rp_ref) if rp_ref is not None else self.rp0 + self.RP_RAISE
+        self.a_T = .5 * (self.ra_ref + self.rp_ref)
+        self.e_T = (self.ra_ref - self.rp_ref) / (self.ra_ref + self.rp_ref)
+        self.w_a = self.W_A if w_a is None else float(w_a)
+        self.w_e = self.W_E if w_e is None else float(w_e)
+        self.eta_min = self.ETA_MIN if eta_min is None else float(eta_min)
+        g = torch.arange(self.N_GRID, device=self.device, dtype=torch.float64)
+        self._sin_g = torch.sin(2. * math.pi * g / self.N_GRID)
+        self._cos_g = torch.cos(2. * math.pi * g / self.N_GRID)
+
+    def config(self):
+        """Frozen law parameters, recorded verbatim in evaluation reports."""
+        return {'law': 'Petropoulos Q-law, planar (a, e) subset',
+                'rp_ref_m': self.rp_ref, 'ra_ref_m': self.ra_ref,
+                'a_T_m': self.a_T, 'e_T': self.e_T,
+                'w_a': self.w_a, 'w_e': self.w_e, 'eta_min': self.eta_min,
+                'n_grid': self.N_GRID,
+                's_a_scale_mnr': (self.A_SCALE_M, self.A_SCALE_N, self.A_SCALE_R)}
+
+    def _a_xx_grid(self, a, e):
+        """Detached grid maximum of da/dt over (thrust direction, anomaly);
+        exposed for the validation harness (analytic form: (2a^2/h)(1+e))."""
+        with torch.no_grad():
+            p = a * (1. - e * e)
+            h = torch.sqrt(self.mu * p)
+            r_k = p[:, None] / (1. + e[:, None] * self._cos_g)
+            da = (2. * a[:, None] ** 2 / h[:, None]) * torch.sqrt(
+                (e[:, None] * self._sin_g) ** 2 + (p[:, None] / r_k) ** 2)
+            return da.max(-1).values
+
+    def _q_partials(self, a, e):
+        """Q(a, e) and its exact partials (autodiff through the grid maxima)."""
+        a = a.detach().requires_grad_(True)
+        e = e.detach().requires_grad_(True)
+        with torch.enable_grad():
+            p = a * (1. - e * e)
+            h = torch.sqrt(self.mu * p)
+            sg, cg = self._sin_g, self._cos_g
+            r_k = p[:, None] / (1. + e[:, None] * cg)     # osculating-orbit radius grid
+            pr = p[:, None] / r_k
+            # element rates maximized over the thrust direction at each anomaly
+            da = (2. * a[:, None] ** 2 / h[:, None]) * torch.sqrt(
+                (e[:, None] * sg) ** 2 + pr ** 2)
+            de = (1. / h[:, None]) * torch.sqrt((p[:, None] * sg) ** 2
+                + ((p[:, None] + r_k) * cg + r_k * e[:, None]) ** 2)
+            a_xx = da.max(-1).values                      # ... then over true anomaly
+            e_xx = de.max(-1).values
+            da_err = a - self.a_T
+            x = da_err / (self.A_SCALE_M * self.a_T)
+            s_a = (1. + x ** self.A_SCALE_N) ** (1. / self.A_SCALE_R)
+            q = self.w_a * (s_a * da_err / a_xx) ** 2 \
+                + self.w_e * ((e - self.e_T) / e_xx) ** 2
+            q_a, q_e = torch.autograd.grad(q.sum(), (a, e))
+        return q.detach(), q_a.detach(), q_e.detach()
+
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        r, v = o[:, 1:4], o[:, 4:7]
+        rm = r.norm(dim=-1).clamp_min(1e-9)
+        hvec = torch.linalg.cross(r, v, dim=-1)
+        h = hvec.norm(dim=-1).clamp_min(1e-9)
+        a = 1. / (2. / rm - (v * v).sum(-1) / self.mu)
+        evec = torch.linalg.cross(v, hvec, dim=-1) / self.mu - r / rm[:, None]
+        e = evec.norm(dim=-1)
+        p = h * h / self.mu
+        rhat = r / rm[:, None]
+        that = torch.linalg.cross(hvec / h[:, None], rhat, dim=-1)  # t^ = h^ x r^
+        vr = (v * r).sum(-1) / rm
+        nu = torch.atan2(vr * h / self.mu, p / rm - 1.)             # e-safe atan2 pair
+
+        _, q_a, q_e = self._q_partials(a, e)
+
+        # Gauss rate row vectors at the current anomaly (radial / transverse)
+        sn, cn = nu.sin(), nu.cos()
+        d_r = q_a * (2. * a * a / h) * e * sn + q_e * (p * sn / h)
+        d_t = q_a * (2. * a * a / h) * (p / rm) + q_e * (((p + rm) * cn + rm * e) / h)
+        d_norm = torch.sqrt(d_r * d_r + d_t * d_t)
+
+        # effectivity reference: max over the osculating orbit of |Phi' Q_z|
+        r_k = p[:, None] / (1. + e[:, None] * self._cos_g)
+        ga_r = (2. * a[:, None] ** 2 / h[:, None]) * (e[:, None] * self._sin_g)
+        ga_t = (2. * a[:, None] ** 2 / h[:, None]) * (p[:, None] / r_k)
+        ge_r = (p[:, None] * self._sin_g) / h[:, None]
+        ge_t = ((p[:, None] + r_k) * self._cos_g + r_k * e[:, None]) / h[:, None]
+        mag = torch.sqrt((q_a[:, None] * ga_r + q_e[:, None] * ge_r) ** 2
+                         + (q_a[:, None] * ga_t + q_e[:, None] * ge_t) ** 2)
+        d_xx = mag.max(-1).values
+
+        burn = (d_norm >= self.eta_min * d_xx) & (d_norm > 0.)
+        scale = torch.where(burn, 1. / d_norm.clamp_min(1e-300), torch.zeros_like(d_norm))
+        u_r, u_t = -d_r * scale, -d_t * scale
+        return (u_r[:, None] * rhat + u_t[:, None] * that).to(torch.float32)
 
 
 # --------------------------------------------------------------------------- #
@@ -1483,14 +2634,342 @@ class RendezvousTwoImpulseBaseline(Baseline):
         return action.to(torch.float32)
 
 
+class RendezvousCWHPDBaseline(Baseline):
+    """CWH-compensated PD approach to the origin (exact feedback linearization).
+
+    Same task contract as ``RendezvousTwoImpulseBaseline`` (SpaceRendezvousEnv;
+    LVLH x radial / y along-track / z cross-track, [p; v] obs, per-axis
+    normalized thrust in [-1, 1] -> 10 N/axis on 500 kg = 0.02 m/s^2 per-axis
+    authority, dt = 1 s symplectic Euler, n = 1.13e-3 rad/s, success
+    |p| < 10 m & |v| < 0.5 m/s, 5 m keep-out sphere, 2000 m range-fail,
+    4 kg fuel, 1000-step horizon).
+
+    Control law (fixed diagonal gains, no integral/adaptive/avoidance terms):
+        a_des = -Kp p - Kd v,         Kp = wn^2 I3, Kd = 2 zeta wn I3
+        F/m_x = a_des_x - 3 n^2 x - 2 n v_y       (cancel plant coupling)
+        F/m_y = a_des_y + 2 n v_x
+        F/m_z = a_des_z + n^2 z
+    so the thrust cancels the CWH coupling terms of the plant exactly and the
+    unsaturated closed loop reduces to three decoupled double integrators
+    p'' = -wn^2 p - 2 zeta wn p' (per axis, symplectic-Euler discretized with
+    the plant).  The command is multiplied by the mass, clamped to the
+    per-axis thrust limit and mapped to the normalized action
+    u = clamp(F / f_max).  No keep-out shield, planner, fuel manager or
+    learning term is added: the target is the origin and the environment
+    applies its own termination rules.
+
+    Gain selection: (wn, zeta) are chosen on an independent dev-scenario set
+    (eval_rendezvous_pd.py, seeds disjoint from the formal seed-7 evaluation)
+    and then frozen in WN/ZETA below.  The gains must keep the unsaturated
+    approach slow enough that the 10 m goal sphere is crossed below the
+    0.5 m/s capture speed (the 5 m keep-out lies inside the goal sphere, so
+    an over-fast crossing is a failure, not a success), while still
+    converging from 1500 m within the 1000-step horizon on the 0.02 m/s^2
+    per-axis authority.
+    """
+    name = 'cwh_compensated_pd'
+
+    # frozen 2026-10-25 by the dev-scenario sweep (eval_rendezvous_pd.py)
+    WN = .01        # closed-loop natural frequency [rad/s]
+    ZETA = 1.       # damping ratio
+
+    def __init__(self, env, wn=None, zeta=None):
+        super().__init__(env)
+        self.mass = env.mass
+        self.f_max = env.f_max
+        self.n = env.n
+        self.dt = env.dt
+        self.wn = self.WN if wn is None else float(wn)
+        self.zeta = self.ZETA if zeta is None else float(zeta)
+        self.kp = self.wn ** 2
+        self.kd = 2. * self.zeta * self.wn
+        d = self.device
+        self.stat_sat = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
+        self.stat_steps = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
+
+    def reset_idx(self, mask):
+        self.stat_sat.masked_fill_(mask, 0.)
+        self.stat_steps.masked_fill_(mask, 0.)
+
+    @torch.no_grad()
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        p, v = o[:, :3], o[:, 3:6]
+        a_des = -self.kp * p - self.kd * v
+        n2 = self.n * self.n
+        # commanded specific force = desired accel minus the plant's own
+        # CWH coupling, so the net acceleration equals a_des exactly
+        a_cmd = torch.stack((a_des[:, 0] - 3. * n2 * p[:, 0] - 2. * self.n * v[:, 1],
+                             a_des[:, 1] + 2. * self.n * v[:, 0],
+                             a_des[:, 2] + n2 * p[:, 2]), -1)
+        # F = m a_cmd, per-axis thrust limit, normalized action
+        action = (a_cmd * (self.mass / self.f_max)).clamp(-1., 1.)
+        self.stat_sat += (action.abs() >= 1.).to(torch.float64).sum(-1)
+        self.stat_steps += 1.
+        return action.to(torch.float32)
+
+
+class DockingCWHPlacementBaseline(Baseline):
+    """CWH full-state pole-placement final approach (no constraint layers).
+
+    Task contract (SpaceDockingEnv): LVLH frame (x radial, y along-track,
+    z cross-track), observation state x = [p, v] in m and m/s; action =
+    per-axis normalized thrust in [-1, 1] -> F = u * f_max (10 N/axis on
+    m = 500 kg, a_max = 0.02 m/s^2); target state x_ref = 0; success
+    |p| < 1 m AND |v| < 0.1 m/s; 500-step horizon; symplectic Euler at
+    dt = 1 s.
+
+    Design
+        The exact discrete CWH model (Ad, Bd) of ``_cwh_discrete_model`` is
+        used, with the acceleration command u in m/s^2.  Pole placement is
+        applied block-wise on the same model (in-plane 4-state/2-input,
+        out-of-plane 2-state/1-input), so K is block-diagonal: in-plane
+        poles are two damped pairs at wn * {0.8, 1.0}, the cross-track pair
+        sits at wn, all at damping zeta.  Poles are mapped by z = exp(s dt)
+        and realized with ``place_poles``.  The gain K (3x6) obeys the
+        standard state-feedback law
+
+            u = -K (x - x_ref),   x_ref = 0.
+
+        The command is converted to the env's normalized action by dividing
+        by the per-axis authority, u_norm = u / (f_max/m), and clipped to
+        [-1, 1] (the env's thrust limit).  No shield, capture net, fuel
+        derate or other extra mechanism is applied.
+    """
+    name = 'cwh_pole_placement'
+
+    def __init__(self, env, wn=.05, zeta=.9, ratios=(.8, 1.)):
+        super().__init__(env)
+        self.mass = env.mass
+        self.f_max = env.f_max
+        self.a_max = env.f_max / env.mass
+        self.K, self.design = _cwh_pole_gain(env, wn=wn, zeta=zeta, ratios=ratios)
+        self.stat_sat = torch.zeros(env.num_envs, device=self.device, dtype=torch.float64)
+
+    def reset_idx(self, mask):
+        self.stat_sat.masked_fill_(mask, 0.)
+
+    def actions(self, obs):
+        x = _vec(obs).to(torch.float64)[:, :6]
+        # acceleration command [m/s^2], u = -K(x - 0)
+        a = -(x @ self.K.T)
+        # force is m*a; normalized action = force / f_max = a / (f_max/m)
+        action = (a / self.a_max).clamp(-1., 1.)
+        self.stat_sat += (action.abs() >= 1.).to(torch.float64).sum(-1)
+        return action.to(torch.float32)
+
+
+# --------------------------------------------------------------------------- #
+# quadplane: velocity-scheduled hybrid cascade PID (quads + forward pusher
+# + aerodynamic surfaces, single control law that blends with airspeed)
+# --------------------------------------------------------------------------- #
+class QuadplaneHybridBaseline(Baseline):
+    """Cascaded PID + forward pusher baseline for the quadplane VTOL.
+
+    Direct adaptation of QuadXCascadePIDBaseline (position PD → roll/pitch/collective
+    via heading-frame force resolution → attitude PD → body-rate commands executed
+    by the env's rate PID), with constants swapped for the quadplane's 2.35 kg
+    mass, asymmetric front/rear motor thrust constants, and 8-channel action
+    space (rates + collective + 3 surfaces + forward pusher).
+
+    The plant mixer is physically derived (pseudoinverse of the rotor torque
+    mapping τ = A @ ΔT, linearized around level-flight pwm).  Rows = motors,
+    cols = inputs (roll, pitch, yaw, collective), with simple direct clamp
+    (no collective redistribution) to preserve intended torque directions.
+    The collective row (amplitude 0.7) caps total quad thrust at 85 N
+    (T/W ≈ 3.7); the asymmetric URDF gives inherent roll/pitch biases that
+    the rate-PID integral cancels at steady state.
+
+    Plant constants mirrored from environments/common/plant.py (frozen):
+        total_mass = 2.35 kg, weight = 23.05 N
+        front motors (2): 69.3 N each @ pwm=1.0
+        rear motors  (2): 17.3 N each @ pwm=1.0
+        total quad thrust @ pwm=1.0: 173.3 N; col_row=0.7 caps collective at 84.9 N
+        forward motor: 138.6 N @ throttle=1
+        rate PID: kp=[0.5,0.5,1.0], ki=[0.005,0.005,0.02],
+                  kd=[0.6,0.6,0.05], lim=[2.0,2.0,2.0]
+        mixer: rows=motors, cols=inputs (roll,pitch,yaw,col), scale=10×
+        simple clamp (no normalization)
+    """
+
+    name = 'hybrid_cascade'
+
+    MASS = 2.35
+    G = 9.81
+    TOTAL_THRUST = 84.9          # N at collective=1 (col_row amplitude 0.7 → 0.7²*173.3)
+    THR_MAX = 1.0                 # env collective command ceiling [0, 1]
+    PWM_GAIN = 1.0                # motor-lag dc gain ≈ 1.0 for quadplane (no 8% noise)
+
+    # outer position PID [1/s^2, 1/s^3, 1/s] and clamps.  Gains are very
+    # conservative — the quadplane only has ~85 N collective thrust with
+    # T/W ≈ 3.7, and the forward pusher adds more at high airspeed.
+    KP_POS = 0.4; KI_POS = 0.01; KD_POS = 1.0
+    A_MAX = 1.5; I_MAX = 0.3
+    # attitude P/PD -> body-rate commands
+    KP_ATT = 6.0; KD_ATT = 0.6
+    KP_YAW = 3.0; KD_YAW = 0.3
+    YAW_REF = 0.0
+    RATE_MAX = math.pi * 0.7
+
+    # Fixed roll-rate feedforward: plant PID integral now handles the
+    # steady-state bias, so zero feedforward needed.
+    ROLL_BIAS = 0.0
+
+    # forward pusher (very gentle)
+    V_CRUISE = 8.0
+    K_FF = 0.03
+    FF_MAX = 0.30                 # raw 0.30 → physical 0.65 → thrust ~138*0.42=58 N
+
+    # Rate-PID integral preload canceling the airframe's inherent torque bias
+    # (measured open-loop at hover pwm=0.365, zero PID gains, uniform
+    # collective: w_dot = [-0.71, -20.49, +0.06] rad/s^2; mixer authority per
+    # unit input: [+19.2, +36.4, +0.49] rad/s^2).  roll = 0.71/19.2,
+    # pitch = 20.5/36.4.  Without the preload the tiny ki=0.005 integral
+    # needs ~100 s to wind up and the craft tumbles within 0.5 s.
+    INTEGRAL_PRELOAD = (0.037, 0.563, 0.0)
+
+    def __init__(self, env):
+        super().__init__(env)
+        d, n = self.device, env.num_envs
+        self.dt = 1. / env.agent_hz
+        self.rate_max = self.RATE_MAX
+        self.e3 = torch.tensor((0., 0., 1.), device=d, dtype=torch.float64)
+        self.k_att = torch.tensor((self.KP_ATT, self.KP_ATT, self.KP_YAW),
+                                  device=d, dtype=torch.float64)
+        self.kd_att = torch.tensor((self.KD_ATT, self.KD_ATT, self.KD_YAW),
+                                   device=d, dtype=torch.float64)
+        self.f_max = self.TOTAL_THRUST * self.THR_MAX ** 2  # 173.3 N
+        self.i_acc = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        # the env's constructor reset ran before this controller existed --
+        # preload every replica now so the FIRST episode also flies
+        self._preload(torch.ones(n, dtype=torch.bool, device=d))
+
+    def _preload(self, mask):
+        # Pre-load the plant rate PID integral with the steady-state bias
+        # compensation (see INTEGRAL_PRELOAD).  PID lim=2.0, preload fits.
+        if mask.any():
+            for axis, val in enumerate(self.INTEGRAL_PRELOAD):
+                self.env.plant.pid.integral[mask, axis] = val
+
+    def reset_idx(self, mask):
+        self.i_acc.masked_fill_(mask[:, None], 0.)
+        self._preload(mask)
+
+    @torch.no_grad()
+    def actions(self, obs):
+        o = _vec(obs).to(torch.float64)
+        wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
+        delta = o[:, 31:43].reshape(-1, 4, 3)
+        R = _quat_to_R(q)
+        roll, pitch, yaw = _rot_to_rpy(R)
+        v_w = torch.einsum('nij,nj->ni', R, vb)
+        target = p + torch.einsum('nij,nj->ni', R, delta[:, 0])
+        e_p = p - target
+        V_forward = vb[:, 0]
+
+        # outer PID -> desired acceleration (conditional anti-windup)
+        a_prev = -self.KP_POS * e_p - self.KD_POS * v_w + self.i_acc
+        clipped_prev = a_prev.norm(dim=-1) > self.A_MAX
+        i_new = (self.i_acc + self.KI_POS * e_p * self.dt).clamp(-self.I_MAX, self.I_MAX)
+        self.i_acc.copy_(torch.where(clipped_prev[:, None], self.i_acc, i_new))
+        a_raw = -self.KP_POS * e_p - self.KD_POS * v_w + self.i_acc
+        a_norm = a_raw.norm(dim=-1)
+        clipped = a_norm > self.A_MAX
+        a_des = a_raw * (self.A_MAX / a_norm.clamp_min(self.A_MAX))[:, None]
+
+        # gravity compensation -> desired roll/pitch and total thrust
+        a_cmd = a_des + self.G * self.e3
+        f_cmd = self.MASS * a_cmd.norm(dim=-1)
+        f = f_cmd.clamp_max(self.f_max)
+        throttle = (torch.sqrt(f / self.TOTAL_THRUST) / self.PWM_GAIN).clamp(0., self.THR_MAX)
+        # Yaw reference: bearing from airframe to active waypoint (turn to face target)
+        target_vec = target - p
+        YAW_REF = torch.atan2(target_vec[:, 1], target_vec[:, 0])
+        cy, sy = torch.cos(YAW_REF), torch.sin(YAW_REF)
+        u_x = a_cmd[:, 0] * cy + a_cmd[:, 1] * sy
+        u_y = -a_cmd[:, 0] * sy + a_cmd[:, 1] * cy
+        u_z = a_cmd[:, 2]
+        # ZYX Euler: positive pitch = nose DOWN geometrically.
+        # We want nose UP for forward+up acceleration, so negate.
+        pitch_d = -torch.atan2(u_x, u_z)
+        # ZYX: positive roll = right wing DOWN (bank right), want this for right accel.
+        roll_d = torch.atan2(u_y, torch.sqrt(u_x * u_x + u_z * u_z))
+
+        # attitude P/PD -> body-rate command executed by the env's rate PID,
+        # plus a roll-rate feedforward to cancel the inherent URDF bias.
+        e_att = torch.stack((_wrap(roll_d - roll), _wrap(pitch_d - pitch),
+                             _wrap(YAW_REF - yaw)), -1)
+        w_cmd = self.k_att * e_att - self.kd_att * wb
+        w_cmd[:, 0] += self.ROLL_BIAS   # fixed roll bias compensation
+        w_cmd = w_cmd.clamp(-self.rate_max, self.rate_max)
+
+        # surfaces: all conserved (zero) for now — quads handle everything
+        a4_cmd = torch.zeros((p.shape[0],), device=p.device, dtype=torch.float64)
+        a5_cmd = torch.zeros_like(a4_cmd)
+        a6_cmd = torch.zeros_like(a4_cmd)
+
+        # forward pusher: gentle speed-proportional throttle
+        forward_err = self.V_CRUISE - V_forward
+        throttle7 = (self.K_FF * forward_err).clamp(0., self.FF_MAX)
+
+        # assemble action vector: 8 channels, each in [-1, 1]
+        return torch.cat((
+            w_cmd / self.rate_max,                          # a0..a2: body rates / pi
+            (2. * throttle / self.THR_MAX - 1.)[:, None],   # a3: collective
+            a4_cmd[:, None], a5_cmd[:, None], a6_cmd[:, None],  # a4..a6: surfaces (all 0)
+            (2. * throttle7 - 1.)[:, None],                 # a7: forward throttle
+        ), -1).clamp(-1., 1.).to(torch.float32)
+
+
 BUILDERS = {
     'quadx': QuadXSE3Baseline,
+    'quadx_track': QuadXTrackKFBaseline,
     'fixedwing': FixedwingAutopilotBaseline,
     'rocket': RocketPDGBaseline,
     'satellite': SatelliteCMGBaseline,
     'transfer': TransferGaussBaseline,
     'docking': DockingCWHLQRBaseline,
     'rendezvous': RendezvousTwoImpulseBaseline,
+    'quadplane': QuadplaneHybridBaseline,
+    # second rendezvous controller under the same task (registry key is
+    # explicit): CWH-compensated PD to the origin, no constraint layers
+    'rendezvous_cwhpd': RendezvousCWHPDBaseline,
+}
+
+# Per-task controller variants that share the task's env but implement an
+# alternative control law (A/B arms).  The first entry of each task is the
+# default already wired into BUILDERS; variants are selected explicitly by
+# ``build_baseline(vehicle, env, variant=...)`` / ``baseline_eval --baseline``.
+BASELINE_VARIANTS = {
+    'quadx': {
+        # position -> attitude cascade with the env's native rate PID
+        'cascaded_pid': QuadXCascadePIDBaseline,
+    },
+    'transfer': {
+        # Gauss one-step greedy tangential guidance (default, in BUILDERS)
+        'gauss_tangential': TransferGaussBaseline,
+        # Petropoulos Q-law Lyapunov guidance, planar (a, e) subset
+        'q_law': TransferQLawBaseline,
+    },
+    'fixedwing': {
+        # conventional cascaded PID (no L1/TECS guidance heuristics)
+        'pid_cascade': FixedwingPIDBaseline,
+    },
+    'rocket': {
+        'pd_landing': RocketPDLandingBaseline,
+    },
+    'satellite': {
+        'quat_pd_damped_cmg': SatelliteCMGBaseline,
+        'quat_pd_mp_pinv_cmg': SatelliteOrdinaryPinvBaseline,
+    },
+    'docking': {
+        # CWH full-state feedback, standard pole placement, no extra layers
+        'pole_placement': DockingCWHPlacementBaseline,
+    },
+    'rendezvous': {
+        # CWH-compensated PD to the origin, no constraint layers
+        'cwh_pd': RendezvousCWHPDBaseline,
+    },
 }
 
 
@@ -1514,13 +2993,24 @@ def register_baseline(vehicle):
     return deco
 
 
-def build_baseline(vehicle, env):
-    """Instantiate the classical baseline for a task name."""
+def build_baseline(vehicle, env, variant=None):
+    """Instantiate the classical baseline for a task name.
+
+    variant: optional controller name from BASELINE_VARIANTS[vehicle]; None
+    keeps the task's registered default in BUILDERS.
+    """
+    if variant is None:
+        try:
+            return BUILDERS[vehicle](env)
+        except KeyError:
+            raise KeyError(f'no classical baseline registered for task '
+                           f'{vehicle!r}; known: {sorted(BUILDERS)}') from None
     try:
-        return BUILDERS[vehicle](env)
+        return BASELINE_VARIANTS[vehicle][variant](env)
     except KeyError:
-        raise KeyError(f'no classical baseline registered for task '
-                       f'{vehicle!r}; known: {sorted(BUILDERS)}') from None
+        known = sorted(BASELINE_VARIANTS.get(vehicle, {}))
+        raise KeyError(f'no baseline variant {variant!r} for task {vehicle!r}; '
+                       f'known: {known}') from None
 
 
 # The classical baselines double as the conventional (expert) policies for the BC

@@ -4,7 +4,7 @@ Description
     Upstream-faithful port of the PyFlyt 0.29.0 Rocket-Landing task
     (gym_envs/rocket_envs/rocket_landing_env.py + rocket_base_env.py +
     core/drones/rocket.py): only the physics engine differs (Genesis
-    rigid-body solver at 240 Hz under a 120 Hz controller under a 60 Hz
+    rigid-body solver at 240 Hz under a 120 Hz controller under a 40 Hz
     policy, vs PyBullet). A Falcon-9-class booster (138.2 kg dry
     structural mass; the 5% fuel spawn fill adds 20.5 kg, so ~158.7 kg at
     spawn and 549.1 kg fully fuelled; 7.607 kN max / 2.967 kN min thrust =
@@ -16,14 +16,16 @@ Description
     there (a misspelled option key), and that behaviour is reproduced. 1%
     throttle noise; body drag + grid-fin aerodynamics throughout;
     propellant depletion drains tank mass and inertia. One episode spans
-    1800 policy steps (30 s). Fully tensorized: all replicas advance on
+    1200 policy steps (30 s). Fully tensorized: all replicas advance on
     one device, no host synchronization, no gym.
 
 Action Space (7,)
-    Upstream Box: finlet roll/pitch/yaw [-1, 1], engine ignition [0, 1]
-    (> 0.5 relights each physics step; reignitable), throttle [0, 1]
-    (remapped to [0.39, 1.0] of max thrust), gimbal x/y [-1, 1] (mapped to
-    +-5 deg).
+    Upstream finlet-mixer Box: finlet x/y/yaw [-1, 1], mixed by the plant
+    onto the four grid-fin hinge servos (fin_pos_x <- y+yaw,
+    fin_neg_x <- y-yaw, fin_pos_y <- x-yaw, fin_neg_y <- x+yaw); engine
+    ignition [0, 1] (> 0.5 relights each physics step; reignitable);
+    throttle [0, 1] (remapped to [0.39, 1.0] of max thrust); gimbal x/y
+    [-1, 1] (mapped to +-5 deg).
 
 Observation Space (30,)
     float32, unbounded, 'policy' TensorDict group:
@@ -33,7 +35,7 @@ Observation Space (30,)
     gimbal angles (2), landing-pad contact flag (1)].
 
 Reward
-    Dense shaping, one term per POLICY step (60 Hz) from whole-step state
+    Dense shaping, one term per POLICY step (40 Hz) from whole-step state
     deltas (2026-10-24 'v4'; the earlier v2 potential design was farmed by
     minimum-speed descent):
     r = -HOVER_COST                              0.3, time pressure
@@ -58,7 +60,7 @@ Episode End
     Termination: any non-pad contact (ground) or z < 0; a pad-contact
     step whose previous inner-step speed > 1.0 m/s or spin > 0.35 rad/s;
     bounds ||p_xy|| > 200 m or z > 500 m.
-    Truncation: 1800 policy steps (30 s).
+    Truncation: 1200 policy steps (30 s).
 
 Difficulty
     None. The initial-condition distribution is the upstream drop (xy ±20 m,

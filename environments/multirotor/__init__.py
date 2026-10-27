@@ -58,12 +58,20 @@ Difficulty
     available; calm air keeps the default path bit-for-bit with the
     benchmark.
 
-References
+Reference
     - PyFlyt (J. K. Tai, github.com/jkuang421/PyFlyt), QuadX-Waypoints task
       defaults and cf2x vehicle model (task_defaults: PyFlyt 0.29.0).
     - Genesis (github.com/Genesis-Embodied-AI/Genesis), rigid-body engine.
     - rsl_rl (github.com/leggedrobotics/rsl_rl), PPO training backend.
     - Method documentation: docs/method/env-quadx-waypoints.md.
+
+QuadX-Track
+    The same cf2x plant, inner rate PID, action interface and 40 Hz policy
+    also drive ``QuadXTrackEnv`` (task id ``quadx_track``): persistent
+    observation of a cooperative ground moving target under geometric
+    camera FOV, slant-range, occlusion and position-noise limits. See
+    track_env.py and docs/method/env-quadx-track.md.
 """
 
 from .env import QuadXWaypointsEnv
+from .track_env import QuadXTrackEnv

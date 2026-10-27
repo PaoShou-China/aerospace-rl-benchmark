@@ -1,3 +1,10 @@
+"""Rocket-Landing task: six-spherical-pad contact model with a sustained-landing
+(2 s) primary success metric; see docs/rocket_benchmark_v2_zh.md.
+
+The instantaneous touch event below is still used for reward/diagnostics.
+Contact model and scoring do not change reward, fatal thresholds, initial
+distribution or interfaces.
+"""
 """Rocket-Landing task: upstream-faithful port of PyFlyt 0.29.0.
 
 Task definition (reward, dynamics, episode logic, initial conditions) follows
@@ -23,19 +30,21 @@ there), these upstream behaviours are KEPT:
     ("randoimize_drop" vs "randomize_drop"), so only the -100 m/s drop speed
     applies. The earlier staged drop (at-rest z=150) was tied to the dropped
     v3 reward and is reverted.
-  * Action box matches upstream action_space: dims 0-2 and 5-6 in [-1,1],
-    ignition (dim 3) and throttle (dim 4) in [0,1] -- uniform exploration
-    fires the engine on ~50% of steps, exactly like upstream. The earlier
-    identity-mapped ignition [-1,1] and dead-zoned throttle clamp are
-    dropped.
+  * Action box is the upstream 7-dim finlet mixer convention: dims 0-2 are
+    the finlet (x, y, yaw) demands in [-1,1] and the plant mixes them onto
+    the four grid-fin hinge servos; ignition (dim 3) and throttle (dim 4)
+    in [0,1] -- uniform exploration fires the engine on ~50% of steps,
+    exactly like upstream; gimbals (dims 5-6) in [-1,1].
 
-Reward (2026-10-24 'v4': dense per-POLICY-step shaping replacing the v2
-potential design, which a 1000-update run farmed by minimum-speed descent
-on the brake potential -- brake +1238 of reward, pad_touch_rate 0). The v4
-coefficients come from a discounted-return analysis at dt=0.02 s, gamma
-0.995, B=5000; the policy rate is 60 Hz (dt 0.0167), the closest divisor of
-the 120 Hz control loop to the analysed 50 Hz, so the high-speed-dive bound
-k <= 0.25*60/u_max admits DESCENT_COEF=0.1 up to u=150 m/s:
+Reward (2026-10-24 'v4', retimed 2026-10-27 to the 40 Hz policy): dense
+per-POLICY-step shaping replacing the v2 potential design, which a 1000-update
+run farmed by minimum-speed descent on the brake potential -- brake +1238 of
+reward, pad_touch_rate 0. The v4 coefficients come from a discounted-return
+analysis at dt=0.02 s (50 Hz), gamma 0.995, B=5000. The analysed 50 Hz does
+NOT divide the 120 Hz control loop (upstream rejects non-divisor agent rates),
+so the policy runs at the upstream rocket_landing default 40 Hz (dt 0.025 s):
+the high-speed-dive bound admits DESCENT_COEF=0.1 up to
+u = HOVER/(DESCENT*dt) = 120 m/s, still above the 100 m/s drop speed:
   r = -HOVER_COST                                time pressure, always
       + HOLD_COEF/(||p_xy||+0.1)                 <= 0.05, cannot farm hover
       + LATERAL_COEF*(d_xy_prev - d_xy)          telescoping pad approach
@@ -49,10 +58,11 @@ k <= 0.25*60/u_max admits DESCENT_COEF=0.1 up to u=150 m/s:
         so delaying a reachable success is never profitable)
 Success still does NOT truncate; the settled contact stream keeps paying.
 
-Unchanged port details: 60 Hz policy / 120 Hz control / 240 Hz physics,
-1800 policy steps (30 s) truncation, bounds ||p_xy||>200 or z>500, any
+Port details: 40 Hz policy / 120 Hz control / 240 Hz physics (all rates read
+from the plant, none hardcoded), 1200 policy steps (30 s) truncation, bounds
+||p_xy||>200 or z>500, any
 non-pad contact or z<0 is fatal, obs = [body omega, quat, body v, p,
-action, aux(9), pad contact flag] (30 dims), 5% starting fuel, reignitable
+action (7), aux(9), pad contact flag] (30 dims), 5% starting fuel, reignitable
 engine with the per-physics-step ignition>0.5 rule.
 
 Success: pad contact with |v|<0.02, |omega|<0.02, tilt<0.1 (upstream values).
@@ -119,11 +129,18 @@ class RocketLandingEnv:
     ic_z_min=400.            # spawn z lower bound [m] (span 50 fixed)
     ic_euler_half=.3         # spawn euler per-axis half-range [rad]
     # conventional controller: ZEM/ZEV powered-descent guidance + TVC/fin attitude
-    # PD (baselines.py; reuses the env's raw 7-dim action convention)
+    # PD (baselines.py; reuses the env's unified 7-dim finlet mixer convention)
     conventional_controller=RocketPDGBaseline
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,steady_wind=None,dryden=0.,severity='moderate',
-                 reward=None):
+                 reward=None,variation='nominal',agent_hz=None,benchmark_version='v2'):
+        if benchmark_version not in ('v1','v2'):raise ValueError(benchmark_version)
+        from environments.common.rocket_benchmark import VARIATIONS, LandingMetrics
+        if variation not in VARIATIONS:raise ValueError(variation)
+        self.benchmark_version=benchmark_version
+        # Default agent_hz per benchmark: v2=40 Hz (current Falcon9 upstream),
+        # v1=60 Hz (external benchmark). Explicit agent_hz overrides the default.
+        if agent_hz is None:agent_hz=60 if benchmark_version=='v1' else 40
         self.num_envs=num_envs
         self.task_cfg={'vehicle':'rocket','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','task_defaults':'PyFlyt 0.29.0'}
@@ -136,19 +153,22 @@ class RocketLandingEnv:
                              contact_vel=CONTACT_VEL_COEF,success=SUCCESS_BONUS)
         if reward:self.reward_cfg.update(reward)
 
-        self.plant=TensorPlant('rocket',num_envs,backend,seed)
+        self.plant=TensorPlant('rocket',num_envs,backend,seed,
+                               rocket_variation=variation,rocket_benchmark=benchmark_version)
         self.device=self.plant.device
-        # 60 Hz policy: the closest divisor of the 120 Hz control loop to the
-        # analysed 50 Hz (dt 0.0167 s); 1800 steps = 30 s episode
-        self.agent_hz=60;self.inner_steps=120//self.agent_hz;self.max_steps=1800
+        # agent_hz validation: must divide the plant control loop. All rates
+        # are read from the plant, never hardcoded here.
+        self.agent_hz=agent_hz
+        if agent_hz<=0 or agent_hz!=int(agent_hz) or self.plant.control_hz%agent_hz!=0:
+            raise ValueError(f'agent_hz must be a positive divisor of the '
+                             f'{self.plant.control_hz} Hz control loop; 50 Hz is not '
+                             f'(use 40 or 60)')
+        self.inner_steps=int(self.plant.control_hz//agent_hz);self.max_steps=30*agent_hz
+        self.landing_metrics=LandingMetrics(num_envs,self.device,agent_hz)
         self.max_episode_length=self.max_steps+2
+        # Unified 7-dim upstream finlet mixer convention (matches external benchmark):
+        #   finlet x/y/yaw [-1,1], ignition [0,1], throttle [0,1], gimbals [-1,1]
         self.num_actions=7
-        # Upstream action_space Box (rocket_base_env.py L85-107): finlet x/y/yaw
-        # and both gimbals in [-1,1]; ignition and throttle in [0,1]. The
-        # affine map below sends raw [-1,1] onto that box, so a zero-mean
-        # Gaussian explores ignition at 50% firing rate -- upstream behaviour,
-        # deliberate (the earlier [-1,1] identity mapping at 0.6%/step and the
-        # throttle dead-zone were non-upstream aids and are dropped).
         self.action_low=torch.tensor([-1.,-1.,-1.,0.,0.,-1.,-1.],device=self.device,dtype=torch.float64)
         self.action_high=torch.ones(self.num_actions,device=self.device,dtype=torch.float64)
 
@@ -180,6 +200,8 @@ class RocketLandingEnv:
                                 'touch_speed':torch.zeros_like(self.touch_speed),
                                 'touch_ang_vel':torch.zeros_like(self.touch_speed),
                                 'touch_tilt':torch.zeros_like(self.touch_speed)}
+        for key in self.landing_metrics.values(self.complete,self.terminated):
+            self.completed_metrics[key]=torch.zeros_like(self.touch_speed)
         # per-component reward accounting: Episode/rew_* tensorboard scalars and
         # run.json completed_metrics keys, so reward attribution is observable
         keys=REWARD_KEYS
@@ -189,6 +211,20 @@ class RocketLandingEnv:
         self.extras=dict()
         self.cfg=dict(self.task_cfg);self.cfg['reward']=dict(self.reward_cfg)
         self._init_wind(num_envs,seed,steady_wind,dryden,severity)
+        self.benchmark_env_kwargs=dict(benchmark_version=benchmark_version,variation=variation,agent_hz=agent_hz)
+        from pathlib import Path
+        import hashlib
+        rocket_model_dir=Path(__file__).parents[1]/'common/original_pyflyt/models/vehicles/rocket'
+        model=rocket_model_dir/('rocket_v2.urdf' if benchmark_version=='v2' else 'rocket.urdf')
+        primary_metric='ever_stable_2s' if benchmark_version=='v2' else 'ever_success'
+        self.cfg['benchmark']=dict(version=benchmark_version,variation=variation,
+            variation_ranges=VARIATIONS[variation],variation_seed_offset=104729,policy_hz=agent_hz,
+            control_hz=self.plant.control_hz,physics_hz=self.plant.physics_hz,
+            horizon_seconds=30,stable_samples=self.landing_metrics.required_samples,
+            primary_metric=primary_metric,
+            collision_asset_sha256=hashlib.sha256(model.read_bytes()).hexdigest(),
+            physics_and_success_predicate_modified=(benchmark_version=='v2'),
+            integration='native-main-v2',external_wind=self.cfg.get('wind'))
 
         self.reset()
 
@@ -236,7 +272,7 @@ class RocketLandingEnv:
             p0,q0,v0,w0=self.plant.state();vb0=inverse_rotate(q0,v0);wb0=inverse_rotate(q0,w0)
             self.plant.clear_contacts()
             self.plant.controller(command,active)
-            for _ in range(2):self.plant.physics_step(command,active)
+            for _ in range(self.plant.physics_per_control):self.plant.physics_step(command,active)
             p,rpy,v,wb,vb=self._observe(active)
             # Upstream compute_base_term_trunc_reward: any contact other than
             # (rocket, pad) is a fatal collision, as is dropping below ground.
@@ -287,7 +323,12 @@ class RocketLandingEnv:
         self.returns+=self.reward
         self.completed_returns+=torch.where(self.reset_buf,self.returns,0.)
         self.completed_episodes+=self.reset_buf.to(torch.long)
-        self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
+        self.landing_metrics.update(self.obs_pad.bool(),v,wb,rpy[:,:2].norm(dim=-1),self.terminated)
+        metrics=self.landing_metrics.values(self.complete,self.terminated)
+        primary=metrics['ever_stable_2s']
+        self.completed_successes+=(self.reset_buf&primary).to(torch.long)
+        for key,value in metrics.items():
+            self.completed_metrics[key]+=(self.reset_buf&value).to(torch.float64)
         landed=self.reset_buf&self.touch_flag
         self.completed_metrics['pad_touch_rate']+=landed.to(torch.float64)
         self.completed_metrics['touch_speed']+=torch.where(landed,self.touch_speed,0.)
@@ -307,7 +348,7 @@ class RocketLandingEnv:
         # gates both the episode extras and the reset path)
         done_any=bool(done.any())
         if done_any:
-            episode={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1),
+            episode={'success_rate':(done&primary).to(torch.float64).sum()/done.sum().clamp_min(1),
                      'pad_touch_rate':landed.to(torch.float64).sum()/done.sum().clamp_min(1)}
             touched=done&self.touch_flag
             n=touched.to(torch.float64).sum()
@@ -371,6 +412,7 @@ class RocketLandingEnv:
         self.terminated.masked_fill_(mask,False);self.truncated.masked_fill_(mask,False)
         self.collision.masked_fill_(mask,False);self.out_of_bounds.masked_fill_(mask,False)
         self.complete.masked_fill_(mask,False);self.fatal_collision.masked_fill_(mask,False)
+        self.landing_metrics.reset(mask)
         self.touch_flag.masked_fill_(mask,False)
         self.touch_speed.masked_fill_(mask,0);self.touch_ang_vel.masked_fill_(mask,0);self.touch_tilt.masked_fill_(mask,0)
         for buf in self.reward_components.values():buf.masked_fill_(mask,0.)

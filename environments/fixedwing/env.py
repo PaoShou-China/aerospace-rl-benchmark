@@ -68,7 +68,7 @@ class FixedwingWaypointsEnv:
 
         self.plant=TensorPlant('fixedwing',num_envs,backend,seed)
         self.device=self.plant.device
-        self.agent_hz=30;self.inner_steps=120//self.agent_hz;self.max_steps=3600
+        self.agent_hz=30;self.inner_steps=int(self.plant.control_hz//self.agent_hz);self.max_steps=3600
         self.max_episode_length=self.max_steps+2
         self.num_actions=4
         self.action_low=-torch.ones(self.num_actions,device=self.device,dtype=torch.float64)
@@ -151,7 +151,7 @@ class FixedwingWaypointsEnv:
             active=~(self.terminated|self.truncated)
             self.plant.clear_contacts()
             self.plant.controller(command,active)
-            for _ in range(2):self.plant.physics_step(command,active)
+            for _ in range(self.plant.physics_per_control):self.plant.physics_step(command,active)
             p,rpy,v,wb,vb=self._observe(active)
             collision=self.plant.ground_contact;bounds=p.norm(dim=-1)>100
             reached=self.new_distance<CAPTURE_RADIUS

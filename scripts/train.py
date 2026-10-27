@@ -62,7 +62,7 @@ def main():
 
     env = ENVS[args.vehicle](num_envs=args.num_envs, backend=args.backend, seed=args.seed)
     model_cfg = {'class_name': 'MLPModel', 'hidden_dims': [64, 64], 'activation': 'tanh', 'obs_normalization': True}
-    cfg = {'num_steps_per_env': 32, 'save_interval': 100, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
+    cfg = {'num_steps_per_env': 32, 'save_interval': 10_000_000, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
            'actor': {**model_cfg, 'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': .5, 'std_type': 'log'}},
            'critic': dict(model_cfg),
            'algorithm': {'class_name': 'PPO', 'learning_rate': .0003, 'num_learning_epochs': 4, 'num_mini_batches': 4,

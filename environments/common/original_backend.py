@@ -13,6 +13,12 @@ from scipy.spatial.transform import Rotation
 import genesis as gs
 from .consistency import inertial_basis
 
+# Single definition of the physics integration step (PyBullet-recommended rate,
+# matching upstream PyFlyt). Everything else in the repo reads the ACTUAL step
+# back from the constructed scene (GenesisBulletClient._dt via TensorPlant),
+# never re-hardcodes it.
+PHYSICS_HZ=240.
+
 
 def initialize_genesis(backend):
     if backend not in ('cpu','gpu'):raise ValueError('backend must be cpu or gpu')
@@ -45,7 +51,7 @@ class GenesisBulletClient:
     def __init__(self,connection_mode=0,**kwargs):
         if connection_mode!=0:raise NotImplementedError('Original-task backend currently supports headless operation only')
         initialize_genesis(getattr(self,'_backend','cpu'));self._scene=None;self._built=False;self._bodies=[];self._pending_pad=None
-        self._dt=1/240;self._gravity=(0,0,-9.81);self._contacts=[];self._client=0
+        self._dt=1./PHYSICS_HZ;self._gravity=(0,0,-9.81);self._contacts=[];self._client=0
         self._temp=tempfile.TemporaryDirectory(prefix='pyflyt-genesis-')
     def resetSimulation(self):
         self.disconnect();self._bodies=[];self._built=False;self._pending_pad=None;self._contacts=[]
@@ -95,7 +101,7 @@ class GenesisBulletClient:
                     scale=globalScaling,merge_fixed_links=False,align=False,recompute_inertia=False,
                     **kwargs),
                     material=gs.materials.Rigid(friction=.5))
-                if name=='rocket.urdf':
+                if name=='rocket_v2.urdf':
                     pad=Path(__file__).parent/'original_pyflyt/models/landing_pad.urdf'
                     self._pending_pad=self._scene.add_entity(gs.morphs.URDF(file=str(pad),pos=(0,0,.1),fixed=True,align=False),material=gs.materials.Rigid(friction=.5))
         links=[]

@@ -50,7 +50,7 @@ Narrow net: 64x64 was the only arm that learned this task (22% success vs
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]  # repo root
+_ROOT = Path(__file__).resolve().parents[3]  # repo root
 sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
 
 from algorithms.train_utils import run_training

@@ -122,7 +122,7 @@ class MissileInterceptEnv:
         self.clip_actions=1.0
         self.plant=TensorPlant('missile',num_envs,backend,seed,vel_clamp=(1200.,40.))
         self.device=self.plant.device
-        self.agent_hz=60;self.inner_steps=120//self.agent_hz;self.max_steps=900  # 15 s
+        self.agent_hz=60;self.inner_steps=int(self.plant.control_hz//self.agent_hz);self.max_steps=900  # 15 s
         self.max_episode_length=self.max_steps+2
         self.num_actions=3
         # Per-axis rate-command limits: roll spins fast, pitch/yaw are limited
@@ -224,14 +224,14 @@ class MissileInterceptEnv:
             self.plant.clear_contacts()
             self.plant.controller(command,active)
             kill_ev=torch.zeros_like(active);miss_ev=torch.zeros_like(active)
-            for _ in range(2):
+            for _ in range(self.plant.physics_per_control):
                 sub=~(self.terminated|self.truncated)
                 tp,tv=self._target_state()
                 self.target_pos.copy_(torch.where(sub[:,None],tp,self.target_pos))
                 self.target_vel.copy_(torch.where(sub[:,None],tv,self.target_vel))
                 tq=_aim_quat(tv/tv.norm(dim=-1,keepdim=True).clamp_min(1e-6),torch.zeros_like(tv[:,0]))
                 self.plant.physics_step(command,sub,target_state=(tp,tq,tv,torch.zeros_like(tv)))
-                self.sim_time.copy_(torch.where(sub,self.sim_time+1/240,self.sim_time))
+                self.sim_time.copy_(torch.where(sub,self.sim_time+self.plant.physics_dt,self.sim_time))
                 pm=self.plant.drone.get_pos().to(torch.float64)
                 vm=self.plant.drone.get_vel().to(torch.float64)
                 r=tp-pm;dist=r.norm(dim=-1)
