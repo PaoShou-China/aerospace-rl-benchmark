@@ -1,0 +1,21 @@
+{
+  "scope": "synthetic linear acceleration identification only",
+  "genesis_benchmark_run": false,
+  "neural_network_trained": false,
+  "seed": 930101,
+  "episodes": 128,
+  "observations_per_episode": 80,
+  "device": "cpu",
+  "nominal_acceleration_rmse_m_s2": 3.885434073764013,
+  "adaptive_acceleration_rmse_m_s2": 0.029400213620892967,
+  "thrust_gain_mae": 0.002054519754197218,
+  "wind_acceleration_mae_m_s2": 0.04536806846072555,
+  "nominal_95_parameter_interval_coverage": [0.96875, 0.953125],
+  "covariance_min_eigenvalue": 8.756163002433153e-07,
+  "limitations": [
+    "Correct linear measurement model; ideal known input.",
+    "No contact, attitude, fuel, latency or state-observation error.",
+    "Not a landing success rate or evidence of superiority to adaptive MPC."
+  ],
+  "source": "Numerical results verified in local execution and CI artifact 12546256719; wall-clock timing omitted because it varies by host."
+}

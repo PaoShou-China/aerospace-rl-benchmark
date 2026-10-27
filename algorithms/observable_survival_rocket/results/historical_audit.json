@@ -1,0 +1,21 @@
+{
+  "source_commit": "91a17f96e2ee289720f6bee521aab35f0ceb7647",
+  "source_path": "algorithms/physical_belief_rocket_landing/results/comparison.json",
+  "source_blob": "43048b628011924b50c4584d533c7e4c40bae55a",
+  "kind": "reanalysis of EXISTING repository results, not a new run",
+  "episodes": 512,
+  "baseline_official_successes": 419,
+  "published_official_successes": 428,
+  "gained": 79,
+  "lost": 70,
+  "both_success": 349,
+  "both_failure": 14,
+  "official_delta_percentage_points": 1.7578125,
+  "paired_exact_mcnemar_two_sided_p": 0.5123564769095189,
+  "published_final_settled_successes": 3,
+  "published_success_then_failure": 214,
+  "published_final_settled_rate": 0.005859375,
+  "multiple_training_seeds_available": false,
+  "two_second_terminal_dwell_available": false,
+  "caution": "Paired-test independence/exchangeability assumptions; this is not a multi-seed architecture attribution."
+}
