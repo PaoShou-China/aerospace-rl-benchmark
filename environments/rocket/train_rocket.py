@@ -48,22 +48,6 @@ def _mlp_init_zero_last(self, *args, **kwargs):
 
 _MLPModel.__init__ = _mlp_init_zero_last
 
-# The trunk default (arch='flash_residual', FlashResMLPModel) REPLACES self.mlp
-# with a fresh nn.Linear AFTER super().__init__ returns, so the MLPModel patch
-# above is a no-op for trunk models (verified 2026-10-22: the Sequential head
-# it zeroes is discarded). Patch FlashResMLPModel too: zero its final linear
-# head, which is the actual actor-mean/critic output layer on the trunk latent.
-from algorithms.ppo.ppo_flashnet import FlashResMLPModel as _FlashResMLPModel
-
-_flash_res_init_orig = _FlashResMLPModel.__init__
-
-def _flash_res_init_zero_head(self, *args, **kwargs):
-    _flash_res_init_orig(self, *args, **kwargs)
-    nn.init.zeros_(self.mlp.weight)
-    nn.init.zeros_(self.mlp.bias)
-
-_FlashResMLPModel.__init__ = _flash_res_init_zero_head
-
 TASK = 'rocket'
 NUM_ENVS = 1024
 UPDATES = 2000           # flash_sac needs the longer run: sweep sizing

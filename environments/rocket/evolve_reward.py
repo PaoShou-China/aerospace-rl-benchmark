@@ -33,7 +33,7 @@ def _load_entry(name, rel):
     return mod
 
 
-# applies the MLP/FlashRes zero-head patches and provides INIT_STD / BC config
+# applies the MLP zero-head patch and provides INIT_STD / BC config
 train_rocket = _load_entry('train_rocket', 'environments/rocket/train_rocket.py')
 
 NUM_ENVS = 1024

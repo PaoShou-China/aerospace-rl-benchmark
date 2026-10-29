@@ -58,8 +58,7 @@ PPO_BASE = {
     'docking':    dict(lr_schedule='fixed', learning_rate=3e-4, gamma=0.999,
                        entropy_coef=0.005),
     'rendezvous': dict(num_steps_per_env=250, gamma=0.999, num_mini_batches=1,
-                       lr_schedule='fixed', learning_rate=3e-4, entropy_coef=0.003,
-                       trunk_hidden=64, critic_trunk_hidden=64),
+                       lr_schedule='fixed', learning_rate=3e-4, entropy_coef=0.003),
     'missile':    dict(num_steps_per_env=64, lr_schedule='fixed', learning_rate=3e-4,
                        gamma=0.995, lam=0.97, entropy_coef=0.007, num_learning_epochs=10,
                        clip_param=0.2, value_loss_coef=1.0),
@@ -105,7 +104,6 @@ PPO_CANDIDATES = {
     'rendezvous': [
         ('base', {}),
         ('lr1e3', dict(learning_rate=1e-3)),
-        ('trunk128', dict(trunk_hidden=128, critic_trunk_hidden=128)),
     ],
     'missile': [
         ('base', {}),
@@ -164,11 +162,11 @@ def _load_entry(name, rel):
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
-train_docking = _load_entry('train_docking',   # noqa: E402,F401  (applies FlashResMLPModel zero-head patch)
+train_docking = _load_entry('train_docking',   # noqa: E402,F401  (PPO entry constants)
                             'environments/satellite/rendezvous_docking/train_docking.py')
-train_rocket = _load_entry('train_rocket',     # noqa: E402,F401  (applies MLP/FlashRes zero-head patches)
+train_rocket = _load_entry('train_rocket',     # noqa: E402,F401  (applies the MLP zero-head patch)
                            'environments/rocket/train_rocket.py')
-train_missile = _load_entry('train_missile',   # noqa: E402,F401  (applies MLP/FlashRes zero-head patches)
+train_missile = _load_entry('train_missile',   # noqa: E402,F401  (applies the MLP zero-head patch)
                             'environments/missile/train_missile.py')
 PPO_BASE['rocket']['init_std'] = train_rocket.INIT_STD
 

@@ -56,6 +56,15 @@ def main():
     ckpt = out / 'checkpoint.pt'
     assert ckpt.exists(), f'missing {ckpt}'
     cfg = json.loads((out / 'config.json').read_text())
+    # Per-dim exploration std is dumped as a JSON list (train_rocket's _JsonStd
+    # keeps json.dumps working). rsl_rl builds the distribution as
+    # `init_std * torch.ones(output_dim)`, which needs tensor semantics: a plain
+    # list raises "only integer tensors of a single element can be converted to
+    # an index" when the runner is reconstructed. Restore the tensor form so a
+    # saved config is reloadable exactly as it was at training time.
+    init_std = cfg.get('actor', {}).get('distribution_cfg', {}).get('init_std')
+    if isinstance(init_std, list):
+        cfg['actor']['distribution_cfg']['init_std'] = torch.tensor(init_std)
 
     torch.manual_seed(args.seed)
     # restore the exact env construction used at training time

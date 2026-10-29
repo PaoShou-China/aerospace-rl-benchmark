@@ -50,40 +50,16 @@ parameters, with per-module gradient-norm clipping at $1.0$ (rsl-rl default `max
 `build_cfg` fixes `schedule='fixed'` (the KL-adaptive rsl-rl schedule is available but disabled by
 default); `desired_kl=0.01` is retained in the config for reproducibility.
 
-## 3. The flash-residual trunk (`arch='flash_residual'`)
+## 3. Network architecture (the FlashSAC trunk was removed)
 
-`build_cfg(arch=...)` accepts exactly two architectures and raises `ValueError` otherwise. The
-`'mlp'` arm is the rsl-rl `MLPModel` (two hidden layers of 128 units, tanh, empirical observation
-normalization) kept as the A/B reference. The default `'flash_residual'` arm instantiates
-`FlashResMLPModel` (`algorithms/ppo/ppo_flashnet.py`), which replaces the rsl-rl MLP latent by the
-FlashSAC trunk:
-\begin{equation}
-h_0 = W_0\,\phi(x),\qquad
-h_{k} = h_{k-1} + \mathrm{ReLU}\big(\phi_2(W_2\,\mathrm{ReLU}(\phi_1(W_1 h_{k-1})))\big),\quad k=1,2, \tag{5}
-\end{equation}
-\begin{equation}
-z = \mathrm{RMSNorm}(h_2) = \frac{h_2}{\mathrm{rms}(h_2)}\odot g,\qquad
-y = W_{\mathrm{out}}\, z + b, \tag{6}
-\end{equation}
-where $W_1\in\mathbb R^{4d\times d}$, $W_2\in\mathbb R^{d\times 4d}$ (expansion 4), and all
-trunk linear layers are bias-free `UnitLinear`s whose rows are orthogonally initialized and
-re-normalized to unit $\ell_2$ norm; the output `UnitRMSNorm` scale $g$ is re-normalized to
-$\lVert g\rVert_2=\sqrt d$. Norm-control semantics mirror FlashSAC: at the start of every
-gradient-enabled forward pass the trunk re-normalizes every unit layer to its target norm
-(`normalize_parameters`), so weight renormalization takes effect at the first forward after each
-optimizer step rather than inside the optimizer step itself. Because BatchNorm is incompatible with
-PPO's on-policy importance ratio — with batch statistics the log-probability of a sample depends on
-the other samples in its batch, so the rollout policy and the update policy are different
-functions — `build_cfg` pins `use_bn=False` for both actor and critic: the $\phi$ maps become the
-identity and input whitening is delegated to rsl-rl's running-statistics `EmpiricalNormalization`
-(as in the `'mlp'` arm); the `UnitLinear` geometry, residual blocks, RMSNorm and weight
-renormalization are retained. The actor trunk is $2\times128$ ($d=128$) and the critic trunk
-$2\times256$ (`trunk_hidden=128`, `critic_trunk_hidden=256`, `trunk_blocks=2`), mirroring
-`FlashSACActor` / `FlashSACDoubleCritic`; each head is a single plain linear layer on the trunk
-latent. The remaining deviations from FlashSAC are algorithmic, not structural: the actor output
-distribution stays rsl-rl's state-independent Gaussian (PPO's entropy/KL machinery depends on it)
-instead of the state-dependent tanh-bounded head, and the critic head is a scalar instead of the
-101-bin categorical head.
+Both actor and critic are the rsl-rl `MLPModel`: two hidden layers of 128 units with tanh
+activation, a linear head, and running-statistics `EmpiricalNormalization` on the input. The
+`FlashResMLPModel` arm — FlashSAC's residual `UnitLinear` trunk with RMSNorm and unit-weight
+renormalization, selected by `arch='flash_residual'` in `algorithms/ppo/ppo_flashnet.py` — was
+removed on 2026-10-28 by user decision: under the frozen 1024-env single-seed protocol its docking
+arm scored 0.0% on the held-out evaluation where the MLP arm reached 85.0%, and its rocket arm
+0.0%. `build_cfg` therefore has no `arch` / `trunk_hidden` / `critic_trunk_hidden` knob, and
+`algorithms/ppo/ppo_flashnet.py` no longer exists.
 
 ## 4. Shared learning-rate schedule
 
@@ -109,9 +85,7 @@ reported as "same formula, chunked (PPO) vs per-update (FlashSAC) application".
 All arms of a task share `build_cfg`'s defaults; a per-task entry overrides exactly the variables
 under test (e.g. `train_quadx.py` pins lr $3\times10^{-4}$, entropy $0.01$, $\sigma_0=1.0$,
 `num_steps_per_env` 100, epochs 5; `train_docking.py` pins lr $3\times10^{-4}$, $\gamma=0.999$,
-entropy $0.005$). Architecture A/Bs run the same entry twice with
-`arch='flash_residual' | 'mlp'` into separate output directories (the `ARMS` pattern of
-`train_docking.py`). Unless pinned otherwise, runs use $N=1024$ replicas, seed 7, and a budget of
+entropy $0.005$). Unless pinned otherwise, runs use $N=1024$ replicas, seed 7, and a budget of
 1000 updates, i.e. $1000\times32\times1024 \approx 3.28\times10^{7}$ transitions; `run.json`
 records `transitions`, `train_wall_seconds`, `train_throughput_steps_per_s` and `peak_vram_gib`
 alongside the episode counters, and comparisons are reported at equal interaction steps (sample
@@ -119,9 +93,8 @@ efficiency) and equal wall clock (throughput) per the frozen evaluation protocol
 
 ## 6. Implementation
 
-- Harness: `algorithms/train_utils.py` (`build_cfg`, `run_training`, `RslVecEnv`); trunk:
-  `algorithms/ppo/ppo_flashnet.py` (`FlashResMLPModel`, `FlashResTrunk`); algorithm:
-  `rsl_rl.algorithms.PPO` (rsl-rl).
+- Harness: `algorithms/train_utils.py` (`build_cfg`, `run_training`, `RslVecEnv`); algorithm:
+  `rsl_rl.algorithms.PPO` (rsl-rl) over rsl-rl `MLPModel` actors/critics.
 - Artifacts per run: `checkpoint.pt` + `model_{it}.pt` every 100 updates (`save_interval=100`),
   `run.json`, `config.json` under `results/<task>/`; logging via TensorBoard (`logger='tensorboard'`).
 

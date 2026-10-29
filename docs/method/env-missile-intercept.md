@@ -148,10 +148,9 @@ components matching the `reward_components` keys:
 
 \begin{align}
 r_{\text{progress}} &= 0.01\,(d^{-} - d) && \text{telescoping closing progress}, \tag{2a}\\
-r_{\text{align}} &= 0.02\,(\hat v\cdot \hat r) && \text{velocity/LOS alignment}, \tag{2b}\\
-r_{\text{ctrl}} &= -0.01\,\lVert \bar a\rVert^{2} && \text{rate-command effort}, \tag{2c}\\
-r_{\text{kill}} &= +50 && \text{once, on kill}, \tag{2d}\\
-r_{\text{miss}} &= -10 && \text{once, on unrecoverable miss}, \tag{2e}
+r_{\text{align}} &= 0.01\,(\hat v\cdot \hat r) && \text{velocity/LOS alignment}, \tag{2b}\\
+r_{\text{kill}} &= +100 && \text{once, on kill}, \tag{2c}\\
+r_{\text{miss}} &= -10\min(d_{\min}/500\,\text{m},1) && \text{once, on unrecoverable miss}. \tag{2d}
 \end{align}
 
 with $d^{-}$ the range at the previous inner-step boundary. The alignment term
@@ -229,7 +228,7 @@ aerodynamic terms evaluate $v_{\text{air}} = v - v_{\text{wind}}$. Calm air
 
 On any completed episode, `extras['episode']` reports `success_rate`,
 `miss_distance` (the per-episode minimum range, tracked at 240 Hz), and the
-per-component reward means `rew_{progress, align, ctrl, kill, miss}`;
+per-component reward means `rew_{progress, align, kill, miss}`;
 long-run accumulators in `completed_metrics` add `kill_rate`, `miss_rate`, and
 `timeout_rate`. `extras['terminal_observations']` carries the float32 terminal
 observation for all replicas; `extras['time_outs']` is the timeout mask of
@@ -255,8 +254,8 @@ Section 8.
 | `KILL_RADIUS` | 15.0 m |
 | `R_SPAWN` / `CONE` / `A_LAT` / `F_WEAVE` | 2500 m / 37.5° / 7.5 g / 0.75 Hz |
 | `V_T` / `V_M0` / `Z_MID` | 250 / 250 m/s / 4000 m |
-| `K_PROG` / `K_ALIGN` / `K_CTRL` | 0.01 / 0.02 / 0.01 |
-| `KILL_BONUS` / `MISS_PENALTY` / `TGO_SCALE` | +50 / −10 / 0.8 |
+| `K_PROG` / `K_ALIGN` | 0.01 / 0.01 |
+| `KILL_BONUS` / `MISS_PENALTY` / `MISS_REF` / `TGO_SCALE` | +100 / −10 / 500 m / 0.8 |
 | mass / boost thrust / burn time | 150 kg / 20 000 N / 4.0 s |
 | `vel_clamp` | 1200 m/s, 40 rad/s |
 | bounds / miss condition | $\lVert p\rVert > 15$ km or $z < 0$ / $r\cdot v_{\text{rel}} > 0$ after $t > 2$ s |

@@ -47,27 +47,19 @@ class RslVecEnv(VecEnv):
 def build_cfg(*, lr_schedule='fixed',
               learning_rate=.001, desired_kl=.01, entropy_coef=.001, init_std=.5,
               gamma=.99, lam=.95, num_steps_per_env=32, num_learning_epochs=4,
-              num_mini_batches=4, clip_param=.2, value_loss_coef=1.0,
-              arch='flash_residual', trunk_hidden=128, critic_trunk_hidden=256):
+              num_mini_batches=4, clip_param=.2, value_loss_coef=1.0):
     """PPO/model config, identical for every task (fair-comparison baseline).
 
     Keyword overrides exist so a task entry can vary exactly the variables
     under test while everything else stays at the shared defaults.
 
-    arch: 'flash_residual' (default, the FlashSAC network structure via
-    algorithms/ppo/ppo_flashnet.py: BN embedder + 2 residual blocks + RMSNorm
-    trunk, actor 2x128 / critic 2x256, UnitLinear/RMSNorm weight
-    renormalization on the update path; BN-free for PPO -- BatchNorm is
-    incompatible with the on-policy ratio) or 'mlp' (opt-out 2x128 tanh MLP,
-    kept for architecture A/B arms). Trunk is the project-wide default since
-    the 2026-10-21 3-way A/B: under the shared warmup-cosine
-    schedule it beats the MLP by 66 return points (-153.1 vs -219.4) and
-    nearly matches native FlashSAC (-144.4).
-
-    trunk_hidden / critic_trunk_hidden: widths of the residual trunk for the
-    actor / critic under arch='flash_residual'. Defaults (128/256) are the
-    project-wide baseline; narrow widths can be pinned as an explicit A/B
-    (e.g. rendezvous, where 64x64 beat 512x256x128 by 22 points).
+    Actor and critic are the 2x128 tanh MLP (rsl-rl MLPModel) with running-
+    stats EmpiricalNormalization. The FlashSAC-trunk architecture
+    (`arch='flash_residual'`, the residual blocks + UnitLinear/RMSNorm
+    renormalization of algorithms/ppo/ppo_flashnet.py) was removed on
+    2026-10-28 by user decision: on the 1024-env single-seed run its docking
+    arm scored 0.0% on the held-out evaluation where the MLP arm reached
+    85.0%, and its rocket arm 0.0%.
 
     Shared lr defaults follow the 2026-10-20 tuning history: the KL-adaptive
     schedule is the project-wide pathology (rides its 1e-2 ceiling on
@@ -79,27 +71,9 @@ def build_cfg(*, lr_schedule='fixed',
     default; the shipped entries pin their per-task proven optimum
     (quadx/fixedwing/rocket/satellite/rendezvous/docking/missile fixed 3e-4,
     transfer fixed 2.5e-4)."""
-    if arch not in ('flash_residual', 'mlp'):
-        raise ValueError(f'unknown arch {arch!r} (expected flash_residual | mlp)')
-    if arch == 'flash_residual':
-        flash_cfg = {'class_name': 'algorithms.ppo.ppo_flashnet:FlashResMLPModel'}
-        # use_bn=False: BatchNorm is incompatible with PPO's on-policy ratio --
-        # with batch stats the log-prob of a sample depends on the OTHER samples
-        # in its batch, so the rollout policy (stats over 1024 replicas/step) and
-        # the update policy (stats over 8k minibatches) are different functions
-        # no matter how the stats are shared (verified 2026-10-21 bisection:
-        # BN split / batch-everywhere / renorm-off / head-gain / no-value-clip /
-        # no-BN-critic-only ALL flat-lined; the critic is innocent -- offline it
-        # fits returns 3x better than the MLP). The trunk keeps FlashSAC's
-        # UnitLinear residual geometry + RMSNorm + weight renormalization;
-        # input whitening moves to EmpiricalNormalization (as in the MLP arm).
-        actor = {**flash_cfg, 'trunk_hidden': trunk_hidden, 'trunk_blocks': 2, 'use_bn': False,
-                 'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
-        critic = {**flash_cfg, 'trunk_hidden': critic_trunk_hidden, 'trunk_blocks': 2, 'use_bn': False}
-    else:
-        actor = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True,
-                 'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
-        critic = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True}
+    actor = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True,
+             'distribution_cfg': {'class_name': 'GaussianDistribution', 'init_std': init_std, 'std_type': 'log'}}
+    critic = {'class_name': 'MLPModel', 'hidden_dims': [128, 128], 'activation': 'tanh', 'obs_normalization': True}
     return {'num_steps_per_env': num_steps_per_env, 'save_interval': 10_000_000, 'obs_groups': {'actor': ['policy'], 'critic': ['policy']},
             'actor': actor,
             'critic': critic,

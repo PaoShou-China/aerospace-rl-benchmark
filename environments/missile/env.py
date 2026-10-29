@@ -36,10 +36,12 @@ decision):
 
 Reward (per inner step, only while active):
   +0.01 * (d_prev - d)          telescoping closing-progress potential
-  +0.02 * (v_hat . r_hat)       velocity/LOS alignment (dense PN-consistent
+  +0.01 * (v_hat . r_hat)       velocity/LOS alignment (dense PN-consistent
                                 guidance shaping; the from-scratch signal)
-  -0.01 * |action|^2            rate-command effort
-  +50 on kill (once), -10 on unrecoverable miss (once)
+  +100 on kill (once)
+  -10 * min(d_min / 500 m, 1) on unrecoverable miss (once)
+The guidance term is selectable via the `reward_variant` ctor kwarg (default
+'graded_terminal'); see K_ZEM / ZEM_GATE for the measured alternatives.
 Components are accumulated and reported as Episode/rew_* scalars plus
 completed_metrics keys, so reward attribution is observable.
 
@@ -78,6 +80,18 @@ def _aim_quat(aim,roll):
                         w1*y2-x1*z2+y1*w2+z1*x2, w1*z2+x1*y2-y1*x2+z1*w2),-1)
 
 
+def _zem(r,v_rel):
+    """Zero-effort miss: the closest-approach range if thrust stopped now.
+
+    Magnitude of the component of the relative position perpendicular to the
+    relative velocity. Its terminal value is the actual miss distance, so it
+    shares the kill objective's units and direction.
+    """
+    v2=v_rel.square().sum(-1).clamp_min(1.)
+    along=(r*v_rel).sum(-1,keepdim=True)/v2[:,None]
+    return (r-along*v_rel).norm(dim=-1)
+
+
 OMEGA_MAX=6.0     # roll-rate command limit [rad/s]
 OMEGA_LAT=1.0     # pitch/yaw rate command limit [rad/s]. Raised 0.5 -> 1.0 on
                   # 2026-10-24 for vanilla-PPO learnability: the steady
@@ -98,10 +112,35 @@ V_T=250.          # target speed [m/s]
 V_M0=250.         # missile launch speed [m/s]
 Z_MID=4000.       # engagement altitude [m]
 K_PROG=.01        # closing-progress gain per metre
-K_ALIGN=.02       # velocity/LOS alignment gain (dense PN-shaped guidance signal)
-K_CTRL=.01        # rate-command effort gain
-KILL_BONUS=50.
+K_ALIGN=.01       # velocity/LOS alignment gain (dense PN-shaped guidance signal).
+                  # Halved 0.02 -> 0.01 on 2026-10-28 (run 1 diagnosis): the
+                  # lead-aim ballistic policy already maxes this term (~8.7/ep,
+                  # constant across all training phases), so at 0.02 it inflated
+                  # the do-nothing return and diluted the kill differential.
+K_ZEM=10.         # zero-effort-miss shaping gain (2026-10-29, 'zem' variant).
+                  # NOT the default: measured against APN vs the zero policy the
+                  # instantaneous ZEM barely moves along a ballistic trajectory
+                  # (it is nearly conserved) and is sensitive to the missile's
+                  # own velocity direction, so the term gave a 0.41/ep
+                  # discriminative gap at 2.40/ep std -- 3x worse SNR than the
+                  # alignment term it was meant to replace. Kept for reference.
+ZEM_REF=500.      # ZEM normalizer [m]; full-scale miss reduction per episode.
+ZEM_GATE=800.     # guide-term range gate [m] for 'zem' and 'align_gated'.
+                  # Outside it the guidance signal is dominated by geometry the
+                  # policy cannot yet act on: measured, ZEM grows from ~45 m at
+                  # spawn to ~580 m of real miss on a weave target. 800 m
+                  # ~= 1.6 s time-to-go, where terminal corrections pay off.
+                  # 'align_gated' keeps the alignment gap (0.205 vs 0.184/ep)
+                  # while cutting the policy-insensitive plateau 4.36 -> 1.18.
+KILL_BONUS=100.   # kill bonus. Doubled 50 -> 100 on 2026-10-28 (run 1): the
+                  # discounted terminal bonus (~0.995^150-300) was worth only
+                  # ~11-23 vs the ~24/ep shaping plateau, too weak to select
+                  # terminal correction; kills decayed 11% -> 1%.
 MISS_PENALTY=10.
+MISS_REF=500.     # miss distance paying the full penalty [m]. 2026-10-29: the
+                  # binary miss penalty gave near-misses and far-misses identical
+                  # terminal advantage. Linear grading supplies a smooth signal
+                  # across the fuse boundary without changing success criteria.
 TGO_SCALE=0.8     # fire-control t_go factor for the launch-aim lead
                   # (1.0 = nominal closed-form; 0.8 measured best on the fixed
                   # medium point: shorter lead trims overshoot misses, +0.8pp
@@ -113,12 +152,17 @@ class MissileInterceptEnv:
     OMEGA_MAX=OMEGA_MAX
 
     def __init__(self,num_envs=64,backend='cpu',seed=7,
-                 steady_wind=None,dryden=0.,severity='moderate'):
+                 steady_wind=None,dryden=0.,severity='moderate',
+                 reward_variant='graded_terminal'):
         if num_envs<1:raise ValueError('n must be positive')
+        if reward_variant not in ('graded_terminal','align_gated','terminal_gauss','zem'):
+            raise ValueError(f"unknown reward_variant {reward_variant!r}")
         self.num_envs=num_envs
+        self.reward_variant=reward_variant
         self.task_cfg={'vehicle':'missile','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized_dynamics',
-                       'task_defaults':'project-authored 6-DOF intercept'}
+                       'task_defaults':'project-authored 6-DOF intercept',
+                       'reward_variant':reward_variant}
         self.clip_actions=1.0
         self.plant=TensorPlant('missile',num_envs,backend,seed,vel_clamp=(1200.,40.))
         self.device=self.plant.device
@@ -153,6 +197,7 @@ class MissileInterceptEnv:
         self.min_distance=zeros(num_envs)
         self.dist=zeros(num_envs)          # current missile-target range
         self.dist_prev=zeros(num_envs)     # range at the previous inner-step boundary
+        self.zem_prev=zeros(num_envs)      # zero-effort miss at the previous boundary
         self.target_pos=zeros(num_envs,3)
         self.target_vel=zeros(num_envs,3)
         # kinematic target parameters (reset_idx-owned)
@@ -166,7 +211,7 @@ class MissileInterceptEnv:
         self.t_center=zeros(num_envs,3)    # barrel circle center
         self.t_omega_b=zeros(num_envs)     # barrel angular rate (signed) [rad/s]
         self.t_radius=zeros(num_envs)      # barrel radius [m]
-        keys=('progress','align','ctrl','kill','miss')
+        keys=('progress','zem','kill','miss') if reward_variant=='zem' else ('progress','align','kill','miss')
         self.reward_components={k:zeros(num_envs) for k in keys}
         self.completed_metrics={'miss_distance':zeros(num_envs),
                                 'kill_rate':zeros(num_envs),'miss_rate':zeros(num_envs),
@@ -256,26 +301,59 @@ class MissileInterceptEnv:
             observation=torch.cat((wb,q[:,1:],q[:,:1],vb,p,self.action,self.plant.auxiliary(),rel),-1)
             if self._observation is None:self._observation=observation.clone()
             else:self._observation.copy_(torch.where(active[:,None],observation,self._observation))
-            # reward: telescoping closing progress, dense velocity/LOS
-            # alignment shaping (the from-scratch PPO guidance signal -- it is
-            # potential-like, locally computable, and unlike the old |LOS
-            # rate| penalty cannot be gamed by flying away), effort
+            # reward: telescoping closing progress plus one dense guidance term.
+            # No effort term: it drove commands to zero and opposed the terminal
+            # corrections that produce kills. The terminal miss cost grades
+            # near-misses by their closest approach instead.
+            # 'graded_terminal' shapes on velocity/LOS alignment, which the lead
+            # aim already maxes out; 'zem' shapes on the zero-effort miss, whose
+            # stepwise decrease telescopes to the miss-distance improvement.
             progress=K_PROG*(self.dist_prev-self.dist)
-            v_hat=v/v.norm(dim=-1,keepdim=True).clamp_min(1.)
-            r_hat=r_w/r2.clamp_min(1e-6).sqrt()[:,None]
-            align=K_ALIGN*(v_hat*r_hat).sum(-1)
-            ctrl=-K_CTRL*command.square().sum(-1)
-            kill_r=torch.where(kill_ev&active,torch.full_like(progress,KILL_BONUS),torch.zeros_like(progress))
-            miss_r=torch.where(miss_ev&active,torch.full_like(progress,-MISS_PENALTY),torch.zeros_like(progress))
-            shaping=progress+align+ctrl+kill_r+miss_r
+            if self.reward_variant=='zem':
+                zem=_zem(r_w,v_rel)
+                inside=(self.dist<ZEM_GATE).to(zem.dtype)
+                guide=K_ZEM*inside*(self.zem_prev-zem)/ZEM_REF
+                self.zem_prev.copy_(torch.where(active,zem,self.zem_prev))
+            else:
+                v_hat=v/v.norm(dim=-1,keepdim=True).clamp_min(1.)
+                r_hat=r_w/r2.clamp_min(1e-6).sqrt()[:,None]
+                guide=K_ALIGN*(v_hat*r_hat).sum(-1)
+                if self.reward_variant=='align_gated':
+                    guide=guide*(self.dist<ZEM_GATE).to(guide.dtype)
+            # terminal events pay once per episode: `complete`/`miss_flag` are
+            # sticky within the episode, while `active` is recomputed per inner
+            # step (an episode that killed on inner step 1 is still "active" on
+            # inner step 2, which used to pay the terminal term twice).
+            kpay=kill_ev&active&~self.complete
+            mpay=miss_ev&active&~self.miss_flag
+            if self.reward_variant=='terminal_gauss':
+                # paid once after the inner loop, against the episode's final
+                # closest approach (see the block after this loop)
+                kill_r=torch.zeros_like(progress)
+            else:
+                kill_r=torch.where(kpay,torch.full_like(progress,KILL_BONUS),torch.zeros_like(progress))
+            miss_cost=MISS_PENALTY*(self.min_distance/MISS_REF).clamp(max=1.)
+            miss_r=torch.where(mpay,-miss_cost,torch.zeros_like(progress))
+            shaping=progress+guide+kill_r+miss_r
             self.reward.copy_(torch.where(active,self.reward+shaping,self.reward))
-            comps=(progress,align,ctrl,kill_r,miss_r)
+            comps=(progress,guide,kill_r,miss_r)
             for k,c in zip(self.reward_components,comps):
                 self.reward_components[k]+=torch.where(active,c,0.)
             self.complete|=kill_ev&active
             self.miss_flag|=miss_ev&active
             self.terminated|=(miss_ev|((p[:,2]<0)|(p.norm(dim=-1)>15000)))&active
         # time limit applies after the full control step (rocket semantics)
+        if self.reward_variant=='terminal_gauss':
+            # Soft fuse: the same 100 at zero miss, decaying over the fuse radius
+            # instead of stepping at 15 m, so every episode carries a monotone
+            # terminal signal. Measured on the APN endgame-ablation family
+            # (88% vs 33% kill rate): span/sd 1.40 vs 1.19 for the hard bonus and
+            # std 51.6 -> 25.9, with both asymptotes preserved (0 m -> 100,
+            # 500 m -> the -10 miss floor).
+            fuse=KILL_BONUS*torch.exp(-(self.min_distance/KILL_RADIUS).square())
+            fuse=torch.where(self.terminated|self.complete,fuse,torch.zeros_like(fuse))
+            self.reward.copy_(self.reward+fuse)
+            self.reward_components['kill'].add_(fuse)
         active=~(self.terminated|self.truncated)
         self.truncated|=((self.count>=self.max_steps)|self.complete)&active
 
@@ -394,12 +472,19 @@ class MissileInterceptEnv:
         self.t_type=torch.where(mask,mtype,self.t_type)
         self.t_center=sel(center,self.t_center);self.t_omega_b=sel(omega_b,self.t_omega_b)
         self.t_radius=sel(Rb,self.t_radius)
+        # sim_time must be zeroed BEFORE sampling the target: _target_state()
+        # is a function of sim_time, so sampling at the finished episode's
+        # t~4 s put the target ~1 km off its true spawn point and poisoned the
+        # initial dist/dist_prev (spurious first-step progress reward) and the
+        # initial observation.
+        self.sim_time=sel(torch.zeros_like(self.sim_time),self.sim_time)
         tp,tv=self._target_state()
         self.target_pos=sel(tp,self.target_pos);self.target_vel=sel(tv,self.target_vel)
         dist=(self.target_pos-p_new).norm(dim=-1)
         self.dist=sel(dist,self.dist);self.dist_prev=sel(dist,self.dist_prev)
+        if self.reward_variant=='zem':
+            self.zem_prev=sel(_zem(self.target_pos-p_new,self.target_vel-v_new),self.zem_prev)
         self.min_distance=sel(torch.full_like(dist,1e9),self.min_distance)
-        self.sim_time=sel(torch.zeros_like(dist),self.sim_time)
         self.count.masked_fill_(mask,0)
         self.terminated.masked_fill_(mask,False);self.truncated.masked_fill_(mask,False)
         self.out_of_bounds.masked_fill_(mask,False)

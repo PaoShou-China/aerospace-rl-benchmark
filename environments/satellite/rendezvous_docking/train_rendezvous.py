@@ -45,7 +45,9 @@ eval.py (no env kwargs) always evaluates the full benchmark spawn
 sat at 100% success).
 
 Narrow net: 64x64 was the only arm that learned this task (22% success vs
-0.8% for 512x256x128), so the shared residual trunk is pinned to 64.
+0.8% for 512x256x128) under the retired residual trunk; with the trunk removed
+(2026-10-28) the shared 2x128 tanh MLP is used, i.e. the archived 64x64 recipe
+is no longer reproducible.
 """
 import sys
 from pathlib import Path
@@ -64,22 +66,68 @@ BACKEND = 'gpu'          # 'gpu' | 'cpu'
 RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
 CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
-# Web-alignment (2026-10-21): lr 3e-4 follows the hierarchical multiphase
-# rendezvous paper (arXiv:2610.17468), which also uses gamma 0.99, lam 0.95,
-# entropy 0.01, target KL 0.03. gamma/entropy keep the locally verified 0.999/
-# 0.003 (see docstring: gamma 0.99 makes the maneuver look like slow creeping;
-# entropy 0.01 caused std runaway). The paper's constant lr replaces the old
-# 1e-3 + 400-update decay, so the decay knob is dropped.
+# 2026-10-28: BC warm start proved the init/reward fine (93-98% rolling success,
+# iterations 1-5) and lr 1e-3 (+400-update decay) destroyed it within ~5 updates;
+# with the warm start on, the lr drops to the gentler fixed 3e-4 (decay dropped).
+# 2026-10-28 final arm: sigma_pin=0.2 + lr_sigma_coupling=1.5e-3 (lr=3e-4 at the
+# pinned sigma 0.2, drift rate lr/sigma held constant) -- the BC actor is near-
+# deterministic (sigma->0), the mean's policy gradient scales ~1/sigma^2 and the
+# bust is lr- (1e-4..1e-3) and entropy- (0/.003) independent; pinning sigma
+# keeps the noisy-rollout objective aligned with greedy behavior (measured:
+# sigma 0.2 holds ~60-64%) and entropy 0.0 is moot since log_std is overwritten.
+# 2026-10-28 variant: sigma_pin 0.2 -> 0.05 (0.2 only slowed the bust: ~10%
+# rolling plateau then 0 by end, cumulative 0.98%, greedy 0.0%); tighter pin
+# sits closer to the greedy maneuver. lr = 1.5e-3 * 0.05 = 7.5e-5.
+# 2026-10-29 ARM A: PPO knobs unchanged (this is the best prior arm); the lever
+# moves to the env -- time_penalty=.01/step in env.py makes the ~190 m hover
+# bust target unprofitable (SpaceGym CVPRW 2026; AAS 23-026).
+LR_SIGMA_COUPLING = 1.5e-3
+SIGMA_PIN = 0.2
+# 2026-10-29 no-BC from-scratch sweep (all with time_penalty=.01 + spawn easing
+# + 100-pt spread, seed 7): fixed lr 3e-4/ent .003 -> greedy 11% (boom 99%,
+# tail 50%); coupling 6e-4/ent .003 (sigma stuck 0.552) -> 21%; coupling 6e-4/
+# ent .0005 (sigma anneals to 0.23-0.28, lr follows) -> 24% @1500 upd, 10% @3000;
+# pin 0.05 -> 0% flat (no discovery); BEST: pin 0.2 + coupling 1.5e-3 (lr 3e-4)
+# @1500 upd -> rolling 40%, greedy 26%. Conclusion: without the BC warm start
+# the sampled-rollout noise keeps re-eroding the discovered maneuver -- no PPO
+# schedule among those tested holds it; the hot start (sigma pin 0.05 + BC) is
+# what held 99.5% greedy. BC_WARMSTART stays None per user decision.
+# 2026-10-29 PPO-knob + env-param sweep (5 arms, seed 7, 1024 envs, 1500
+# updates each, PPO core = the pin-0.2/coupling-1.5e-3 arm above; greedy =
+# deterministic mean action at the BENCHMARK spawn 1000-1500 m, 1024 envs):
+#   a1 num_steps_per_env 250->500, env unchanged        : greedy 30.3%
+#   a2 spawn (300,600)->(200,400) + time_penalty .01->.02: greedy 40.6%  <- WINNER
+#   a3 a1+a2 combined                                    : greedy  3.1%  (overfits
+#       the eased spawn; 2x data at 500-step rollouts on the short-spawn env)
+#   a4 terminal_bonus 100->200 / viol_penalty 100->50    : greedy 23.7%
+#   a5 a2 env + num_learning_epochs 4->10 + clip 0.2->0.1: greedy  0.2%  (boom
+#       to 100% rolling then full collapse)
+# Every arm boomed to ~99-100% rolling at its eased training spawn, then
+# eroded (tails 43-51%); the levers that moved benchmark greedy are env-side
+# (closer spawn + harder hover floor). New default = a2: the PPO constants
+# below are UNCHANGED, the env moves to (200,400) + time_penalty .02 (see
+# satellite/rendezvous_docking/env.py).
 PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=.999, num_mini_batches=1,
-                     lr_schedule='fixed', learning_rate=3e-4, entropy_coef=.003,
-                     trunk_hidden=64, critic_trunk_hidden=64)
+                     entropy_coef=0.0)
+UPDATES = 1500
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
+# 2026-10-28: enabled (shared defaults) -- pure PPO from scratch busts back to ~0 after
+# booming to 78% success (100-pt spread); BC inherits the 100%-success expert's ceiling.
+# 2026-10-29: OFF by user decision ("默认不用热启动") -- time_penalty + spawn easing
+# (env.py) must bootstrap from scratch on their own.
 BC_WARMSTART = None
 
+# 2026-10-29: training-only spawn easing as a local subclass. The env default
+# stays at the benchmark (1000,1500) so scripts/eval.py (which rebuilds the env
+# from config.json env_kwargs, empty here) always evaluates benchmark spawn.
+class _EasedSpawnEnv(SpaceRendezvousEnv):
+    init_range=(200.,400.)   # sweep winner a2 (see the sweep table above)
+
 if __name__ == '__main__':
-    run_training(TASK, SpaceRendezvousEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
+    run_training(TASK, _EasedSpawnEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
                  backend=BACKEND, resume=RESUME, clean=CLEAN,
                  algo=ALGORITHM, bc_warmstart=BC_WARMSTART,
+                 lr_sigma_coupling=LR_SIGMA_COUPLING, sigma_pin=SIGMA_PIN,
                  **PPO_OVERRIDES)

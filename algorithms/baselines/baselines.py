@@ -290,14 +290,14 @@ class QuadXSE3Baseline(Baseline):
     collective interface by inverting its mixer (tau_pid = Mmix' diff / 4 with
     diff = pwm - mean(pwm)) and its rate-loop P gain (w_cmd = w + tau/kp).
 
-    One practical augmentation beyond the paper: the frozen plant's motor lag
-    state passes through the multiplicative motor noise every physics step,
-    E[1 + 0.02*N(4,1)] = 1.08, giving the commanded pwm a measured dc gain of
-    1.216 (matches the lag-filter fixed point) and delivered thrust a 1.216^2
-    ~ 1.48 gain.  The commanded pwm vector is divided by PWM_GAIN so delivered
-    thrust/differentials match the ideal wrench; a small integral on the
-    b3-projected position error then trims residuals, freezing under
-    total-thrust saturation (anti-windup) and clearing on reset_idx.
+    One practical augmentation beyond the paper: the commanded pwm vector is
+    divided by PWM_GAIN so delivered thrust/differentials match the ideal
+    wrench.  The plant's motor-lag state passes through the multiplicative
+    motor noise every physics step; with the zero-mean noise fix the lag
+    fixed point is exactly the commanded pwm (dc gain 1.0), so PWM_GAIN = 1.
+    A small integral on the b3-projected position error then trims residuals,
+    freezing under total-thrust saturation (anti-windup) and clearing on
+    reset_idx.
     Saturation accounting lives in self.sat_total / self.sat_rotor /
     self.sat_rate (cumulative clipped-command fractions per replica).
     """
@@ -312,7 +312,7 @@ class QuadXSE3Baseline(Baseline):
     TOTAL_THRUST = 2.0             # N at pwm = 1, all four rotors
     PWM_MIN, PWM_MAX, THR_MAX = 0.05, 1.0, 0.8   # plant mixer / env command
     KP_RATE = (0.04, 0.04, 0.08)   # plant inner rate-PID P gains
-    PWM_GAIN = 1.216               # motor-lag dc gain under noise mean 1.08
+    PWM_GAIN = 1.0                 # motor-lag dc gain = 1 under zero-mean noise
 
     # controller gains
     KX, KV = 4.0, 3.0              # position PD [1/s^2, 1/s]
@@ -615,7 +615,7 @@ class QuadXCascadePIDBaseline(Baseline):
     G = 9.81                       # m/s^2, world -z
     TOTAL_THRUST = 2.0             # N at pwm = 1 on all four rotors
     THR_MAX = 0.8                  # env collective command ceiling
-    PWM_GAIN = 1.216               # motor-lag dc gain under noise mean 1.08
+    PWM_GAIN = 1.0                 # motor-lag dc gain = 1 under zero-mean noise
 
     # outer position PID [s^-2, s^-3, s^-1] and output/integral clamps
     KP_POS = 3.0                   # position error -> acceleration [1/s^2]
@@ -2769,26 +2769,28 @@ class QuadplaneHybridBaseline(Baseline):
     Direct adaptation of QuadXCascadePIDBaseline (position PD → roll/pitch/collective
     via heading-frame force resolution → attitude PD → body-rate commands executed
     by the env's rate PID), with constants swapped for the quadplane's 2.35 kg
-    mass, asymmetric front/rear motor thrust constants, and 8-channel action
-    space (rates + collective + 3 surfaces + forward pusher).
+    mass, four identical quad motors, and 8-channel action space (rates +
+    collective + 3 surfaces + forward pusher).
 
     The plant mixer is physically derived (pseudoinverse of the rotor torque
-    mapping τ = A @ ΔT, linearized around level-flight pwm).  Rows = motors,
-    cols = inputs (roll, pitch, yaw, collective), with simple direct clamp
-    (no collective redistribution) to preserve intended torque directions.
-    The collective row (amplitude 0.7) caps total quad thrust at 85 N
-    (T/W ≈ 3.7); the asymmetric URDF gives inherent roll/pitch biases that
-    the rate-PID integral cancels at steady state.
+    mapping τ = A @ ΔT, linearized around hover pwm 0.626).  Rows = motors,
+    cols = inputs (roll, pitch, yaw, collective), collective row amplitude 1.0,
+    with simple direct clamp (no collective redistribution) to preserve
+    intended torque directions.  Total quad thrust is capped at 58.9 N
+    (T/W ≈ 2.55).  The CG sits 3.2 mm behind the rotor centroid, a small
+    inherent nose-up pitch bias (0.07 N·m) that the rate-PID integral preload
+    cancels from the first step.
 
     Plant constants mirrored from environments/common/plant.py (frozen):
         total_mass = 2.35 kg, weight = 23.05 N
-        front motors (2): 69.3 N each @ pwm=1.0
-        rear motors  (2): 17.3 N each @ pwm=1.0
-        total quad thrust @ pwm=1.0: 173.3 N; col_row=0.7 caps collective at 84.9 N
-        forward motor: 138.6 N @ throttle=1
-        rate PID: kp=[0.5,0.5,1.0], ki=[0.005,0.005,0.02],
-                  kd=[0.6,0.6,0.05], lim=[2.0,2.0,2.0]
-        mixer: rows=motors, cols=inputs (roll,pitch,yaw,col), scale=10×
+        quad motors (4, identical): 14.715 N each @ pwm=1.0 (t2w 1.5 * g)
+        total quad thrust @ collective=1: 58.86 N; hover pwm = 0.626
+        forward pusher: 58.86 N @ throttle=1 (t2w 6 * g), along body +x
+        rate PID: kp=[0.9,0.8,4.0], ki=[0.005,0.005,0.02],
+                  kd=[0,0,0] (D-on-error is discretely unstable here),
+                  lim=[2.0,2.0,2.0]
+        mixer: rows=motors, cols=inputs (roll,pitch,yaw,col), s=0.09504
+               (+-1 PID unit -> +-3.5 N.m roll/pitch, +-0.176 N.m yaw)
         simple clamp (no normalization)
     """
 
@@ -2796,18 +2798,21 @@ class QuadplaneHybridBaseline(Baseline):
 
     MASS = 2.35
     G = 9.81
-    TOTAL_THRUST = 84.9          # N at collective=1 (col_row amplitude 0.7 → 0.7²*173.3)
+    TOTAL_THRUST = 58.86         # N at collective=1 (4 x 14.715 N, col row 1.0)
     THR_MAX = 1.0                 # env collective command ceiling [0, 1]
-    PWM_GAIN = 1.0                # motor-lag dc gain ≈ 1.0 for quadplane (no 8% noise)
+    PWM_GAIN = 1.0                # motor-lag dc gain = 1 under zero-mean noise
 
-    # outer position PID [1/s^2, 1/s^3, 1/s] and clamps.  Gains are very
-    # conservative — the quadplane only has ~85 N collective thrust with
-    # T/W ≈ 3.7, and the forward pusher adds more at high airspeed.
-    KP_POS = 0.4; KI_POS = 0.01; KD_POS = 1.0
-    A_MAX = 1.5; I_MAX = 0.3
+    # outer position PID [1/s^2, 1/s^3, 1/s] and clamps.  The quadplane has
+    # ~59 N collective thrust (T/W ≈ 2.55) plus the pusher; gains are tuned
+    # for the 30 s / 4-waypoint / 40-75 m task budget (≈6 s per leg).
+    KP_POS = 1.8; KI_POS = 0.01; KD_POS = 2.2
+    A_MAX = 5.5; I_MAX = 0.3
     # attitude P/PD -> body-rate commands
     KP_ATT = 6.0; KD_ATT = 0.6
-    KP_YAW = 3.0; KD_YAW = 0.3
+    # yaw: physical authority is only 0.88 rad/s inner-loop bandwidth, so the
+    # outer yaw gain must stay near it (KP_YAW=3 rang the loop at ~4 deg
+    # phase margin); 1.0 gives ~41 deg PM and turns 40 deg in ~1.5 s.
+    KP_YAW = 1.0; KD_YAW = 0.3
     YAW_REF = 0.0
     RATE_MAX = math.pi * 0.7
 
@@ -2815,18 +2820,18 @@ class QuadplaneHybridBaseline(Baseline):
     # steady-state bias, so zero feedforward needed.
     ROLL_BIAS = 0.0
 
-    # forward pusher (very gentle)
-    V_CRUISE = 8.0
-    K_FF = 0.03
-    FF_MAX = 0.30                 # raw 0.30 → physical 0.65 → thrust ~138*0.42=58 N
+    # forward pusher: holds ~15 m/s cruise against ~13 N drag at speed
+    V_CRUISE = 15.0
+    K_FF = 0.15
+    FF_MAX = 0.80                 # raw 0.80 → thrust = 58.86*0.80^2 ≈ 37.7 N
 
     # Rate-PID integral preload canceling the airframe's inherent torque bias
-    # (measured open-loop at hover pwm=0.365, zero PID gains, uniform
-    # collective: w_dot = [-0.71, -20.49, +0.06] rad/s^2; mixer authority per
-    # unit input: [+19.2, +36.4, +0.49] rad/s^2).  roll = 0.71/19.2,
-    # pitch = 20.5/36.4.  Without the preload the tiny ki=0.005 integral
-    # needs ~100 s to wind up and the craft tumbles within 0.5 s.
-    INTEGRAL_PRELOAD = (0.037, 0.563, 0.0)
+    # (measured open-loop at hover pwm=0.6258 with a pass-through PID:
+    # w_dot = [0, -0.242, 0] rad/s^2 from the 3.2 mm CG offset behind the
+    # rotor centroid; mixer authority [roll 6.81, pitch 11.40, yaw 0.219]
+    # rad/s^2 per unit input).  pitch preload = 0.242/11.40 = 0.0213.
+    # Without the preload the tiny ki=0.005 integral takes seconds to wind up.
+    INTEGRAL_PRELOAD = (0.0, 0.0213, 0.0)
 
     def __init__(self, env):
         super().__init__(env)
@@ -2838,7 +2843,7 @@ class QuadplaneHybridBaseline(Baseline):
                                   device=d, dtype=torch.float64)
         self.kd_att = torch.tensor((self.KD_ATT, self.KD_ATT, self.KD_YAW),
                                    device=d, dtype=torch.float64)
-        self.f_max = self.TOTAL_THRUST * self.THR_MAX ** 2  # 173.3 N
+        self.f_max = self.TOTAL_THRUST * self.THR_MAX ** 2  # 58.86 N
         self.i_acc = torch.zeros((n, 3), device=d, dtype=torch.float64)
         # the env's constructor reset ran before this controller existed --
         # preload every replica now so the FIRST episode also flies
@@ -2882,18 +2887,22 @@ class QuadplaneHybridBaseline(Baseline):
         f_cmd = self.MASS * a_cmd.norm(dim=-1)
         f = f_cmd.clamp_max(self.f_max)
         throttle = (torch.sqrt(f / self.TOTAL_THRUST) / self.PWM_GAIN).clamp(0., self.THR_MAX)
-        # Yaw reference: bearing from airframe to active waypoint (turn to face target)
+        # Resolve the desired acceleration into the CURRENT heading frame
+        # (not the waypoint-bearing frame): the quad's yaw authority is weak
+        # (0.22 rad/s^2/unit), so the yaw loop lags seconds behind; resolving
+        # against the bearing would misdirect the tilt for the whole transient.
+        # YAW_REF (bearing to waypoint) is used for the yaw channel only.
         target_vec = target - p
         YAW_REF = torch.atan2(target_vec[:, 1], target_vec[:, 0])
-        cy, sy = torch.cos(YAW_REF), torch.sin(YAW_REF)
+        cy, sy = torch.cos(yaw), torch.sin(yaw)
         u_x = a_cmd[:, 0] * cy + a_cmd[:, 1] * sy
         u_y = -a_cmd[:, 0] * sy + a_cmd[:, 1] * cy
         u_z = a_cmd[:, 2]
-        # ZYX Euler: positive pitch = nose DOWN geometrically.
-        # We want nose UP for forward+up acceleration, so negate.
-        pitch_d = -torch.atan2(u_x, u_z)
-        # ZYX: positive roll = right wing DOWN (bank right), want this for right accel.
-        roll_d = torch.atan2(u_y, torch.sqrt(u_x * u_x + u_z * u_z))
+        # ZYX Euler: positive pitch = nose DOWN (thrust tilts forward),
+        # positive roll = right bank (thrust tilts right/-y) — same
+        # convention as the quadx cascade baseline.
+        pitch_d = torch.atan2(u_x, u_z)
+        roll_d = torch.atan2(-u_y, torch.sqrt(u_x * u_x + u_z * u_z))
 
         # attitude P/PD -> body-rate command executed by the env's rate PID,
         # plus a roll-rate feedforward to cancel the inherent URDF bias.

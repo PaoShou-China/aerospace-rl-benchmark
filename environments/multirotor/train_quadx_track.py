@@ -32,10 +32,10 @@ from environments.multirotor import QuadXTrackEnv
 TASK = 'quadx_track'
 ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
 NUM_ENVS = 1024
-# Shared vectorized-step budget for BOTH arms (6.1M transitions at 1024 envs).
+# Shared vectorized-step budget for BOTH arms (20.5M transitions at 1024 envs).
 # Sized so one arm completes inside a bounded wall-clock on a shared, saturated
-# GPU while still giving PPO 60 updates and FlashSAC 6,000 gradient updates.
-TRAIN_ENV_STEPS = 6_000
+# GPU while still giving PPO ~195 updates and FlashSAC 20,000 gradient updates.
+TRAIN_ENV_STEPS = 20_000
 SEED = 7
 BACKEND = 'gpu'          # 'gpu' | 'cpu'
 RESUME = False

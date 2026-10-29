@@ -38,10 +38,10 @@ docstring ([`__init__.py`](__init__.py)) and [`env.py`](env.py).
 ## Reward
 
 Per inner step, active replicas only:
-`+0.01 (d_prev - d)` closing progress, `+0.02 (v_hat . r_hat)` velocity/LOS
-alignment, `-0.01 |action|^2` rate-command effort, `+50` kill (once), `-10`
-unrecoverable miss (once); components reported as
-`Episode/rew_{progress,align,ctrl,kill,miss}`. The alignment term is the dense,
+`+0.01 (d_prev - d)` closing progress, `+0.01 (v_hat . r_hat)` velocity/LOS
+alignment, `+100` kill (once), and `-10 min(d_min / 500 m, 1)` on unrecoverable
+miss (once); components reported as `Episode/rew_{progress,align,kill,miss}`.
+The alignment term is the dense,
 PN-consistent guidance signal: potential-like and locally computable, and
 unlike a penalty on the LOS rate it cannot be gamed by flying away from the
 target.

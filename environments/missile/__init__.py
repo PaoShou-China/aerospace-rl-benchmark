@@ -35,11 +35,11 @@ Observation Space (34,)
 Reward
     Per inner (120 Hz) step, active replicas only:
     r = +0.01 * (d_prev - d)      telescoping closing-progress potential
-        + 0.02 * (v_hat . r_hat)  velocity/LOS alignment (dense,
+        + 0.01 * (v_hat . r_hat)  velocity/LOS alignment (dense,
                                   PN-consistent guidance shaping)
-        - 0.01 * ||action||^2     rate-command effort
-        + 50   on kill (once)     -10 on unrecoverable miss (once)
-    Components are logged as Episode/rew_{progress,align,ctrl,kill,miss}.
+        + 100  on kill (once)
+        - 10 * min(d_min / 500 m, 1) on unrecoverable miss (once)
+    Components are logged as Episode/rew_{progress,align,kill,miss}.
 
 Episode End
     Success (completes + truncates immediately): miss distance <

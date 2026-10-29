@@ -52,7 +52,6 @@ TUNE_WN = (0.035, 0.05, 0.08, 0.11)   # slow .. aggressive
 
 SAT_LEVEL = .99
 PPO_ARMS = (
-    ('ppo_trunk', _ROOT / 'results' / 'docking_ppo_trunk'),
     ('ppo_mlp', _ROOT / 'results' / 'docking_ppo_mlp'),
 )
 FLASHSAC_DIR = _ROOT / 'results' / 'docking_flashsac'

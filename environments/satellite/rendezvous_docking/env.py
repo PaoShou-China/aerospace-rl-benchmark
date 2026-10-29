@@ -172,6 +172,8 @@ class _CWHBase:
             deff_pre=dist_pre+v2_pre/(2*self.brake_ref)
             deff_post=dist+(self.v*self.v).sum(-1)/(2*self.brake_ref)
             reward=self.progress_weight*(deff_pre-deff_post)/pos_norm-self.gamma*f_norm/self.f_max
+            # 2026-10-29: per-step time/hover penalty (SpaceGym CVPRW 2026; AAS 23-026) so hovering is strictly worse than approaching
+            reward=reward-self.time_penalty
         else:
             reward=-(self.alpha*dist/pos_norm+self.beta*speed/self.vel_norm
                      +self.gamma*f_norm/self.f_max)
@@ -307,6 +309,17 @@ class SpaceRendezvousEnv(_CWHBase):
     max_steps=1000
     # 2026-10-24: (800,1200) -> (1000,1500) m (baseline sat at 100% success);
     # the 1500 m top keeps 500 m margin to range_fail=2000 m.
+    # 2026-10-29: spawn easing for the no-BC from-scratch recipe lives in the
+    # TRAINING entry (a local subclass passes init_range=(200,400) to
+    # run_training's env_kwargs path); the env default stays at the benchmark
+    # distribution so scripts/eval.py (no kwargs) always evaluates 1000-1500 m.
+    # Rationale for the eased value: (1000,1500) -> (300,600) made the maneuver
+    # brief and the shaping gradient dense end-to-end; the 2026-10-29 5-arm
+    # PPO/env sweep (seed 7, 1500 updates each) moved it one step closer,
+    # (300,600) -> (200,400), which lifted greedy success at THIS benchmark
+    # spawn from 26% to 40.6% (see train_rendezvous.py for the arm table).
+    # Success criteria (10 m / 0.5 m/s / 5 m keep-out / 2000 m bound) untouched;
+    # pos_norm=d0 keeps the potential correctly scaled per spawn.
     init_range=(1000.,1500.)
     init_vmax=1.
     pos_goal=10.
@@ -326,16 +339,28 @@ class SpaceRendezvousEnv(_CWHBase):
     # 0.1 m/s^2 keeps 80% progress credit during acceleration (soft dead-zone)
     # while still penalizing unrecoverable approach speeds near the target.
     brake_ref=.1
-    # 20-point terminal bonus/violation spread (base class uses 100). The
-    # critic cannot predict success-vs-timeout outcomes near the decision
-    # boundary, so its uncertainty enters the advantages scaled by the bonus
-    # magnitude; with a 100-point spread PPO booms to ~0.3-0.9 success then
-    # the advantage noise slowly erodes the maneuver. A 20-point spread keeps
-    # the same incentive ordering (approach shaping dominates) at 1/5 of the
-    # churn, giving monotonic learning curves.
-    terminal_bonus=20.
+    # 2026-10-28: the 20-point spread (2026-10-22, chosen for monotonic curves
+    # under the retired trunk) stalls the current 2x128-MLP PPO recipe at a
+    # ~2% spawn-luck floor across two full 1000-update runs (lr 3e-4 fixed and
+    # lr 1e-3 + 400-update decay; greedy eval 0.5%): the terminal event never
+    # becomes an attractor. The base-class 100-point spread is restored -- the
+    # only spread observed to reach 0.3-0.9 success on this task; its recorded
+    # late-phase erosion is counteracted by the now-default full-batch updates
+    # (num_mini_batches=1) and the 400-update lr half-life.
+    terminal_bonus=100.
     # conventional controller: receding-horizon CWH two-impulse guidance to the
     # hold point on the initial line of sight (baselines.py; exact symplectic
     # STM, online transfer-time ratchet)
     conventional_controller=RendezvousTwoImpulseBaseline
-    viol_penalty=20.
+    viol_penalty=100.  # 2026-10-28: restored with the 100-point bonus spread (base class)
+    # 2026-10-29: per-step time/hover cost (progress mode) -- the telescoping
+    # potential is time-invariant, so hovering at ~190 m pays ~nothing and is a
+    # profitable bust target (return ~70). SpaceGym (CVPRW 2026, Supreeth &
+    # Mehta) shows dense per-step distance/velocity cost lifts success 35->82%;
+    # AAS 23-026 (Chen/Phillips/Copp) makes hovering strictly worse than
+    # approaching via per-step fuel/time cost. 0.01/step => full-horizon hover
+    # pays ~-10 while success +100 dominates (no suicide pathology).
+    # 2026-10-29 sweep: .01 -> .02/step (full-horizon hover ~-20) together with
+    # the (200,400) spawn easing; the pair is the sweep winner (greedy 40.6%
+    # at the benchmark spawn vs 26% at .01/(300,600)).
+    time_penalty=.02

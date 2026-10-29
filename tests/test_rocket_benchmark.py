@@ -91,6 +91,28 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([ET.tostring(x) for x in trees[0].findall('joint')],
                          [ET.tostring(x) for x in trees[1].findall('joint')])
 
+    def test_v5_corridor_and_single_fatal_penalty(self):
+        from environments.rocket.env import REWARD_KEYS, rocket_shaping
+        cfg = dict(hover=0.,hold=0.,lateral=0.,descent=0.,decel=0.,yaw=0.,tilt=0.,
+                   contact_base=0.,contact_vel=0.,success=5000.,corridor=.5,
+                   corridor_accel=2.,corridor_v0=.5,fatal=500.)
+        p = torch.tensor([[0.,0.,400.],[0.,0.,400.],[0.,0.,1.],[0.,0.,0.]],
+                         dtype=torch.float64)
+        vel_z = torch.tensor([-100.,-40.,-2.5,-.5],dtype=torch.float64)
+        newly_fatal = torch.tensor([True,False,True,False])
+        _,comps = rocket_shaping(cfg,p,p,vel_z,vel_z,torch.zeros(4,3,dtype=torch.float64),
+            torch.zeros(4,3,dtype=torch.float64),torch.zeros(4,dtype=torch.bool),
+            torch.zeros(4,dtype=torch.float64),torch.zeros(4,dtype=torch.bool),newly_fatal)
+        self.assertEqual(set(comps),set(REWARD_KEYS))
+        torch.testing.assert_close(comps['corridor'],torch.tensor([-29.75,0.,0.,0.],dtype=torch.float64))
+        torch.testing.assert_close(comps['fatal'],torch.tensor([-500.,0.,-500.,0.],dtype=torch.float64))
+        # A later step with no new terminal transition pays no second fatal cost.
+        _,next_comps = rocket_shaping(cfg,p,p,vel_z,vel_z,torch.zeros(4,3,dtype=torch.float64),
+            torch.zeros(4,3,dtype=torch.float64),torch.zeros(4,dtype=torch.bool),
+            torch.zeros(4,dtype=torch.float64),torch.zeros(4,dtype=torch.bool),
+            torch.zeros(4,dtype=torch.bool))
+        self.assertEqual(next_comps['fatal'].abs().sum().item(),0.)
+
     def test_variation_uses_independent_masked_stream(self):
         from environments.common.plant import TensorRandom
         rng = TensorRandom(3,'cpu',7)

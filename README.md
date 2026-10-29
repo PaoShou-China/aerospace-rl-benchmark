@@ -78,7 +78,7 @@ environments/             # ── everything that defines a task ──
     └── original_pyflyt/    # vendored PyFlyt vehicle URDF/YAML models + source
 algorithms/               # ── everything that produces actions (learned or not) ──
 ├── train_utils.py        # shared run_training() for the per-task entries
-├── ppo/ppo_flashnet.py   # FlashSAC-trunk networks for the PPO A/B arm
+├── ppo/                  # PPO config builder hook (rsl-rl MLPModel actors/critics)
 ├── flashsac/flash_sac.py # FlashSAC (arXiv:2604.04539) on the batched protocol
 ├── warmstart/bc_warmstart.py  # behavior-cloning warm start from baselines
 └── baselines/            # classical (non-learned) GNC baselines, one per task
@@ -116,16 +116,14 @@ shipped entries pin 3e-4, transfer 2.5e-4) and FlashSAC uses its paper
 defaults (peak 3e-4).
 
 - **PPO** ([rsl-rl](https://github.com/leggedrobotics/rsl_rl)): the default
-  on-policy arm, a state-independent Gaussian policy trained with clipped
-  PPO. Optionally with the **FlashSAC trunk**
-  (`algorithms/ppo/ppo_flashnet.py`, `arch='flash_residual'`): input whitening
-  from rsl-rl `EmpiricalNormalization` → two residual unit-norm blocks
-  (expansion 4) → `UnitRMSNorm`, with unit-weight renormalization applied at
-  the first grad-enabled forward of each update — architecture-matched
-  against FlashSAC (the plain MLP trunk is kept as the A/B comparison arm).
-  BatchNorm is deliberately disabled on this arm: batch statistics make the
-  rollout and update policies different functions and break PPO's importance
-  ratio.
+  on-policy arm, a state-independent Gaussian policy over a 2x128 tanh MLP
+  with rsl-rl `EmpiricalNormalization`, trained with clipped PPO. The
+  FlashSAC-trunk variant (`algorithms/ppo/ppo_flashnet.py`,
+  `arch='flash_residual'`: residual unit-norm blocks + `UnitRMSNorm` with
+  weight renormalization, BatchNorm deliberately disabled because batch
+  statistics break PPO's importance ratio) was removed on 2026-10-28: its
+  docking arm scored 0.0% on the held-out evaluation where the MLP arm
+  reached 85.0%, and its rocket arm 0.0%.
 - **FlashSAC** (`algorithms/flashsac/flash_sac.py`): a faithful port of FlashSAC
   (Kim et al., 2026, arXiv:2604.04539) to the batched GPU environment
   protocol — off-policy SAC with unit-norm weights, sqrt(d)-bounded BatchNorm

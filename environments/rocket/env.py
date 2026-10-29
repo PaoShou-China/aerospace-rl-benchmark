@@ -36,24 +36,24 @@ there), these upstream behaviours are KEPT:
     in [0,1] -- uniform exploration fires the engine on ~50% of steps,
     exactly like upstream; gimbals (dims 5-6) in [-1,1].
 
-Reward (2026-10-24 'v4', retimed 2026-10-27 to the 40 Hz policy): dense
-per-POLICY-step shaping replacing the v2 potential design, which a 1000-update
-run farmed by minimum-speed descent on the brake potential -- brake +1238 of
-reward, pad_touch_rate 0. The v4 coefficients come from a discounted-return
-analysis at dt=0.02 s (50 Hz), gamma 0.995, B=5000. The analysed 50 Hz does
-NOT divide the 120 Hz control loop (upstream rejects non-divisor agent rates),
-so the policy runs at the upstream rocket_landing default 40 Hz (dt 0.025 s):
-the high-speed-dive bound admits DESCENT_COEF=0.1 up to
-u = HOVER/(DESCENT*dt) = 120 m/s, still above the 100 m/s drop speed:
+Reward (2026-10-28 'v5'): dense per-POLICY-step shaping. v4 kept a pure dive
+net-negative per step but ignored that a fatal crash also ends the hover-cost
+stream: PPO converged to +100 returns by diving onto the pad at 5 m/s, with
+zero successes in 65.5M transitions. v5 adds a feasible descent-speed corridor
+and a one-shot fatal penalty; the successful-settle and contact terms are
+unchanged:
   r = -HOVER_COST                                time pressure, always
       + HOLD_COEF/(||p_xy||+0.1)                 <= 0.05, cannot farm hover
       + LATERAL_COEF*(d_xy_prev - d_xy)          telescoping pad approach
-      + DESCENT_COEF*(z_prev - z)                0.1: a pure dive stays
-                                                 net-negative to u<=150 m/s
-      + DECEL_COEF*(dvz+1)/e^z*sign(vz)          upstream decel term, 4->0.1
+      + DESCENT_COEF*(z_prev - z)                descent progress
+      + DECEL_COEF*(dvz+1)/e^z*sign(vz)          upstream decel term
+      - CORRIDOR_COEF*relu(-vz - v_allow(z))     v_allow = 0.5+sqrt(2*2*z),
+                                                 conservative vs ~3.55 m/s^2
+                                                 nominal maximum net decel
       - YAW_COEF*|w_yaw| - TILT_COEF*||rpy_xy||
-      + contact: CONTACT_BASE - CONTACT_VEL_COEF*|vz| per step with any
-        pad contact (quasi-static settle nets ~+0.1..0.35/step)
+      + contact: CONTACT_BASE - CONTACT_VEL_COEF*|vz| per pad-contact step
+      - FATAL_COST once on a new terminal transition (500: a dive-crash return
+        becomes negative instead of escaping the remaining hover cost)
       + SUCCESS_BONUS once on first settle (5000 >> gamma*c/(1-gamma)~70,
         so delaying a reachable success is never profitable)
 Success still does NOT truncate; the settled contact stream keeps paying.
@@ -87,33 +87,43 @@ TILT_COEF=0.5       # -TILT_COEF*||roll/pitch||
 CONTACT_BASE=0.5    # per policy step with any pad contact
 CONTACT_VEL_COEF=1. # -CONTACT_VEL_COEF*|vz| on contact steps
 SUCCESS_BONUS=5000. # one-shot on first settle-success (B >> gamma*c/(1-gamma))
+CORRIDOR_COEF=0.5   # per-step penalty per m/s above the feasible descent corridor
+CORRIDOR_ACCEL=2.0  # m/s^2; nominal net decel is ~3.55, leaving control margin
+CORRIDOR_V0=0.5     # m/s terminal descent allowance, below the 1.0 fatal threshold
+FATAL_COST=500.     # one-shot on a new terminal transition, not per contact step
 
-REWARD_KEYS=('hover','hold','lateral','descent','decel','attitude','contact','success')
+REWARD_KEYS=('hover','hold','lateral','descent','decel','corridor','attitude',
+             'contact','fatal','success')
 
 
 def rocket_shaping(cfg,p,previous_position,vel_z,previous_vel_z,rpy,body_omega,
-                   contact,contact_vz,newly_complete):
+                   contact,contact_vz,newly_complete,newly_fatal):
     """Dense reward per POLICY step, returned as (total, per-component dict).
 
     vel_z is the WORLD-frame vertical velocity. `contact` marks any pad
     contact during this policy step, `contact_vz` the world descent speed at
-    the first contact inner step; `newly_complete` fires once per episode on
-    the settle-success event. All coefficients come from cfg (see the module
-    constants); computed once per policy step over the whole-step deltas.
+    the first contact inner step; `newly_complete` and `newly_fatal` fire once
+    per episode on settle success and termination respectively. All
+    coefficients come from cfg (see the module constants).
     """
     dxy=p[:,:2].norm(dim=-1)
     dxy_prev=previous_position[:,:2].norm(dim=-1)
     dvz=vel_z-previous_vel_z
     decel=(dvz+1.)*torch.exp(-p[:,2].clamp_min(0.))*torch.where(vel_z<0.,1.,-1.)
+    z=p[:,2].clamp_min(0.)
+    v_allow=cfg['corridor_v0']+torch.sqrt(2.*cfg['corridor_accel']*z)
+    v_excess=((-vel_z).clamp_min(0.)-v_allow).clamp_min(0.)
     comps={
         'hover':torch.full_like(dxy,-cfg['hover']),
         'hold':cfg['hold']/(dxy+0.1),
         'lateral':cfg['lateral']*(dxy_prev-dxy),
         'descent':cfg['descent']*(previous_position[:,2]-p[:,2]),
         'decel':cfg['decel']*decel,
+        'corridor':-cfg['corridor']*v_excess,
         'attitude':-cfg['yaw']*body_omega[:,2].abs()-cfg['tilt']*rpy[:,:2].square().sum(-1).sqrt(),
         'contact':torch.where(contact,cfg['contact_base']-cfg['contact_vel']*contact_vz.abs(),
                               torch.zeros_like(dxy)),
+        'fatal':-cfg['fatal']*newly_fatal.to(dxy.dtype),
         'success':newly_complete.to(dxy.dtype)*cfg['success'],
     }
     total=sum(comps.values())
@@ -150,7 +160,9 @@ class RocketLandingEnv:
         self.reward_cfg=dict(hover=HOVER_COST,hold=HOLD_COEF,lateral=LATERAL_COEF,
                              descent=DESCENT_COEF,decel=DECEL_COEF,yaw=YAW_COEF,
                              tilt=TILT_COEF,contact_base=CONTACT_BASE,
-                             contact_vel=CONTACT_VEL_COEF,success=SUCCESS_BONUS)
+                             contact_vel=CONTACT_VEL_COEF,success=SUCCESS_BONUS,
+                             corridor=CORRIDOR_COEF,corridor_accel=CORRIDOR_ACCEL,
+                             corridor_v0=CORRIDOR_V0,fatal=FATAL_COST)
         if reward:self.reward_cfg.update(reward)
 
         self.plant=TensorPlant('rocket',num_envs,backend,seed,
@@ -197,6 +209,7 @@ class RocketLandingEnv:
         self.touch_ang_vel=torch.zeros_like(self.touch_speed)
         self.touch_tilt=torch.zeros_like(self.touch_speed)
         self.completed_metrics={'pad_touch_rate':torch.zeros_like(self.touch_speed),
+                                'nonfatal_touch_rate':torch.zeros_like(self.touch_speed),
                                 'touch_speed':torch.zeros_like(self.touch_speed),
                                 'touch_ang_vel':torch.zeros_like(self.touch_speed),
                                 'touch_tilt':torch.zeros_like(self.touch_speed)}
@@ -265,6 +278,7 @@ class RocketLandingEnv:
         p_start,_,v_start,_=self.plant.state()
         p_start=p_start.clone();vz_start=v_start[:,2].clone()
         complete_start=self.complete.clone()
+        terminated_start=self.terminated.clone()
         contact_any=self.terminated.clone().fill_(False)
         contact_vz=torch.zeros(self.num_envs,device=self.device,dtype=torch.float64)
         for _ in range(self.inner_steps):
@@ -306,7 +320,8 @@ class RocketLandingEnv:
             self.collision|=collision&active;self.out_of_bounds|=bounds&active
         # one dense reward per POLICY step over the whole-step state deltas
         shaping,comps=rocket_shaping(self.reward_cfg,p,p_start,v[:,2],vz_start,rpy,wb,
-                                     contact_any,contact_vz,self.complete&~complete_start)
+                                     contact_any,contact_vz,self.complete&~complete_start,
+                                     self.terminated&~terminated_start)
         self.reward.copy_(shaping)
         for k in comps:self.reward_components[k]+=comps[k]
         # the time limit is applied AFTER the full control step (all physics
@@ -330,7 +345,9 @@ class RocketLandingEnv:
         for key,value in metrics.items():
             self.completed_metrics[key]+=(self.reset_buf&value).to(torch.float64)
         landed=self.reset_buf&self.touch_flag
+        nonfatal_touch=landed&~self.fatal_collision
         self.completed_metrics['pad_touch_rate']+=landed.to(torch.float64)
+        self.completed_metrics['nonfatal_touch_rate']+=nonfatal_touch.to(torch.float64)
         self.completed_metrics['touch_speed']+=torch.where(landed,self.touch_speed,0.)
         self.completed_metrics['touch_ang_vel']+=torch.where(landed,self.touch_ang_vel,0.)
         self.completed_metrics['touch_tilt']+=torch.where(landed,self.touch_tilt,0.)
@@ -349,7 +366,8 @@ class RocketLandingEnv:
         done_any=bool(done.any())
         if done_any:
             episode={'success_rate':(done&primary).to(torch.float64).sum()/done.sum().clamp_min(1),
-                     'pad_touch_rate':landed.to(torch.float64).sum()/done.sum().clamp_min(1)}
+                     'pad_touch_rate':landed.to(torch.float64).sum()/done.sum().clamp_min(1),
+                     'nonfatal_touch_rate':nonfatal_touch.to(torch.float64).sum()/done.sum().clamp_min(1)}
             touched=done&self.touch_flag
             n=touched.to(torch.float64).sum()
             # torch.where instead of a bool(touched.any()) sync: when no done
