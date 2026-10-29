@@ -1,5 +1,10 @@
 # QuadX-Track Environment (`QuadXTrackEnv`)
 
+**Status: implemented** — the environment, the `train_quadx_track.py` entry, the
+KF+SE(3) baseline, and both `baseline_eval.py` / `eval.py` registrations exist
+and have been run; this is not a planned or future task requiring a new civil
+observation environment.
+
 ## 1. Overview
 
 QuadX-Track is the persistent-observation task of the AerospaceRL quadrotor family. A Crazyflie 2.x

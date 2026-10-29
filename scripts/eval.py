@@ -1,6 +1,6 @@
 """Deterministic evaluation of a trained RSL-RL checkpoint on the batched GPU envs.
 
-Usage: python eval.py quadx|fixedwing|rocket|missile|satellite|transfer|docking|rendezvous
+Usage: python eval.py quadx|quadx_track|fixedwing|rocket|missile|quadplane|satellite|transfer|docking|rendezvous
 Defaults: 1024 envs on GPU, seed 7, frozen deterministic policy (mean action,
 no exploration noise). The env configuration used at training time
 (env_kwargs) is restored from results/<task>/config.json.
@@ -29,13 +29,14 @@ from environments.multirotor import QuadXWaypointsEnv, QuadXTrackEnv
 from environments.fixedwing import FixedwingWaypointsEnv
 from environments.rocket import RocketLandingEnv
 from environments.missile import MissileInterceptEnv
+from environments.vtol.env import QuadplaneWaypointsEnv
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
 from environments.satellite.orbit_transfer import LowThrustTransferEnv
 from environments.satellite.rendezvous_docking import SpaceDockingEnv, SpaceRendezvousEnv
 
 ENVS = {'quadx': QuadXWaypointsEnv, 'quadx_track': QuadXTrackEnv,
         'fixedwing': FixedwingWaypointsEnv, 'rocket': RocketLandingEnv,
-        'missile': MissileInterceptEnv,
+        'missile': MissileInterceptEnv, 'quadplane': QuadplaneWaypointsEnv,
         'satellite': SatelliteAttitudeEnv, 'transfer': LowThrustTransferEnv,
         'docking': SpaceDockingEnv, 'rendezvous': SpaceRendezvousEnv}
 

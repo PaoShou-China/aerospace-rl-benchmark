@@ -11,9 +11,11 @@ onto a ground pad. Only the rigid-body physics engine differs from upstream
 (Genesis instead of PyBullet); the task definition — reward, dynamics model,
 episode logic, initial conditions — follows upstream verbatim.
 
-The reward is the 2026-10-24 "v4" dense per-policy-step shaping, which
-replaced the earlier v2 potential-based design after a 1000-update run farmed
-the brake potential by minimum-speed descent. The environment is fully
+The reward is the 2026-10-28 "v5" dense per-policy-step shaping (benchmark v2
+uses this reward together with the 40 Hz policy rate and the 2 s settled
+success criterion). v4's dive-only shaping was farmed by a 5 m/s crash-dive
+policy: 65.5M transitions, zero successes, positive return. v5 adds a feasible
+descent-speed corridor and a one-shot fatal penalty; the environment is fully
 tensorized on a shared Genesis scene.
 
 ## 2. Notation
@@ -30,12 +32,14 @@ tensorized on a shared Genesis scene.
 
 ## 3. Dynamics and control hierarchy
 
-Three nested rates drive the simulation: **policy 60 Hz** ($\Delta t = 1/60$ s;
-the closest divisor of the 120 Hz control loop to the 50 Hz rate assumed by the
-reward analysis of Section 6), **control 120 Hz** (`inner_steps = 2` control
+Three nested rates drive the simulation under benchmark **v2**: **policy 40 Hz**
+($\Delta t = 1/40$ s; the rate of the research freeze snapshot — 60 Hz does not
+divide the 120 Hz control loop), **control 120 Hz** (`inner_steps = 3` control
 periods per policy step, action held constant), and **physics 240 Hz** (two
 substeps per control period, $h = 1/240$ s) on the Genesis rigid-body solver
-with per-substep actuation updates.
+with per-substep actuation updates. All rates are read back from the plant
+(`agent_hz` is a constructor kwarg; `benchmark_version='v1'` restores the
+legacy 60 Hz configuration for historical comparisons).
 
 The vehicle model is the upstream F9-class booster scaled by $10^{3}$ from
 the Falcon 9 first stage (reference propellant 123.5 t RP-1 + 287.4 t LOX =
@@ -106,7 +110,7 @@ A single float32 vector of dimension 30 under the `policy` key:
 ## 6. Reward
 
 One dense reward per **policy** step, computed from whole-step state deltas
-($\Delta t = 1/60$ s), with components matching `REWARD_KEYS`:
+($\Delta t = 1/40$ s), with components matching `REWARD_KEYS`:
 
 \begin{align}
 r_{\text{hover}} &= -0.3, \tag{1a}\\
@@ -117,7 +121,9 @@ r_{\text{decel}} &= 0.1\,(\Delta v_z + 1)\,e^{-\max(z,0)}\,\sigma(v_z),
 \quad \sigma(v_z) = \begin{cases}+1 & v_z < 0\\ -1 & \text{otherwise,}\end{cases} \tag{1e}\\
 r_{\text{attitude}} &= -0.5\,|\omega_{b,z}| - 0.5\,\sqrt{\phi^{2}+\theta^{2}}, \tag{1f}\\
 r_{\text{contact}} &= \mathbb{1}[\text{any pad contact}]\cdot\big(0.5 - 1.0\,|v_{z,c}|\big), \tag{1g}\\
-r_{\text{success}} &= 5000\cdot\mathbb{1}[\text{first settle this step}], \tag{1h}
+r_{\text{corridor}} &= -0.5\,\mathrm{relu}\big(-v_z - (0.5 + \sqrt{2\cdot 2\,z})\big), \tag{1h}\\
+r_{\text{success}} &= 5000\cdot\mathbb{1}[\text{first settle this step}], \tag{1i}\\
+r_{\text{fatal}} &= -500\cdot\mathbb{1}[\text{new terminal transition}], \tag{1j}
 \end{align}
 
 where $(\cdot)^{-}$ denotes the policy-step start, $\Delta v_z$ the whole-step
@@ -127,9 +133,10 @@ accumulated into `reward_components` and reported as `rew_*` metrics. Design
 rationale (discounted-return analysis at $\gamma = 0.995$): the success bonus
 satisfies $B = 5000 \gg \gamma c/(1-\gamma) \approx 70$ for the maximum
 sustainable per-step contact stream $c$, so delaying a reachable success is
-never profitable; the high-speed-dive bound $k \le 0.25\times 60/u_{\max}$
-admits $k = 0.1$ up to $u = 150$ m/s, so a pure vertical dive stays
-net-negative and the descent term cannot be farmed; and the hold term is capped
+never profitable; the corridor (1h) bounds the descent speed by the
+conservative feasible profile $v_{\text{allow}}(z)$ and the one-shot fatal cost
+(1j) makes a crash-dive return negative instead of letting it escape the
+remaining hover cost; the hold term is capped
 at 0.05 per step, below the 0.3 hover cost, so station-keeping cannot be farmed
 either. All coefficients are constructor-overridable via the `reward` dict and
 recorded into `cfg` / `run.json` for the evolution sweep arms.
@@ -143,12 +150,20 @@ Evaluated on every 120 Hz control period, in the following order:
    has speed $> 1.0$ m/s or spin $> 0.35$ rad/s.
 2. **Out of bounds (termination).** $\lVert p_{xy}\rVert > 200$ m or
    $z > 500$ m.
-3. **Success (no termination, no truncation).** A pad-contact step on which
-   the previous inner-step speed $< 0.02$ m/s, spin $< 0.02$ rad/s, and the
-   current tilt $\sqrt{\phi^2+\theta^2} < 0.1$ rad. Sets the latched
-   `complete` flag and pays the one-shot bonus; the episode **continues** and
-   the settled contact stream (Eq. 1g) keeps paying until the time limit.
-4. **Time limit (truncation).** `count` $\ge 1800$ policy steps (30 s),
+3. **Success (no termination, no truncation) — v2 settled criterion.** The
+   primary metric is `ever_stable_2s`: the vehicle must remain on the pad in
+   a settled state for 2 s continuously. A policy-step sample is *settled* iff
+   it has pad contact, no fatal state, speed $< 0.02$ m/s, spin $< 0.02$ rad/s
+   and tilt $\sqrt{\phi^2+\theta^2} < 0.1$ rad; a gap resets the streak, and a
+   fatal/bounds termination invalidates the terminal sample. At 40 Hz this
+   requires `ceil(2*40)+1 = 81` consecutive samples (121 at the legacy 60 Hz).
+   Reaching the streak latches `ever_stable_2s` and pays the one-shot bonus;
+   the episode **continues** and the settled contact stream (Eq. 1g) keeps
+   paying until the time limit. The old instantaneous pad-contact latch
+   (`ever_success`, plus `terminal_single_point` / `terminal_stable_2s`) is
+   still reported as a diagnostic, but **v1 instantaneous success rates are
+   not comparable to the v2 score**.
+4. **Time limit (truncation).** `count` $\ge 1200$ policy steps (30 s),
    applied after the full control step; the only truncation source.
 
 Pad-contact judgement uses the previous inner-step velocity because upstream
@@ -205,8 +220,8 @@ mask of Section 7.
 
 | Constant | Value |
 |---|---|
-| `agent_hz` / `inner_steps` | 60 / 2 (control 120 Hz, physics 240 Hz) |
-| `max_steps` | 1800 (30 s; buffer `max_episode_length` 1802) |
+| `agent_hz` / `inner_steps` | 40 / 3 (control 120 Hz, physics 240 Hz; v1: 60 / 2) |
+| `max_steps` | 1200 (30 s; buffer `max_episode_length` 1202; v1: 1800) |
 | `num_actions` / obs dim | 7 / 30 |
 | `HOVER_COST` / `HOLD_COEF` | 0.3 / 0.005 |
 | `LATERAL_COEF` / `DESCENT_COEF` / `DECEL_COEF` | 10.0 / 0.1 / 0.1 |

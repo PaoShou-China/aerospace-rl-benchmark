@@ -30,6 +30,7 @@ verification conditions lives in
 | QuadX-Waypoints | `QuadXWaypointsEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID | 37 | 4 | 40 Hz | 800 steps = 20 s | 4/4 waypoints captured (< 0.2 m) |
 | QuadX-Track | `QuadXTrackEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID, kinematic ground target + geometric camera | 25 | 4 | 40 Hz | 1200 steps = 30 s | visible-time fraction ≥ 0.85 and no crash, judged at the time limit; success does not truncate |
 | Fixedwing-Waypoints | `FixedwingWaypointsEnv` | URDF rigid body (2.35 kg UAV, 240 Hz) + blade-element aero | 39 | 4 | 30 Hz | 3600 steps = 120 s | 4/4 waypoints captured (< 10 m) |
+| Quadplane-VTOL | `QuadplaneWaypointsEnv` | URDF hybrid UAV (2.35 kg, 4 quad motors + fixedwing surfaces + forward pusher, 240 Hz) | 47 | 8 | 40 Hz | 1200 steps = 30 s | 4/4 waypoints captured (< 15 m) |
 | Rocket-Landing | `RocketLandingEnv` | URDF rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 40 Hz | 1200 steps = 30 s | pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad for 2 s (81 samples); success does not truncate |
 | Missile-Intercept | `MissileInterceptEnv` | URDF rigid body (150 kg missile, 240 Hz) + tail-fin aero + boost-coast engine, kinematic 3-DOF target | 34 | 3 | 60 Hz | 900 steps = 15 s | miss distance < 15 m (proximity fuse, any physics substep) |
 | Satellite attitude (CMG) | `SatelliteAttitudeEnv` | Rigid body + 4- or 6-CMG cluster, RK4 2.5 ms | 26 / 32 | 4 / 6 | 40 Hz | 1200 steps = 30 s | att. error < 0.05 rad & \|ω\| < 0.02 rad/s, checked every step; \|ω\| > 10 rad/s fails |
@@ -62,6 +63,7 @@ part, each internally subdivided; generic entry points live in `scripts/`.
 environments/             # ── everything that defines a task ──
 ├── multirotor/           # QuadX-Waypoints + QuadX-Track (rotary-wing navigation / observation)
 ├── fixedwing/            # Fixedwing-Waypoints (aerodynamic navigation)
+├── vtol/                 # Quadplane-VTOL (rotor-aero authority transition)
 ├── rocket/               # Rocket-Landing (propulsive vertical landing)
 ├── satellite/            # spacecraft tasks, grouped by mission phase
 │   ├── attitude_control/     # CMG attitude control (pure tensor)
@@ -145,7 +147,8 @@ at construction, never touches internal state buffers, and leaves env
 semantics untouched. Reference success rates below are the shipped official
 `scripts/baseline_eval.py` results in `results/<task>/baseline.json` (1024
 envs, seed 7, GPU; each row's evaluation window and episode count come from
-that file):
+that file). Rows that cite another artifact or are pending a re-run say so
+explicitly:
 
 | Task | Baseline | Reference result |
 |---|---|---|
@@ -153,7 +156,8 @@ that file):
 | QuadX-Waypoints | Position PID → attitude P/PD cascade on the env rate PID | 99.1% (1024 episodes, 800-step window, 0 crash/OOB) |
 | QuadX-Track | constant-velocity Kalman filter + fixed-offset SE(3) + public 3 s timeout hold | 85.1% (1024 episodes, 1200-step window); 92.3% visible time, 0.27 m standoff error |
 | Fixedwing-Waypoints | L1 lateral + TECS longitudinal autopilot | 95.9% (1024 episodes, 1361-step window) |
-| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | historical v1: 82.8% instantaneous ever-success (not a v2 score) |
+| Quadplane-VTOL | velocity-scheduled cascaded PID + gentle forward pusher | **0% (not yet validated)**: crashes in 100% of episodes on train/dev/test seeds (`results/quadplane/cascade_report.json`); no BC warm start until fixed |
+| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | v2 (40 Hz, settled 2 s) baseline re-run pending; the 82.8% / 84.1% figures in older notes are v1 **instantaneous** ever-success rates and are NOT comparable to the v2 criterion |
 | Satellite (CMG) | quaternion PD + Schaub-Junkins damped pseudo-inverse | 100% (1024 episodes, 334-step window) |
 | Satellite (CMG, steering ablation) | same quaternion PD + ordinary Moore–Penrose pseudo-inverse | see `results/satellite/steering_compare.md` |
 | Transfer | Gauss one-step greedy tangential guidance | 100%, terminal return 0.855 (1024 episodes, 166 steps) |
@@ -235,6 +239,7 @@ python environments/multirotor/train_quadx.py
 python environments/multirotor/train_quadx_track.py   # QuadX-Track, PPO arm
 python environments/multirotor/train_quadx_track_flashsac.py  # QuadX-Track, FlashSAC arm
 python environments/fixedwing/train_fixedwing.py
+python environments/vtol/train_quadplane.py
 python environments/rocket/train_rocket.py
 python environments/missile/train_missile.py
 python environments/satellite/attitude_control/train_satellite.py
@@ -255,7 +260,8 @@ Evaluation and baselines:
 ```bash
 python scripts/eval.py quadx                     # deterministic checkpoint evaluation
 python scripts/eval.py quadx_track --out results/quadx_track/ppo
-python scripts/baseline_eval.py quadx            # classical baseline, any of the 9 tasks
+python scripts/eval.py quadplane                 # VTOL checkpoint evaluation
+python scripts/baseline_eval.py quadx            # classical baseline, any registered task
 python scripts/baseline_eval.py quadx --baseline cascaded_pid   # QuadX A/B: cascade PID arm
 python scripts/baseline_eval.py quadx_track
 python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg  # steering A/B

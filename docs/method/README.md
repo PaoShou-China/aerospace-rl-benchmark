@@ -14,7 +14,8 @@ disagrees with the implementation, these documents follow the code.
 | [env-quadx-waypoints.md](env-quadx-waypoints.md) | QuadX-Waypoints (`quadx`) | Crazyflie-scale quadrotor, 4-waypoint capture in a 5 m dome, potential-telescoping reward |
 | [env-quadx-track.md](env-quadx-track.md) | QuadX-Track (`quadx_track`) | Crazyflie-scale quadrotor, persistent observation of a cooperative ground moving target under FOV/range/occlusion/noise |
 | [env-fixedwing-waypoints.md](env-fixedwing-waypoints.md) | Fixedwing-Waypoints (`fixedwing`) | 2.35 kg UAV, 4-waypoint capture in a 20–65 m shell, blade-element aerodynamics with stall |
-| [env-rocket-landing.md](env-rocket-landing.md) | Rocket-Landing (`rocket`) | F9-class booster propulsive landing, v4 dense per-policy-step reward, success without truncation |
+| [env.py](../../environments/vtol/env.py) | Quadplane-VTOL (`quadplane`) | 2.35 kg hybrid UAV (quad motors + fixedwing surfaces + pusher), waypoint capture with natural rotor→aero authority transition (module docstring is the method reference) |
+| [env-rocket-landing.md](env-rocket-landing.md) | Rocket-Landing (`rocket`) | F9-class booster propulsive landing, benchmark v2 (40 Hz, 2 s settled): v5 dense reward, success without truncation |
 | [env-missile-intercept.md](env-missile-intercept.md) | Missile-Intercept (`missile`) | 6-DOF tail-controlled missile vs kinematic maneuvering target, proximity-fuse kill |
 | [env-satellite-attitude.md](env-satellite-attitude.md) | CMG attitude control (`satellite`) | Rigid bus + 4/6-CMG cluster, singularity-aware telescoping reward |
 | [env-orbit-transfer.md](env-orbit-transfer.md) | Low-thrust transfer (`transfer`) | Two-body perigee raising, 10 mN/axis EP, PBRS telescoping onto a terminal orbital-element reward |
@@ -38,6 +39,7 @@ disagrees with the implementation, these documents follow the code.
 | [baseline-quadx-track-kf-pid.md](baseline-quadx-track-kf-pid.md) | quadx_track | Constant-velocity Kalman filter + fixed-offset SE(3) tracking with a public timeout hold |
 | [baseline-fixedwing-l1-tecs.md](baseline-fixedwing-l1-tecs.md) | fixedwing | L1 lateral guidance (Park-Deyst-Howe 2004) + TECS longitudinal autopilot |
 | [baseline-fixedwing-pid.md](baseline-fixedwing-pid.md) | fixedwing | Conventional cascaded PID autopilot: course→bank→bank-rate, altitude→pitch→pitch-rate, airspeed PI (A/B arm) |
+| [baselines/baselines.py](../../algorithms/baselines/baselines.py) (`QuadplaneHybridBaseline`) | quadplane | Velocity-scheduled cascaded PID + gentle forward pusher (**not yet validated**: 100% crash rate on train/dev/test seeds) |
 | [baseline-rocket-pdg.md](baseline-rocket-pdg.md) | rocket | ZEM/ZEV powered-descent guidance, virtual-pad braking manifold, pulse servo |
 | [baseline-missile-apn.md](baseline-missile-apn.md) | missile | Augmented proportional navigation mapped to body-rate commands |
 | [baseline-satellite-cmg-pd.md](baseline-satellite-cmg-pd.md) | satellite | Quaternion PD + Schaub-Junkins damped pseudo-inverse CMG steering |
