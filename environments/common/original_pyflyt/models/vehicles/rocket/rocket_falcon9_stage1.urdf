@@ -1,0 +1,328 @@
+<?xml version="1.0"?>
+<robot name="falcon9_stage1_real_scale">
+
+  <!-- Falcon 9 First Stage, Real Scale -->
+  <!-- Provenance:
+       Dimensions: SpaceX Falcon 9 Users Guide 2025 (official)
+       STAGE_LEN=41.2 m, INTERSTAGE_LEN=6.5 m, DIA=3.66 m
+       Masses: community estimates (dry 25,600 kg incl. legs + fins)
+       Inertias: derived from geometry + material density
+       Dry total (incl. all links below) = 24,700 kg (close to target 25,600) -->
+
+  <!-- ============= base_link (root) ============= -->
+  <!-- NOTE: collision REMOVED — only leg spheres are contact shapes.
+       This avoids tilted-edge contact on a large cylinder → Genesis NaN / bounce.
+       The 4 leg spheres (r=0.4 m each at ~7.83 m radial, -2.7 m below body origin)
+       serve as footpads, exactly like aerospace-rl-benchmark v2. -->
+  <link name="base_link">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry><cylinder radius="2.0" length="0.2"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="1000.0"/>
+      <inertia ixx="2000" ixy="0" ixz="0" iyy="2000" iyz="0" izz="1500"/>
+    </inertial>
+  </link>
+
+  <!-- ============= booster (Merlin-1D nozzle) — no collision ============= -->
+  <link name="booster_link">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -1.5"/>
+      <geometry><cylinder radius="0.9" length="3.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 -1.5"/>
+      <mass value="3000.0"/>
+      <inertia ixx="2000" ixy="0" ixz="0" iyy="2000" iyz="0" izz="4000"/>
+    </inertial>
+  </link>
+  <joint name="booster_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 -0.2"/>
+    <parent link="base_link"/>
+    <child link="booster_link"/>
+  </joint>
+
+  <!-- ============= main stage body — visual only, NO collision ============= -->
+  <!-- Cylinder 3.66m diam x 35m height, centroid at z=17.7 m -->
+  <link name="main_body">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 17.7"/>
+      <geometry><cylinder radius="1.83" length="35.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 17.7"/>
+      <mass value="12000.0"/>
+      <inertia ixx="3.5e6" ixy="0" ixz="0" iyy="3.5e6" iyz="0" izz="2.0e5"/>
+    </inertial>
+  </link>
+  <joint name="main_body_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0.2"/>
+    <parent link="base_link"/>
+    <child link="main_body"/>
+  </joint>
+
+  <!-- ============= interstage — visual only, NO collision ============= -->
+  <link name="interstage">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 38.45"/>
+      <geometry><cylinder radius="1.75" length="6.5"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 38.45"/>
+      <mass value="4000.0"/>
+      <inertia ixx="5.0e5" ixy="0" ixz="0" iyy="5.0e5" iyz="0" izz="3.0e4"/>
+    </inertial>
+  </link>
+  <joint name="interstage_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 35.2"/>
+    <parent link="base_link"/>
+    <child link="interstage"/>
+  </joint>
+
+  <!-- ============= LOX tank (variable mass via set_links_mass) ============= -->
+  <!-- LOX_BASE_Z=16.0 m, tank area=9.9 m^2, full mass 287400 kg,
+       full height=23.8 m, centroid full at z=27.9 m -->
+  <link name="fueltank_lox">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 27.9"/>
+      <geometry><cylinder radius="1.78" length="23.8"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 27.9"/>
+      <mass value="287400.0"/>
+      <inertia ixx="3.2e8" ixy="0" ixz="0" iyy="3.2e8" iyz="0" izz="9.0e7"/>
+    </inertial>
+  </link>
+  <joint name="lox_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 16.0"/>
+    <parent link="base_link"/>
+    <child link="fueltank_lox"/>
+  </joint>
+
+  <!-- ============= RP-1 tank (variable mass) ============= -->
+  <!-- RP1_BASE_Z=1.6 m, tank area=9.9 m^2, full mass 123500 kg,
+       full height=15.0 m, centroid full at z=9.1 m -->
+  <link name="fueltank_rp1">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 9.1"/>
+      <geometry><cylinder radius="1.78" length="15.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 9.1"/>
+      <mass value="123500.0"/>
+      <inertia ixx="6.5e7" ixy="0" ixz="0" iyy="6.5e7" iyz="0" izz="1.8e7"/>
+    </inertial>
+  </link>
+  <joint name="rp1_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 1.6"/>
+    <parent link="base_link"/>
+    <child link="fueltank_rp1"/>
+  </joint>
+
+  <!-- ============= Landing legs (4, at 90 deg) ============= -->
+  <!-- Leg spheres: positioned at z=0 from leg joint (i.e. body origin z=0) so
+       they catch the rocket immediately when the body settles to z=0.4 m (sphere r).
+       Previously at z=-2.7 m below body → rocket free-fell 2.7 m extra → impact 30+ m/s.
+       Radius=0.5 m (upscaled from 0.4) for realistic Falcon 9 footpad size. -->
+  <link name="leg_1">
+    <visual>
+      <origin rpy="0 0 0" xyz="6.0 0 -0.5"/>
+      <geometry><box size="0.3 0.3 5.0"/></geometry>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="6.0 0 0.0"/>
+      <geometry><sphere radius="0.5"/></geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="6.0 0 -1.5"/>
+      <mass value="600.0"/>
+      <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
+    </inertial>
+  </link>
+  <joint name="leg_1_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="1.83 0 -0.2"/>
+    <parent link="base_link"/>
+    <child link="leg_1"/>
+  </joint>
+
+  <link name="leg_2">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 6.0 -0.5"/>
+      <geometry><box size="0.3 0.3 5.0"/></geometry>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 6.0 0.0"/>
+      <geometry><sphere radius="0.5"/></geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 6.0 -1.5"/>
+      <mass value="600.0"/>
+      <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
+    </inertial>
+  </link>
+  <joint name="leg_2_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 1.83 -0.2"/>
+    <parent link="base_link"/>
+    <child link="leg_2"/>
+  </joint>
+
+  <link name="leg_3">
+    <visual>
+      <origin rpy="0 0 0" xyz="-6.0 0 -0.5"/>
+      <geometry><box size="0.3 0.3 5.0"/></geometry>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="-6.0 0 0.0"/>
+      <geometry><sphere radius="0.5"/></geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="-6.0 0 -1.5"/>
+      <mass value="600.0"/>
+      <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
+    </inertial>
+  </link>
+  <joint name="leg_3_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-1.83 0 -0.2"/>
+    <parent link="base_link"/>
+    <child link="leg_3"/>
+  </joint>
+
+  <link name="leg_4">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 -6.0 -0.5"/>
+      <geometry><box size="0.3 0.3 5.0"/></geometry>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 -6.0 0.0"/>
+      <geometry><sphere radius="0.5"/></geometry>
+    </collision>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 -6.0 -1.5"/>
+      <mass value="600.0"/>
+      <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
+    </inertial>
+  </link>
+  <joint name="leg_4_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -1.83 -0.2"/>
+    <parent link="base_link"/>
+    <child link="leg_4"/>
+  </joint>
+
+  <!-- ============= Grid fins (4, at z=45 m, 45 deg spacing) ============= -->
+  <link name="fin_pos_x">
+    <visual>
+      <origin rpy="0 0 0" xyz="1.83 0 45.0"/>
+      <geometry><box size="3.0 0.05 1.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="1.83 0 45.0"/>
+      <mass value="200.0"/>
+      <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
+    </inertial>
+  </link>
+  <joint name="fin_pos_x_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="1.83 0 45.0"/>
+    <parent link="base_link"/>
+    <child link="fin_pos_x"/>
+  </joint>
+
+  <link name="fin_neg_x">
+    <visual>
+      <origin rpy="0 0 0" xyz="-1.83 0 45.0"/>
+      <geometry><box size="3.0 0.05 1.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="-1.83 0 45.0"/>
+      <mass value="200.0"/>
+      <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
+    </inertial>
+  </link>
+  <joint name="fin_neg_x_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-1.83 0 45.0"/>
+    <parent link="base_link"/>
+    <child link="fin_neg_x"/>
+  </joint>
+
+  <link name="fin_pos_y">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 1.83 45.0"/>
+      <geometry><box size="0.05 3.0 1.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 1.83 45.0"/>
+      <mass value="200.0"/>
+      <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
+    </inertial>
+  </link>
+  <joint name="fin_pos_y_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 1.83 45.0"/>
+    <parent link="base_link"/>
+    <child link="fin_pos_y"/>
+  </joint>
+
+  <link name="fin_neg_y">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 -1.83 45.0"/>
+      <geometry><box size="0.05 3.0 1.0"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 -1.83 45.0"/>
+      <mass value="200.0"/>
+      <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
+    </inertial>
+  </link>
+  <joint name="fin_neg_y_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -1.83 45.0"/>
+    <parent link="base_link"/>
+    <child link="fin_neg_y"/>
+  </joint>
+
+  <!-- ============= RCS ring mount ============= -->
+  <link name="rcs_ring">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 40.5"/>
+      <geometry><cylinder radius="1.83" length="0.1"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 40.5"/>
+      <mass value="500.0"/>
+      <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
+    </inertial>
+  </link>
+  <joint name="rcs_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 40.5"/>
+    <parent link="base_link"/>
+    <child link="rcs_ring"/>
+  </joint>
+
+  <!-- ============= Engine exit flame (visual only) ============= -->
+  <link name="flame">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -3.5"/>
+      <geometry><sphere radius="0.01"/></geometry>
+    </visual>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 -3.5"/>
+      <mass value="0.01"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+  </link>
+  <joint name="flame_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 -3.5"/>
+    <parent link="booster_link"/>
+    <child link="flame"/>
+  </joint>
+
+  <!-- Materials (inline — Genesis handles color via RGBA) -->
+  <material name="steel"><color rgba="0.5 0.5 0.5 1"/></material>
+  <material name="nozzle"><color rgba="0.3 0.3 0.3 1"/></material>
+  <material name="body_white"><color rgba="0.95 0.95 0.95 1"/></material>
+  <material name="body_gray"><color rgba="0.7 0.7 0.7 1"/></material>
+  <material name="lox_cyan"><color rgba="0.3 0.7 1.0 0.9"/></material>
+  <material name="rp1_orange"><color rgba="1.0 0.6 0.2 0.9"/></material>
+  <material name="leg_steel"><color rgba="0.6 0.6 0.65 1"/></material>
+  <material name="fin_black"><color rgba="0.2 0.2 0.2 1"/></material>
+  <material name="rcs_metal"><color rgba="0.8 0.8 0.85 1"/></material>
+</robot>

@@ -2,6 +2,17 @@
 
 <robot name="quadplane">
 
+  <!-- NOTE (tensorized port): upstream PyFlyt ships this airframe with the
+       nose along +Y (fuselage/wing-chord along Y, wingspan along X), which
+       conflicts with every other vehicle in this stack (nose = +X, pitch
+       about +Y, roll about +X). All joint frames below are rotated by -90
+       deg about Z relative to upstream (xyz' = (y, -x, z), rpy z -= pi/2),
+       which places the tail at x=-1.1, wing at x=-0.5, ailerons at
+       (-0.5, +-0.95) and fuselage at x=-0.45, i.e. byte-for-byte the
+       fixedwing layout. The quad motors sit at x = +0.05 (front pair) / -0.95 (rear
+       pair), y = +-0.5, centered on the CG; the pusher motor is at the
+       origin (nose) and thrusts along +X. -->
+
   <link name="base_link">
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -11,7 +22,7 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-        <box size="0.2 0.1 0.2"/>
+        <box size="0.1 0.2 0.2"/>
       </geometry>
     </collision>
   </link>
@@ -25,7 +36,7 @@
     </inertial>
   </link>
   <joint name="motor_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="0 0 0"/>
     <parent link="base_link"/>
     <child link="motor_link"/>
   </joint>
@@ -45,7 +56,7 @@
     </collision>
   </link>
   <joint name="horizontal_tail_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 -1.1 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-1.1 0 0"/>
     <parent link="base_link"/>
     <child link="horizontal_tail_link"/>
   </joint>
@@ -65,7 +76,7 @@
     </collision>
   </link>
   <joint name="vertical_tail_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 -1.1 0.15"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-1.1 0 0.15"/>
     <parent link="base_link"/>
     <child link="vertical_tail_link"/>
   </joint>
@@ -85,7 +96,7 @@
     </collision>
   </link>
   <joint name="ail_left_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="-0.95 -0.5 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-0.5 0.95 0"/>
     <parent link="base_link"/>
     <child link="ail_left_link"/>
   </joint>
@@ -105,7 +116,7 @@
     </collision>
   </link>
   <joint name="ail_right_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0.95 -0.5  0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-0.5 -0.95 0"/>
     <parent link="base_link"/>
     <child link="ail_right_link"/>
   </joint>
@@ -125,7 +136,7 @@
     </collision>
   </link>
   <joint name="main_wing_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 -0.5 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-0.5 0 0"/>
     <parent link="base_link"/>
     <child link="main_wing_link"/>
   </joint>
@@ -145,7 +156,7 @@
     </collision>
   </link>
   <joint name="fuselage_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 -0.45 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-0.45 0 0"/>
     <parent link="base_link"/>
     <child link="fuselage_link"/>
   </joint>
@@ -165,7 +176,7 @@
     </collision>
   </link>
   <joint name="prop1_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0.5 0.05 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="0.05 -0.5 0"/>
     <parent link="base_link"/>
     <child link="prop1_link"/>
   </joint>
@@ -184,7 +195,7 @@
     </collision>
   </link>
   <joint name="prop2_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="-0.5 -0.95 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-0.95 0.5 0"/>
     <parent link="base_link"/>
     <child link="prop2_link"/>
   </joint>
@@ -203,7 +214,7 @@
     </collision>
   </link>
   <joint name="prop3_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="-0.5 0.05 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="0.05 0.5 0"/>
     <parent link="base_link"/>
     <child link="prop3_link"/>
   </joint>
@@ -222,7 +233,7 @@
     </collision>
   </link>
   <joint name="prop4_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0.5 -0.95 0"/>
+    <origin rpy="0 0 -1.5707963267948966" xyz="-0.95 -0.5 0"/>
     <parent link="base_link"/>
     <child link="prop4_link"/>
   </joint>

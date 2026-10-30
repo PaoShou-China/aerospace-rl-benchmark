@@ -1,0 +1,393 @@
+{
+  "source": "Claude benchmark_v2_results.json",
+  "source_sha256": "40e6ce757da30f1068bd569a63b9287146c424e11cabda8002d87a1323a12153",
+  "protocol": "frozen research source, 40 Hz, 4 x 128 full first episodes per cohort",
+  "primary_metric": "ever_stable_2s",
+  "evaluations": {
+    "nominal/dev/pdg": {
+      "n": 512,
+      "stable_2s": 512,
+      "stable_2s_wilson95": [
+        0.9926,
+        1.0
+      ],
+      "ever_success": 512,
+      "ever_success_wilson95": [
+        0.9926,
+        1.0
+      ],
+      "terminal_single_point": 512,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 512,
+      "failure_counts": {},
+      "not_stable_breakdown": {},
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          1.0,
+          1.0
+        ],
+        "fin": [
+          1.0,
+          1.0
+        ],
+        "booster_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_bias_deg": [
+          0.0,
+          0.0
+        ],
+        "wind": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "nominal/ind/pdg": {
+      "n": 512,
+      "stable_2s": 512,
+      "stable_2s_wilson95": [
+        0.9926,
+        1.0
+      ],
+      "ever_success": 512,
+      "ever_success_wilson95": [
+        0.9926,
+        1.0
+      ],
+      "terminal_single_point": 512,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 512,
+      "failure_counts": {},
+      "not_stable_breakdown": {},
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          1.0,
+          1.0
+        ],
+        "fin": [
+          1.0,
+          1.0
+        ],
+        "booster_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_bias_deg": [
+          0.0,
+          0.0
+        ],
+        "wind": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "nominal/dev/seed": {
+      "n": 512,
+      "stable_2s": 508,
+      "stable_2s_wilson95": [
+        0.9801,
+        0.997
+      ],
+      "ever_success": 508,
+      "ever_success_wilson95": [
+        0.9801,
+        0.997
+      ],
+      "terminal_single_point": 508,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 508,
+      "failure_counts": {
+        "fatal_collision": 4
+      },
+      "not_stable_breakdown": {
+        "fatal_collision": 4
+      },
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          1.0,
+          1.0
+        ],
+        "fin": [
+          1.0,
+          1.0
+        ],
+        "booster_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_bias_deg": [
+          0.0,
+          0.0
+        ],
+        "wind": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "nominal/ind/seed": {
+      "n": 512,
+      "stable_2s": 504,
+      "stable_2s_wilson95": [
+        0.9695,
+        0.9921
+      ],
+      "ever_success": 504,
+      "ever_success_wilson95": [
+        0.9695,
+        0.9921
+      ],
+      "terminal_single_point": 504,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 504,
+      "failure_counts": {
+        "fatal_collision": 8
+      },
+      "not_stable_breakdown": {
+        "fatal_collision": 8
+      },
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          1.0,
+          1.0
+        ],
+        "fin": [
+          1.0,
+          1.0
+        ],
+        "booster_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_tau": [
+          0.01,
+          0.01
+        ],
+        "gimbal_bias_deg": [
+          0.0,
+          0.0
+        ],
+        "wind": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "shifted/dev/pdg": {
+      "n": 512,
+      "stable_2s": 290,
+      "stable_2s_wilson95": [
+        0.5231,
+        0.6087
+      ],
+      "ever_success": 291,
+      "ever_success_wilson95": [
+        0.5251,
+        0.6106
+      ],
+      "terminal_single_point": 290,
+      "success_then_failure": 1,
+      "terminal_stable_2s": 290,
+      "failure_counts": {
+        "fatal_collision": 221
+      },
+      "not_stable_breakdown": {
+        "fatal_collision": 221,
+        "settled_never_2s": 1
+      },
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          0.92,
+          1.08
+        ],
+        "fin": [
+          0.6,
+          1.4
+        ],
+        "booster_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_bias_deg": [
+          -0.3,
+          0.3
+        ],
+        "wind": [
+          0.0,
+          5.0
+        ]
+      }
+    },
+    "shifted/ind/pdg": {
+      "n": 512,
+      "stable_2s": 314,
+      "stable_2s_wilson95": [
+        0.5704,
+        0.6545
+      ],
+      "ever_success": 314,
+      "ever_success_wilson95": [
+        0.5704,
+        0.6545
+      ],
+      "terminal_single_point": 314,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 314,
+      "failure_counts": {
+        "fatal_collision": 198
+      },
+      "not_stable_breakdown": {
+        "fatal_collision": 198
+      },
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          0.92,
+          1.08
+        ],
+        "fin": [
+          0.6,
+          1.4
+        ],
+        "booster_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_bias_deg": [
+          -0.3,
+          0.3
+        ],
+        "wind": [
+          0.0,
+          5.0
+        ]
+      }
+    },
+    "shifted/dev/seed": {
+      "n": 512,
+      "stable_2s": 281,
+      "stable_2s_wilson95": [
+        0.5055,
+        0.5914
+      ],
+      "ever_success": 281,
+      "ever_success_wilson95": [
+        0.5055,
+        0.5914
+      ],
+      "terminal_single_point": 281,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 281,
+      "failure_counts": {
+        "fatal_collision": 231
+      },
+      "not_stable_breakdown": {
+        "fatal_collision": 231
+      },
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          0.92,
+          1.08
+        ],
+        "fin": [
+          0.6,
+          1.4
+        ],
+        "booster_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_bias_deg": [
+          -0.3,
+          0.3
+        ],
+        "wind": [
+          0.0,
+          5.0
+        ]
+      }
+    },
+    "shifted/ind/seed": {
+      "n": 512,
+      "stable_2s": 293,
+      "stable_2s_wilson95": [
+        0.529,
+        0.6144
+      ],
+      "ever_success": 293,
+      "ever_success_wilson95": [
+        0.529,
+        0.6144
+      ],
+      "terminal_single_point": 293,
+      "success_then_failure": 0,
+      "terminal_stable_2s": 293,
+      "failure_counts": {
+        "fatal_collision": 219
+      },
+      "not_stable_breakdown": {
+        "fatal_collision": 219
+      },
+      "physics_modified": true,
+      "variation_ranges": {
+        "thrust": [
+          0.92,
+          1.08
+        ],
+        "fin": [
+          0.6,
+          1.4
+        ],
+        "booster_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_tau": [
+          0.005,
+          0.03
+        ],
+        "gimbal_bias_deg": [
+          -0.3,
+          0.3
+        ],
+        "wind": [
+          0.0,
+          5.0
+        ]
+      }
+    }
+  }
+}

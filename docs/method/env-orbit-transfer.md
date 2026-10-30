@@ -7,8 +7,8 @@ orthogonal thruster pairs ($10\ \mathrm{mN}$ per axis, continuous,
 $I_{\mathrm{sp}} = 4000\ \mathrm{s}$ electric propulsion) fires for 166
 control steps of $300\ \mathrm{s}$ each ($49{,}800\ \mathrm{s} \approx 13.8$
 h, about five revolutions) to raise the pericenter radius of an initial
-$a = 10{,}000\ \mathrm{km}$, $e = 0.1$ orbit — perigee radius
-$r_p = 9000\ \mathrm{km}$, apogee radius $r_a = 11{,}000\ \mathrm{km}$ —
+$a = 10{,}000\ \mathrm{km}$, $e = 0.15$ orbit — perigee radius
+$r_p = 8500\ \mathrm{km}$, apogee radius $r_a = 11{,}500\ \mathrm{km}$ —
 while keeping the apocenter radius fixed and propellant use low. The initial
 mean anomaly is resampled uniformly on $[-\pi, \pi]$ at every reset; the
 remaining elements are fixed at $i = 60^{\circ}$, $\Omega = 120^{\circ}$,
@@ -135,11 +135,12 @@ through only ${\sim}12$ episode boundaries per PPO update and does not train.
 ## 8. Initial Distribution
 
 - Mean anomaly $M_0 \sim U(-\pi, \pi)$, resampled at every reset.
-- Fixed elements $a_0 = 10^{7}\ \mathrm{m}$, $e_0 = 0.1$, $i_0 = \pi/3$,
+- Fixed elements $a_0 = 10^{7}\ \mathrm{m}$, $e_0 = 0.15$, $i_0 = \pi/3$,
   $\Omega_0 = 2\pi/3$, $\omega_0 = 4\pi/3$; the Cartesian state follows from
-  §3, giving $r_{p0} = 9\times10^{6}\ \mathrm{m}$,
-  $r_{a0} = 1.1\times10^{7}\ \mathrm{m}$ (recorded from the actual initial
-  osculating state).
+  §3, giving $r_{p0} = 8.5\times10^{6}\ \mathrm{m}$,
+  $r_{a0} = 1.15\times10^{7}\ \mathrm{m}$ (recorded from the actual initial
+  osculating state). $e_0$ was raised from the reference $0.1$ on 2026-10-24
+  (baseline at 100% success).
 - $m_0 = 100\ \mathrm{kg}$; elapsed time $t = 0$; potential $\Phi(s_0) = 0$.
 
 ## 9. Metrics and Extras
@@ -165,7 +166,7 @@ package `__init__.py`. Constructor defaults: `num_envs=64`, `backend='cpu'`,
 | $\mu$ | $3.986004418\times10^{14}\ \mathrm{m^3/s^2}$ (WGS84) |
 | $f_{\max}$ / $I_{\mathrm{sp}}$ / $g_0$ | $0.01\ \mathrm{N}$ / $4000\ \mathrm{s}$ / $9.80665\ \mathrm{m/s^2}$ |
 | $m_0$ | $100\ \mathrm{kg}$ |
-| $(a_0, e_0, i_0, \Omega_0, \omega_0)$ | $(10^{7}\ \mathrm{m},\ 0.1,\ \pi/3,\ 2\pi/3,\ 4\pi/3)$ |
+| $(a_0, e_0, i_0, \Omega_0, \omega_0)$ | $(10^{7}\ \mathrm{m},\ 0.15,\ \pi/3,\ 2\pi/3,\ 4\pi/3)$ |
 | control step $\mathrm{d}t$ | $300\ \mathrm{s}$ |
 | integrator | RK4, 30 substeps $\times$ $10\ \mathrm{s}$ per control step |
 | `max_steps` | 166 ($49{,}800\ \mathrm{s}$, ${\sim}5$ revolutions) |

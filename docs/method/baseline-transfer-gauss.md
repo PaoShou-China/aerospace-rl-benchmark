@@ -27,7 +27,7 @@ repair an apogee overshoot (documented intended behavior).
   $F_{\max}=10$ mN (`env.f_max`), $I_{sp}=4000$ s, $g_0=9.80665$ m/s²,
   and the reference apsis radii of the spawn orbit,
   $r_{p0}=a_0(1-e_0)$, $r_{a0}=a_0(1+e_0)$ with $a_0=10^{7}$ m,
-  $e_0=0.1$ (`env.sma0`, `env.ecc0`; the env re-samples only the mean
+  $e_0=0.15$ (`env.sma0`, `env.ecc0`; the env re-samples only the mean
   anomaly at reset, so the reference radii are constant).
 - **Per-episode state.** None; `reset_idx` is the base-class no-op. The
   law is a pure state feedback.
@@ -122,7 +122,7 @@ leaves it at `None`.
 | $F_{\max}$ | 0.01 N per thruster pair | `env.f_max` |
 | $I_{sp}$, $g_0$ | 4000 s, 9.80665 m/s² | `env.isp`, `env.g0` |
 | $m_0$ | 100 kg | `env.mass0` |
-| reference orbit | $a_0 = 10^7$ m, $e_0 = 0.1$ $\Rightarrow$ $r_{p0}=9.0\times10^{6}$ m, $r_{a0}=1.1\times10^{7}$ m | `env.sma0`, `env.ecc0` |
+| reference orbit | $a_0 = 10^7$ m, $e_0 = 0.15$ $\Rightarrow$ $r_{p0}=8.5\times10^{6}$ m, $r_{a0}=1.15\times10^{7}$ m | `env.sma0`, `env.ecc0` |
 | propellant weight | $2\times10^{5}$ m/kg (objective $J$ weight) | `prop_cost` |
 | control step / horizon | $\Delta t = 300$ s, 166 steps ($\approx 5$ revolutions) | `env.dt`, `env.max_steps` |
 | `target_rp` | `None` (disabled) | constructor default |

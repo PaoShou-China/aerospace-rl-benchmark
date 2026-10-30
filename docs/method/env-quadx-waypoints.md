@@ -135,7 +135,7 @@ attributes are manual domain-randomization knobs and are zero in the benchmark).
 upstream polar sampling, drawn per replica from a counter-based device RNG:
 \begin{equation}
 \theta,\phi\sim\mathcal U[0,2\pi),\quad
-r\sim\mathcal U[1.0,\,4.5]\ \mathrm{m},\quad
+r\sim\mathcal U[1.5,\,4.8]\ \mathrm{m},\quad
 w=\big(r\sin\phi\cos\theta,\; r\sin\phi\sin\theta,\; \max(\lvert r\cos\phi\rvert,\,0.4\ \mathrm{m})\big). \tag{6}
 \end{equation}
 The waypoint draw is the only reset randomness; a fixed seed reproduces a layout bit-for-bit. Reset
@@ -181,7 +181,7 @@ step. On steps where at least one replica finishes, `extras['episode']` reports 
 | pwm window | $[0.05,1]$; collective command $\le 0.8$ |
 | `CAPTURE_RADIUS` | 0.2 m |
 | out-of-bounds radius | 5 m |
-| waypoint radius / altitude floor | $[1.0,4.5]$ m / 0.4 m |
+| waypoint radius / altitude floor | $[1.5,4.8]$ m / 0.4 m (widened from $[1.0,4.5]$ m on 2026-10-24; baseline was at 100% success) |
 | spawn | $(0,0,1)$ m, at rest, level |
 | `REACH_BONUS` / `CRASH_PENALTY` | +15 / −10 |
 | `vel_clamp` ($\lVert v\rVert$, $\lVert\omega\rVert$) | 15 m/s, 30 rad/s |

@@ -28,8 +28,8 @@ per-environment Python loop, no host synchronization.
 - **Per-episode state.** None: the ignition hysteresis is driven by the *observed* ignited flag, so the default no-op
   `reset_idx` suffices; only the diagnostic counters (`steps, sat_max, coast, ignitions, infeasible, floor, fin_sat`)
   persist across episodes.
-- **Rates.** Policy 60 Hz / control 120 Hz / physics 240 Hz; 30 s (1800-step) episode limit. (The class docstring's
-  "40 Hz / 3 inner steps" line predates the current 60 Hz policy rate.)
+- **Rates.** Policy 60 Hz / control 120 Hz (2 inner control periods per policy step) / physics 240 Hz; 30 s
+  (1800-step) episode limit.
 
 ## 3. Guidance and control law
 
@@ -179,8 +179,7 @@ speed > 1.0 m/s or spin > 0.35 rad/s is fatal).
 
 | Source / protocol | Result |
 |---|---|
-| `results/rocket/baseline.json` — official `scripts/baseline_eval.py rocket`, 1024 envs, seed 7, GPU, 1800 env steps (one full 30 s episode per replica, 1024 episodes) | success rate **0.8398** (860/1024), mean episode return 4040.3 |
-| Root `README.md` baseline table (earlier protocol) | 66.8% in a 2000-step window |
+| `results/rocket/baseline.json` — official `scripts/baseline_eval.py rocket`, 1024 envs, seed 7, GPU, 1800 env steps (one full 30 s episode per replica, 1024 episodes) | success rate **0.8281** (848/1024), mean episode return 3968.2 |
 | `results/rocket/pdg_test_report.json`, scenario A (random upstream ICs) — `rocket_pdg_test.py`, 1024 replicas, 1250-step window, seed 7, GPU | SR 0.4395; pad-touch rate 0.731; touch speed p10/p50/p90 = 0.077/0.282/1.382 m/s; touch tilt mean 0.025 rad; touch spin mean 0.154 rad/s |
 | same, scenario B (corner ICs: xy ±20 m × z {400, 450} × tilt {0, ±0.3}) | SR 0.3363; touch rate 0.489; touch speed p50 0.146 m/s |
 | same, scenarios C/D/E (nominal z = 425 m; low-z 400 m; ±3 m/s lateral velocity, all xy = 0) | SR 0.4785 / 0.4961 / 0.4717; touch rate 0.776 / 0.776 / 0.769 |
@@ -201,8 +200,8 @@ Only limitations documented in the code comments or READMEs are listed.
   $K_{D,T} = 8000$ marginally better alone (83.9%) but degraded with the soft band, 10000 overshooting (79.2%).
 - **Authority-saturated braking transients** are retained as documented residual failures (root README), visible as
   the ~0.9% saturation and infeasible-demand fractions above.
-- **Pulse-band quantization.** The touchdown-speed guarantee is quantization-bounded (~0.25 m/s per 25 ms policy
-  sample in the original 40 Hz comment; the current 60 Hz policy only tightens the bound).
+- **Pulse-band quantization.** The touchdown-speed guarantee is quantization-bounded (~0.25 m/s per 25 ms control
+  sample, i.e. roughly ±0.12 m/s per 60 Hz policy step).
 - **Aerodynamic model validity.** The linear fin-spring model holds only to ~10° of tilt (fins stall beyond the
   ~9.6° trim point), so the feed-forward is capped; large tilt commands are outside the design envelope.
 - **One-way engine.** With $T_{\min}/(mg) = 1.91$ the engine can only brake; the terminal descent is necessarily a

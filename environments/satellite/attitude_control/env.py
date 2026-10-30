@@ -137,7 +137,12 @@ class SatelliteAttitudeEnv:
                                      #   under k1=30, too weak vs advantage noise
                                      #   (assist differential +560 proved capture is
                                      #   worth ~6x the park equilibrium)
-        self.reset_noise_scale=.001
+        # Initial-state noise (quaternion / body rate / gimbal). 2026-10-24:
+        # raised .001 -> .01 (baseline sat at 100% success). Initial |omega|
+        # reaches ~0.017 rad/s -- just under the 0.02 success rate tolerance,
+        # so replicas must actively damp rates; worst-case momentum injection
+        # I*w ~ 2 N m s stays far inside the CMG cluster capacity (4 x 20).
+        self.reset_noise_scale=.01
         self.success_att_tol=.05;self.success_omega_tol=.02
         self.settle_bonus=1.         # one-time bonus on the success-terminating step.
                                      # Was a per-step Gaussian state reward: with no

@@ -4,7 +4,7 @@
 
 The rendezvous task reproduces the medium-range approach benchmark of the
 SpaceGym proximity-operations suite (Supreeth & Mehta, CVPR 2026 Workshop on
-AI4Space, Section 3.2). A chaser, initialized 800–1200 m from a target on a
+AI4Space, Section 3.2). A chaser, initialized 1000–1500 m from a target on a
 circular 400 km low-Earth orbit, must close to within 10 m with terminal
 relative speed below 0.5 m/s, while avoiding a 5 m radius keep-out sphere,
 staying within 2000 m, and respecting a 4 kg propellant budget. Relative motion
@@ -137,7 +137,7 @@ At reset, the position direction is uniform on the unit sphere and the
 separation uniform in the task range; the velocity has an independent uniform
 direction with magnitude uniform on $[0, v_{\max}]$:
 \begin{equation}
-p_0 = d\,\hat u,\quad d\sim\mathcal{U}[800,1200]\ \mathrm{m},\quad \hat u\sim\mathcal{U}(S^{2}),\qquad
+p_0 = d\,\hat u,\quad d\sim\mathcal{U}[1000,1500]\ \mathrm{m},\quad \hat u\sim\mathcal{U}(S^{2}),\qquad
 v_0 = s\,\hat w,\quad s\sim\mathcal{U}[0,1]\ \mathrm{m/s},\quad \hat w\sim\mathcal{U}(S^{2}), \tag{9}
 \end{equation}
 with $\hat u,\hat w$ independent. The sampled separation is stored as
@@ -158,7 +158,7 @@ with `complete` set) and `init_range_hi`; `extras['terminal_observations']` carr
 | Constant | Value |
 |---|---|
 | `max_steps` | 1000 (`max_episode_length` buffer 1002) |
-| `init_range` | (800, 1200) m |
+| `init_range` | (1000, 1500) m (widened from (800, 1200) m on 2026-10-24; baseline was at 100% success) |
 | `init_vmax` | 1 m/s |
 | `pos_goal` / `vel_goal` | 10 m / 0.5 m/s |
 | `range_fail` | 2000 m |

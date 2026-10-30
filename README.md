@@ -1,9 +1,9 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
-A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains eight aerospace tasks spanning atmospheric flight and spacecraft dynamics, together with a pendulum task used only as a training-pipeline check. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
+A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains nine aerospace tasks spanning atmospheric flight and spacecraft dynamics. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
 Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly or used to generate behavior-cloning data for the warm-started learning pipeline.
 
-The four atmospheric vehicle tasks use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
+The five atmospheric vehicle tasks use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
 
 All state lives on exactly one device as `float64` physics / `float32`
 observation buffers. There is **no engine round-trip per replica, no
@@ -27,26 +27,32 @@ verification conditions lives in
 
 | Task | Class | Dynamics model | Obs dim | Act dim | Policy rate | Episode | Success criterion |
 |---|---|---|---|---|---|---|---|
-| QuadX-Hover | `QuadXHoverEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID | 21 | 4 | 40 Hz | 400 steps = 10 s | none (graded hover reward) |
-| Fixedwing-Waypoints | `FixedwingWaypointsEnv` | URDF rigid body (2.35 kg UAV, 240 Hz) + blade-element aero | 38 | 4 | 30 Hz | 3600 steps = 120 s | 4/4 waypoints captured (< 2 m) |
-| Rocket-Landing | `RocketLandingEnv` | URDF rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 40 Hz | 1200 steps = 30 s | pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad |
-| Missile-Intercept | `MissileInterceptEnv` | URDF rigid body (150 kg missile, 240 Hz) + tail-fin aero + boost-coast engine, kinematic 3-DOF target | 34 | 3 | 60 Hz | 900 steps = 15 s | miss distance < 8 m (proximity fuse) |
-| Satellite attitude (CMG) | `SatelliteAttitudeEnv` | Rigid body + 4- or 6-CMG cluster, RK4 2.5 ms | 23 / 29 | 4 / 6 | 40 Hz | 1200 steps = 30 s | att. error < 0.05 rad, \|ω\| < 0.02 rad/s at limit |
-| Low-thrust transfer | `LowThrustTransferEnv` | Two-body gravity + 3-axis 10 mN EP, RK4 10 s | 8 | 3 | 300 s/step | 166 steps ≈ 5 revs | none (terminal reward) |
+| QuadX-Waypoints | `QuadXWaypointsEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID | 37 | 4 | 40 Hz | 800 steps = 20 s | 4/4 waypoints captured (< 0.2 m) |
+| QuadX-Track | `QuadXTrackEnv` | URDF rigid body (Crazyflie 2.x, 240 Hz) + rate-PID, kinematic ground target + geometric camera | 25 | 4 | 40 Hz | 1200 steps = 30 s | visible-time fraction ≥ 0.85 and no crash, judged at the time limit; success does not truncate |
+| Fixedwing-Waypoints | `FixedwingWaypointsEnv` | URDF rigid body (2.35 kg UAV, 240 Hz) + blade-element aero | 39 | 4 | 30 Hz | 3600 steps = 120 s | 4/4 waypoints captured (< 10 m) |
+| Quadplane-VTOL | `QuadplaneWaypointsEnv` | URDF hybrid UAV (2.35 kg, 4 quad motors + fixedwing surfaces + forward pusher, 240 Hz) | 47 | 8 | 40 Hz | 1200 steps = 30 s | 4/4 waypoints captured (< 15 m) |
+| Rocket-Landing | `RocketLandingEnv` | URDF rigid body (F9-class booster, 240 Hz) + grid fins, gimbal | 30 | 7 | 40 Hz | 1200 steps = 30 s | pad contact, \|v\| < 0.02 m/s, \|ω\| < 0.02 rad/s, tilt < 0.1 rad for 2 s (81 samples); success does not truncate |
+| Missile-Intercept | `MissileInterceptEnv` | URDF rigid body (150 kg missile, 240 Hz) + tail-fin aero + boost-coast engine, kinematic 3-DOF target | 34 | 3 | 60 Hz | 900 steps = 15 s | miss distance < 15 m (proximity fuse, any physics substep) |
+| Satellite attitude (CMG) | `SatelliteAttitudeEnv` | Rigid body + 4- or 6-CMG cluster, RK4 2.5 ms | 26 / 32 | 4 / 6 | 40 Hz | 1200 steps = 30 s | att. error < 0.05 rad & \|ω\| < 0.02 rad/s, checked every step; \|ω\| > 10 rad/s fails |
+| Low-thrust transfer | `LowThrustTransferEnv` | Two-body gravity + 3-axis 10 mN EP, RK4 10 s | 8 | 3 | 300 s/step | 166 steps ≈ 5 revs | terminal orbital-element return R > 0 at the limit |
 | Docking | `SpaceDockingEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 500 steps ≈ 8.3 min | range < 1 m & speed < 0.1 m/s |
 | Rendezvous | `SpaceRendezvousEnv` | Clohessy-Wiltshire-Hill, symplectic Euler 1 s | 6 | 3 | 1 s/step | 1000 steps ≈ 16.7 min | range < 10 m & speed < 0.5 m/s, keep-out respected |
 
 Per-task quantitative details (action/observation layouts, reward
 decompositions, termination conditions, spawn distributions, wind
 response) live in the module docstring of each package:
-[multirotor](multirotor/__init__.py),
-[fixedwing](fixedwing/__init__.py),
-[rocket](rocket/__init__.py),
-[missile](missile/__init__.py),
-[satellite/attitude_control](satellite/attitude_control/__init__.py),
-[satellite/orbit_transfer](satellite/orbit_transfer/__init__.py),
-[satellite/rendezvous_docking](satellite/rendezvous_docking/__init__.py)
+[multirotor](environments/multirotor/__init__.py),
+[fixedwing](environments/fixedwing/__init__.py),
+[rocket](environments/rocket/__init__.py),
+[missile](environments/missile/__init__.py),
+[satellite/attitude_control](environments/satellite/attitude_control/__init__.py),
+[satellite/orbit_transfer](environments/satellite/orbit_transfer/__init__.py),
+[satellite/rendezvous_docking](environments/satellite/rendezvous_docking/__init__.py)
 (covers both docking and rendezvous).
+
+Paper-style method write-ups (notation, equations, exact observation/action
+tables and constants) for every task and algorithm are indexed in
+[docs/method/README.md](docs/method/README.md).
 
 ## Package layout
 
@@ -55,8 +61,9 @@ part, each internally subdivided; generic entry points live in `scripts/`.
 
 ```
 environments/             # ── everything that defines a task ──
-├── multirotor/           # QuadX-Hover (rotary-wing station keeping)
+├── multirotor/           # QuadX-Waypoints + QuadX-Track (rotary-wing navigation / observation)
 ├── fixedwing/            # Fixedwing-Waypoints (aerodynamic navigation)
+├── vtol/                 # Quadplane-VTOL (rotor-aero authority transition)
 ├── rocket/               # Rocket-Landing (propulsive vertical landing)
 ├── satellite/            # spacecraft tasks, grouped by mission phase
 │   ├── attitude_control/     # CMG attitude control (pure tensor)
@@ -73,14 +80,14 @@ environments/             # ── everything that defines a task ──
     └── original_pyflyt/    # vendored PyFlyt vehicle URDF/YAML models + source
 algorithms/               # ── everything that produces actions (learned or not) ──
 ├── train_utils.py        # shared run_training() for the per-task entries
-├── ppo/ppo_flashnet.py   # FlashSAC-trunk networks for the PPO A/B arm
+├── ppo/                  # PPO config builder hook (rsl-rl MLPModel actors/critics)
 ├── flashsac/flash_sac.py # FlashSAC (arXiv:2604.04539) on the batched protocol
 ├── warmstart/bc_warmstart.py  # behavior-cloning warm start from baselines
 └── baselines/            # classical (non-learned) GNC baselines, one per task
     ├── baselines.py        #   PN/PDG/LQR/autopilot/... controllers
     └── fixedwing_autopilot.json  # serialized L1+TECS autopilot parameters
 scripts/                  # generic training / evaluation entry points
-├── train.py              # rsl-rl PPO entry point for all 8 real tasks
+├── train.py              # legacy small-config PPO CLI sweep entry for all 8 tasks
 ├── eval.py               # deterministic evaluation of trained checkpoints
 ├── baseline_eval.py      # evaluation of the classical baselines
 ├── sweep_tune.py         # small hyperparameter sweep harness
@@ -91,31 +98,41 @@ environments/<category>/eval_* / *_test.py  # per-task deep-dive harnesses
 docs/technical-highlights.md  # reviewer-oriented infrastructure write-up
 ```
 
-The four Genesis rigid-body tasks (`quadx`, `fixedwing`, `rocket`,
-`missile`) run on the Genesis rigid-body engine with fully tensorized
-actuation/contact layers (the missile target is a kinematic 3-DOF aircraft
-advanced analytically each physics substep); the four space tasks
+The five Genesis rigid-body tasks (`quadx`, `quadx_track`, `fixedwing`,
+`rocket`, `missile`) run on the Genesis rigid-body engine with fully
+tensorized actuation/contact layers (the missile target is a kinematic
+3-DOF aircraft advanced analytically each physics substep; the QuadX-Track
+ground target and its camera are analytic geometry); the four space tasks
 (`satellite`, `transfer`, `docking`, `rendezvous`) are pure-tensor
-integrators with no engine at all. All eight share the identical
+integrators with no engine at all. All nine share the identical
 `step`/`reset`/buffer contract, so the training entries treat them uniformly.
 
 ## Algorithms
 
-Training entries support two algorithms through `algorithms/train_utils.py`,
-sharing the identical warmup-cosine learning-rate schedule (peak 1e-3 →
-1.5e-4, warmup 1e-6 × total updates) so cross-algorithm comparisons are not
-schedule artifacts:
+Training entries support two algorithms through `algorithms/train_utils.py`.
+PPO can opt into the same warmup-cosine formula that FlashSAC always uses
+(`run_training(lr_cosine=True)`; floor 1.5e-4, warmup 1e-6 × total updates)
+so cross-algorithm comparisons are not schedule artifacts. Otherwise PPO
+uses each entry's fixed learning rate (the library default is 1e-3; the
+shipped entries pin 3e-4, transfer 2.5e-4) and FlashSAC uses its paper
+defaults (peak 3e-4).
 
 - **PPO** ([rsl-rl](https://github.com/leggedrobotics/rsl_rl)): the default
-  on-policy arm. Optionally with the **FlashSAC trunk**
-  (`algorithms/ppo/ppo_flashnet.py`, `arch='flash_residual'`): input
-  UnitBatchNorm → residual unit-norm blocks → UnitRMSNorm, norm-control
-  semantics replicated on the PPO update path — architecture-matched against
-  FlashSAC (the plain MLP trunk is kept as the A/B comparison arm).
+  on-policy arm, a state-independent Gaussian policy over a 2x128 tanh MLP
+  with rsl-rl `EmpiricalNormalization`, trained with clipped PPO. The
+  FlashSAC-trunk variant (`algorithms/ppo/ppo_flashnet.py`,
+  `arch='flash_residual'`: residual unit-norm blocks + `UnitRMSNorm` with
+  weight renormalization, BatchNorm deliberately disabled because batch
+  statistics break PPO's importance ratio) was removed on 2026-10-28: its
+  docking arm scored 0.0% on the held-out evaluation where the MLP arm
+  reached 85.0%, and its rocket arm 0.0%.
 - **FlashSAC** (`algorithms/flashsac/flash_sac.py`): a faithful port of FlashSAC
   (Kim et al., 2026, arXiv:2604.04539) to the batched GPU environment
-  protocol — off-policy SAC with explicit weight/feature/gradient norm
-  control and sharply reduced gradient updates compensated by larger models.
+  protocol — off-policy SAC with unit-norm weights, sqrt(d)-bounded BatchNorm
+  / RMSNorm affines and reward normalization, sharply reduced gradient
+  updates compensated by larger models. Gradient control is implicit in those
+  weight/feature bounds; no gradient clipping is applied. fp16 AMP is wired
+  behind `use_amp` and is off by default.
 
 Every run records task configuration, real transition counts, physical-step
 counts and device-side completion metrics in `results/<task>/run.json`.
@@ -127,32 +144,39 @@ Each task is paired with a classical GNC baseline
 non-learning reference on the same env, reward and success bar. Every
 controller reads only the `'policy'` observation group, takes env constants
 at construction, never touches internal state buffers, and leaves env
-semantics untouched. Reference success rates (official `baseline_eval`
-protocol, 1024 envs / 2000 steps / seed 7, per-task evaluation windows
-declared in each report):
+semantics untouched. Reference success rates below are the shipped official
+`scripts/baseline_eval.py` results in `results/<task>/baseline.json` (1024
+envs, seed 7, GPU; each row's evaluation window and episode count come from
+that file). Rows that cite another artifact or are pending a re-run say so
+explicitly:
 
 | Task | Baseline | Reference result |
 |---|---|---|
-| QuadX-Hover | SE(3) geometric control (Lee et al. 2010) with integral trim | 100% (5120 episodes) |
-| Fixedwing | L1 lateral + TECS longitudinal autopilot | ~74.6% train / 73.1% test (3700-step window) |
-| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | 66.8% (2000-step window) |
-| Satellite (CMG) | quaternion PD + Schaub-Junkins damped pseudo-inverse | 100% (1024 episodes) |
-| Transfer | Gauss one-step greedy tangential guidance | 100%, terminal R ≈ 0.86 |
-| Docking | CWH discrete LQR (symplectic-exact) + shield/fuel derating | 100% |
-| Rendezvous | two-impulse CWH ZEM/PN guidance, recursive re-solve | 100% (4096 episodes, benchmark envelope) |
-| Missile-Intercept | augmented PN (N=4) → body-rate commands | 55.1% at d=0 / 6.2% at benchmark d=1.0 (256-episode windows; maneuvering-target residual documented in `missile/README.md`) |
+| QuadX-Waypoints | SE(3) geometric control (Lee et al. 2010) with integral trim | 100% (1025 episodes, 583-step window) |
+| QuadX-Waypoints | Position PID → attitude P/PD cascade on the env rate PID | 99.1% (1024 episodes, 800-step window, 0 crash/OOB) |
+| QuadX-Track | constant-velocity Kalman filter + fixed-offset SE(3) + public 3 s timeout hold | 85.1% (1024 episodes, 1200-step window); 92.3% visible time, 0.27 m standoff error |
+| Fixedwing-Waypoints | L1 lateral + TECS longitudinal autopilot | 95.9% (1024 episodes, 1361-step window) |
+| Quadplane-VTOL | velocity-scheduled cascaded PID + gentle forward pusher | **0% (not yet validated)**: crashes in 100% of episodes on train/dev/test seeds (`results/quadplane/cascade_report.json`); no BC warm start until fixed |
+| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | v2 (40 Hz, settled 2 s) baseline re-run pending; the 82.8% / 84.1% figures in older notes are v1 **instantaneous** ever-success rates and are NOT comparable to the v2 criterion |
+| Satellite (CMG) | quaternion PD + Schaub-Junkins damped pseudo-inverse | 100% (1024 episodes, 334-step window) |
+| Satellite (CMG, steering ablation) | same quaternion PD + ordinary Moore–Penrose pseudo-inverse | see `results/satellite/steering_compare.md` |
+| Transfer | Gauss one-step greedy tangential guidance | 100%, terminal return 0.855 (1024 episodes, 166 steps) |
+| Docking | CWH discrete LQR (symplectic-exact) + shield/fuel derating | 100% (1033 episodes, 223-step window) |
+| Rendezvous | two-impulse CWH ZEM/PN guidance, recursive re-solve | 100% (1024 episodes, 574-step window, mean return 195.5) |
+| Missile-Intercept | augmented PN (N=15) → body-rate commands | 83.0% (1037 episodes, 433-step window) |
 
 These are honest references, not strawmen: the fixedwing and rocket
 baselines retain documented residual failures (out-of-bound endgame limit
 cycles, authority-saturated braking transients) that RL is expected to
 attack. Task-specific deep-dive harnesses with per-scenario breakdowns and
-ablation arms: [eval_docking_lqr.py](satellite/rendezvous_docking/eval_docking_lqr.py),
-[eval_fixedwing_autopilot.py](fixedwing/eval_fixedwing_autopilot.py),
-[eval_rendezvous_baseline.py](satellite/rendezvous_docking/eval_rendezvous_baseline.py),
-[rocket_pdg_test.py](rocket/rocket_pdg_test.py),
-[eval_missile_scenarios.py](missile/eval_missile_scenarios.py),
-[test_missile_apn.py](missile/test_missile_apn.py),
-[test_quadx_se3.py](multirotor/test_quadx_se3.py).
+ablation arms: [eval_docking_lqr.py](environments/satellite/rendezvous_docking/eval_docking_lqr.py),
+[eval_fixedwing_autopilot.py](environments/fixedwing/eval_fixedwing_autopilot.py),
+[eval_rendezvous_baseline.py](environments/satellite/rendezvous_docking/eval_rendezvous_baseline.py),
+[rocket_pdg_test.py](environments/rocket/rocket_pdg_test.py),
+[eval_missile_scenarios.py](environments/missile/eval_missile_scenarios.py),
+[test_missile_apn.py](environments/missile/test_missile_apn.py),
+[test_quadx_se3.py](environments/multirotor/test_quadx_se3.py),
+[test_quadx_cascade_pid.py](environments/multirotor/test_quadx_cascade_pid.py).
 
 ## Conventions
 
@@ -168,21 +192,24 @@ ablation arms: [eval_docking_lqr.py](satellite/rendezvous_docking/eval_docking_l
 
 ## Wind disturbance
 
-The three atmospheric vehicles (QuadX-Hover, Fixedwing-Waypoints,
-Rocket-Landing) accept an optional wind disturbance through two constructor
-kwargs:
-
+The four atmospheric vehicles (QuadX-Waypoints, Fixedwing-Waypoints,
+Rocket-Landing, Missile-Intercept) accept an optional wind disturbance through
+two mechanisms:
 - `steady_wind` (tuple, m/s): constant world-frame wind velocity.
 - `dryden` (0–1 scale of the severity presets) + `severity`
   (`'light' | 'moderate' | 'severe'`): Dryden gust turbulence from
   environments/common/disturbances.py, advancing once per control step.
 
 Aerodynamic terms evaluate air-relative velocity `v_air = v - wind`
-(lifting surfaces and body-drag laws), so the default calm air (`steady_wind=None,
-dryden=0`) reproduces the benchmark bit-for-bit and eval.py — which builds
-envs without kwargs — is unaffected. The train entries hard-code a `WIND`
-constant (pure Dryden gusts at 30% of the moderate preset for the three
-atmospheric tasks); satellite tasks operate in vacuum and have no wind.
+(lifting surfaces and body-drag laws), so the default calm air
+(`steady_wind=None, dryden=0`) reproduces the benchmark bit-for-bit;
+`eval.py` restores each run's recorded `env_kwargs` from
+`results/<task>/config.json`. The quadx, fixedwing and rocket train entries
+hard-code a `WIND` constant (pure Dryden gusts at 30% of the moderate
+preset); the missile and quadx_track train entries run calm air. Satellite
+tasks operate in vacuum and have no wind. QuadX-Track uses the atmospheric
+plant but is kept in calm air so the method comparison is not confounded by
+gust variance.
 
 ## Dependencies
 
@@ -208,37 +235,54 @@ Per-task entries (all parameters hard-coded in the file — edit constants,
 no CLI arguments):
 
 ```bash
-python multirotor/train_quadx.py        # fixedwing/train_fixedwing.py
-python rocket/train_rocket.py           #   | missile/train_missile.py
-                                        #   | satellite/attitude_control/train_satellite.py
-                                        #   | satellite/orbit_transfer/train_transfer.py
-                                        #   | satellite/rendezvous_docking/train_docking.py
-                                        #   | satellite/rendezvous_docking/train_rendezvous.py
+python environments/multirotor/train_quadx.py
+python environments/multirotor/train_quadx_track.py   # QuadX-Track, PPO arm
+python environments/multirotor/train_quadx_track_flashsac.py  # QuadX-Track, FlashSAC arm
+python environments/fixedwing/train_fixedwing.py
+python environments/vtol/train_quadplane.py
+python environments/rocket/train_rocket.py
+python environments/missile/train_missile.py
+python environments/satellite/attitude_control/train_satellite.py
+python environments/satellite/orbit_transfer/train_transfer.py
+python environments/satellite/rendezvous_docking/train_docking.py
+python environments/satellite/rendezvous_docking/train_rendezvous.py
 ```
 
 The original CLI aggregator still works for quick sweeps:
 
 ```bash
-python scripts/train.py --task quadx   # fixedwing | missile | rocket | satellite
-                                       # transfer | docking | rendezvous
+python scripts/train.py quadx   # fixedwing | missile | rocket | satellite
+                                # transfer | docking | rendezvous
 ```
 
 Evaluation and baselines:
 
 ```bash
 python scripts/eval.py quadx                     # deterministic checkpoint evaluation
-python scripts/baseline_eval.py quadx            # classical baseline, any of the 8 tasks
+python scripts/eval.py quadx_track --out results/quadx_track/ppo
+python scripts/eval.py quadplane                 # VTOL checkpoint evaluation
+python scripts/baseline_eval.py quadx            # classical baseline, any registered task
+python scripts/baseline_eval.py quadx --baseline cascaded_pid   # QuadX A/B: cascade PID arm
+python scripts/baseline_eval.py quadx_track
+python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg  # steering A/B
+python scripts/satellite_steering_compare.py    # damped vs ordinary pinv vs PPO/FlashSAC
 # per-task deep-dive harnesses live in their category directories
 # (see the per-category READMEs):
-python satellite/rendezvous_docking/eval_docking_lqr.py
-python fixedwing/eval_fixedwing_autopilot.py    #   scenario grids, ablation arms,
-python satellite/rendezvous_docking/eval_rendezvous_baseline.py  #   per-scenario breakdown reports
-python rocket/rocket_pdg_test.py
-python missile/eval_missile_scenarios.py
+python environments/multirotor/eval_quadx_track_kf.py   # KF/PID tuning on seed 101
+python environments/multirotor/test_quadx_track.py      # sensing-contract checks
+python environments/multirotor/test_quadx_cascade_pid.py  # cascade PID direction/hover/waypoint tests
+python environments/satellite/rendezvous_docking/eval_docking_lqr.py
+python environments/fixedwing/eval_fixedwing_autopilot.py    # scenario grids, ablation arms,
+python environments/satellite/rendezvous_docking/eval_rendezvous_baseline.py  # per-scenario breakdowns
+python environments/rocket/rocket_pdg_test.py
+python environments/missile/eval_missile_scenarios.py
 ```
 
 Results land in `results/<task>/` (`run.json` for training runs,
-`baseline.json` / per-harness reports for baselines).
+`baseline.json` / per-harness reports for baselines). QuadX-Track keeps its
+three comparison arms separate: `results/quadx_track/baseline.json` and
+`kf_tuning.json` for the classical method, and `results/quadx_track/ppo/` /
+`results/quadx_track/flash_sac/` for the two learned arms.
 
 ## References
 
@@ -250,7 +294,7 @@ environment docstring lists the specific source of its defaults.
 1. Tai, J. K. *PyFlyt: UAV Simulation and Reinforcement Learning
    Environments*. github.com/jkuang421/PyFlyt — task definitions, reward
    shaping and the cf2x / fixedwing / rocket URDF-YAML vehicle models for
-   QuadX-Hover, Fixedwing-Waypoints and Rocket-Landing (PyFlyt 0.29.0).
+   QuadX-Waypoints, Fixedwing-Waypoints and Rocket-Landing (PyFlyt 0.29.0).
 2. TorchRL contributors. *SatelliteEnv*. pytorch/rl (MIT) — reference for
    the CMG attitude-control task's reward weights, tolerances and reset
    distribution (`satellite/attitude_control`).
@@ -309,7 +353,7 @@ multi-agent tasks are planned — every task below is a single agent.
 
 | Category | Task | Environment notes | Classical baseline | Interest |
 |---|---|---|---|---|
-| missile | Intercept — **landed** | point-mass + aero, maneuvering target (weave/barrel roll), RK4 1 ms, terminal-velocity constraint | PN / APN | first missile env, activates the `missile/` placeholder |
+| missile | Intercept — **landed** | 6-DOF rigid body + aero, boost-coast engine, maneuvering target (weave/barrel roll), RK4 1 ms | APN (N=15) | first missile env, fills the former `missile/` placeholder |
 | rocket | Droneship Landing | Rocket-Landing + 6-DOF moving pad (sea-wave spectrum), 10 m height offset | PDG + lag-compensated retargeting | moving touchdown target |
 | satellite | Docking-Fault | Docking + actuator failures (stuck/dead thruster) + measurement noise | LQR + control reallocation | fault injection, safe RL |
 | fixedwing | Autoland | glide-slope tracking + crosswind + flare, runway-contact criteria | glide-slope guidance + TECS (reuse existing autopilot) | baseline already exists |
@@ -350,3 +394,22 @@ multi-agent tasks are planned — every task below is a single agent.
 Batch 1 (parallel, independent): missile Intercept + Droneship Landing +
 Docking-Fault. Batch 2: Autoland + Slung Payload. Later batches follow the
 priority order above as infrastructure lands.
+
+### Rocket benchmark v2（2026-10-26）
+
+Rocket 使用独立版本的六球形脚垫接触资产，主指标为连续停稳 2 秒。
+原始 `rocket.urdf` 保留为哈希锁定的对照资产；历史 v1 成绩仅作历史参考。
+背景、结构性问题证据、物理扰动范围及复现命令见
+[benchmark-v2 中文说明](docs/rocket_benchmark_v2_zh.md)。
+当前 main 保留 40 Hz 策略、120 Hz 控制、240 Hz 物理步长及已有 Dryden 风配置
+（2026-10-27 起，与研究冻结快照同款策略频率；50 Hz 因不能整除 120 Hz 控制环不可用）。
+Claude 已完成的 v2 评估采用 40 Hz 冻结快照；版本、频率和源码哈希随结果一同保留。
+
+```bash
+# 每个环境的完整首回合，4 x 128，保留逐回合记录
+python scripts/rocket_benchmark_eval.py --backend gpu --variation nominal --out results/rocket-v2-nominal
+python scripts/rocket_benchmark_eval.py --backend gpu --variation shifted --out results/rocket-v2-shifted
+# 无策略、关发动机的接触因果诊断（不计为策略成功率）
+python scripts/rocket_passive_contact.py --out results/passive-v2.json
+python -m unittest discover -s tests -v
+```

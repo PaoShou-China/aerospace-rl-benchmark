@@ -9,10 +9,11 @@ then replays the recording in a visual-only Genesis scene and renders an
 mp4 to results/<task>/vis.mp4.
 
 Scene conventions per task:
-  quadx       cf2x URDF on a dark slate ground plane, translucent sphere at
-              the hover target, yellow nose arrow along body +x, translucent
-              prop disks over the four motor mounts (display-only, no
-              physics), and a close follow camera scaled to the ~9 cm drone
+  quadx       cf2x URDF on a dark slate ground plane, opaque green sphere at
+              the active waypoint (PyFlyt marker scaling), yellow nose arrow
+              along body +x, translucent prop disks over the four motor mounts
+              (display-only, no physics), and a fixed PyFlyt debug-view
+              camera scaled to the ~9 cm drone
   fixedwing   fixedwing URDF, red spheres at the 4 waypoints, camera follows
   rocket      rocket URDF + landing pad on a ground plane, camera follows
   satellite   recognizable bus (grey body, +/-z equipment compartments, +x
