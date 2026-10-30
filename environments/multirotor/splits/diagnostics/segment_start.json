@@ -1,0 +1,2404 @@
+[
+  {
+    "checkpoint": "E:\\work\\aerospace-rl-benchmark\\results\\quadx_splits_extended\\checkpoint.pt",
+    "next_iteration": 2000,
+    "initial_state": {
+      "p": [
+        -1.274999976158142,
+        2.9749999046325684,
+        2.365000009536743
+      ],
+      "q": [
+        0.17334581911563873,
+        0.0,
+        0.0,
+        -0.9848610162734985
+      ],
+      "v": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "w": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "report": {
+      "protocol": "first_episode_per_replica",
+      "env_steps": 800,
+      "scheduled_episodes": 64,
+      "completed_episodes": 64,
+      "all_replicas_finished": true,
+      "incomplete_replicas": [],
+      "success_rate": 0.0,
+      "successes": 0,
+      "mean_success_time_s": null,
+      "mean_gates_passed": 0.0,
+      "crash_rate": 0.0,
+      "gate_collision_rate": 0.0,
+      "mean_clearance_m": null,
+      "mean_speed": 0.3340648039603413,
+      "mean_body_rate": 0.12700200661741867,
+      "episodes": [
+        {
+          "replica": 0,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33406508255033646,
+          "max_speed": 3.4506124140814816,
+          "mean_body_rate": 0.12707774353724371,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 1,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33379228454073834,
+          "max_speed": 3.448168831782898,
+          "mean_body_rate": 0.1268603225786941,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 2,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3340694129455758,
+          "max_speed": 3.4397307708721723,
+          "mean_body_rate": 0.12703692066454136,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 3,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33384264406453423,
+          "max_speed": 3.45203633313555,
+          "mean_body_rate": 0.12710175239613997,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 4,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33377470615852495,
+          "max_speed": 3.4528926804564977,
+          "mean_body_rate": 0.12698377524932294,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 5,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3335180490418815,
+          "max_speed": 3.4483082105270437,
+          "mean_body_rate": 0.12693673548964549,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 6,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33429232442462453,
+          "max_speed": 3.4492192641221755,
+          "mean_body_rate": 0.12692898431183774,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 7,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33270178175222825,
+          "max_speed": 3.4491296852190048,
+          "mean_body_rate": 0.12683315247367916,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 8,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3341763546256675,
+          "max_speed": 3.454846277832897,
+          "mean_body_rate": 0.1270873880265955,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 9,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3339035201578783,
+          "max_speed": 3.449459308481979,
+          "mean_body_rate": 0.12688006670921195,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 10,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3340238116431091,
+          "max_speed": 3.4485506068333542,
+          "mean_body_rate": 0.12699131982913583,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 11,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.334138711171653,
+          "max_speed": 3.445717770925003,
+          "mean_body_rate": 0.12688206767719404,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 12,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33450552064626193,
+          "max_speed": 3.4464235367576785,
+          "mean_body_rate": 0.12710173241183045,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 13,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3336049771101505,
+          "max_speed": 3.4504552221538067,
+          "mean_body_rate": 0.12694458576562434,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 14,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3345678990698566,
+          "max_speed": 3.4461715642024258,
+          "mean_body_rate": 0.12715232242186428,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 15,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33441998141459195,
+          "max_speed": 3.4465152291190506,
+          "mean_body_rate": 0.12719216008121584,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 16,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33408793412723004,
+          "max_speed": 3.451109816628386,
+          "mean_body_rate": 0.12687758289398346,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 17,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3342044372877952,
+          "max_speed": 3.45679997542691,
+          "mean_body_rate": 0.12708184402386655,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 18,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33385601967592654,
+          "max_speed": 3.4554395632927024,
+          "mean_body_rate": 0.12701157651778736,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 19,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3338742160884935,
+          "max_speed": 3.4463146422132405,
+          "mean_body_rate": 0.12698669857235179,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 20,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3336948535943669,
+          "max_speed": 3.442818218336372,
+          "mean_body_rate": 0.12668525355182508,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 21,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33460671171673956,
+          "max_speed": 3.461188844661775,
+          "mean_body_rate": 0.1271248940704794,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 22,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3340818913885955,
+          "max_speed": 3.451375432197292,
+          "mean_body_rate": 0.1270470716152658,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 23,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3337044220759562,
+          "max_speed": 3.448981146125076,
+          "mean_body_rate": 0.12699412686051226,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 24,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3341995581723042,
+          "max_speed": 3.4523316230933587,
+          "mean_body_rate": 0.1269567886776364,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 25,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.333889387239025,
+          "max_speed": 3.4453881387313907,
+          "mean_body_rate": 0.1268818192763917,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 26,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.333641614444946,
+          "max_speed": 3.4430879009028335,
+          "mean_body_rate": 0.12685480916569028,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 27,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3335806275335547,
+          "max_speed": 3.4433138357408373,
+          "mean_body_rate": 0.12677005522388982,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 28,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.334337069171521,
+          "max_speed": 3.447632721647362,
+          "mean_body_rate": 0.12695202616162235,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 29,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.334333988472791,
+          "max_speed": 3.4425708372878714,
+          "mean_body_rate": 0.12708992364785562,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 30,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.333402684528372,
+          "max_speed": 3.4464366545983234,
+          "mean_body_rate": 0.1268404370598826,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 31,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.333652925869234,
+          "max_speed": 3.441325408221266,
+          "mean_body_rate": 0.12681529129637356,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 32,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3339389018783462,
+          "max_speed": 3.446986105655026,
+          "mean_body_rate": 0.12690138750717303,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 33,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3338530056803278,
+          "max_speed": 3.4385720027485287,
+          "mean_body_rate": 0.12695373447238828,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 34,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3339504494262493,
+          "max_speed": 3.45389156898169,
+          "mean_body_rate": 0.12711909330944182,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 35,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3342394264218334,
+          "max_speed": 3.4465443552516355,
+          "mean_body_rate": 0.12711021252148227,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 36,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33383288577559367,
+          "max_speed": 3.444441237124645,
+          "mean_body_rate": 0.12698023712127351,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 37,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33406505992823077,
+          "max_speed": 3.4476176486943437,
+          "mean_body_rate": 0.12701914067032666,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 38,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33421968013841397,
+          "max_speed": 3.448975931109968,
+          "mean_body_rate": 0.12702705709960932,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 39,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3333015224431911,
+          "max_speed": 3.4440026871167717,
+          "mean_body_rate": 0.12674892381390074,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 40,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3339798831031264,
+          "max_speed": 3.449335878792463,
+          "mean_body_rate": 0.12697816313767094,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 41,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3340169913820153,
+          "max_speed": 3.445192264519514,
+          "mean_body_rate": 0.12689017464398378,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 42,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3339906590232963,
+          "max_speed": 3.4457937294124115,
+          "mean_body_rate": 0.12699768578138207,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 43,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3348308063954886,
+          "max_speed": 3.4491412356904365,
+          "mean_body_rate": 0.12714563308841928,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 44,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3345873880566495,
+          "max_speed": 3.4460169108034844,
+          "mean_body_rate": 0.12710474181882483,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 45,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3344136153039577,
+          "max_speed": 3.4483945261031996,
+          "mean_body_rate": 0.12705951320260492,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 46,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3346560119141191,
+          "max_speed": 3.4511269172642187,
+          "mean_body_rate": 0.1269720526813586,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 47,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33377338002081935,
+          "max_speed": 3.446862622909458,
+          "mean_body_rate": 0.12702376400291152,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 48,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33437655220057483,
+          "max_speed": 3.4496276187879604,
+          "mean_body_rate": 0.12716485801008198,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 49,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3338617332436015,
+          "max_speed": 3.4464092174675387,
+          "mean_body_rate": 0.12693788613576548,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 50,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3342473561175625,
+          "max_speed": 3.446508175933931,
+          "mean_body_rate": 0.12697595509094906,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 51,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3341840992341139,
+          "max_speed": 3.4547632592423483,
+          "mean_body_rate": 0.12696130769447797,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 52,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33393188501250176,
+          "max_speed": 3.447348981940102,
+          "mean_body_rate": 0.12702511730405,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 53,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33474525895406154,
+          "max_speed": 3.449541551748041,
+          "mean_body_rate": 0.12711602388484902,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 54,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33504935632125227,
+          "max_speed": 3.4577853370333576,
+          "mean_body_rate": 0.12749916413709628,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 55,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33469192408210463,
+          "max_speed": 3.45250969248899,
+          "mean_body_rate": 0.12722417880631176,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 56,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3347611707475058,
+          "max_speed": 3.4524505167129877,
+          "mean_body_rate": 0.1271872017945076,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 57,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.333963419783178,
+          "max_speed": 3.4451581749516262,
+          "mean_body_rate": 0.12697666117064507,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 58,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.33433430151590343,
+          "max_speed": 3.4500377602693164,
+          "mean_body_rate": 0.1270602153992695,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 59,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3344619934780251,
+          "max_speed": 3.4423870086837574,
+          "mean_body_rate": 0.1270848442586824,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 60,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3336176371967028,
+          "max_speed": 3.443968169116788,
+          "mean_body_rate": 0.1267906443288357,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 61,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3342256543177409,
+          "max_speed": 3.4448651251754017,
+          "mean_body_rate": 0.1270511245373034,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 62,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3333933646042157,
+          "max_speed": 3.45044656296997,
+          "mean_body_rate": 0.12691268787902912,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 63,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.3341066770566746,
+          "max_speed": 3.4496039095152082,
+          "mean_body_rate": 0.12716780997099822,
+          "lap_times_s": [
+            null
+          ]
+        }
+      ]
+    },
+    "out_of_bounds_rate": 0.0,
+    "timeout_rate": 1.0,
+    "mean_time_s": 20.0
+  },
+  {
+    "checkpoint": "E:\\work\\aerospace-rl-benchmark\\results\\quadx_splits_4000\\checkpoint.pt",
+    "next_iteration": 4000,
+    "initial_state": {
+      "p": [
+        -1.274999976158142,
+        2.9749999046325684,
+        2.365000009536743
+      ],
+      "q": [
+        0.17334581911563873,
+        0.0,
+        0.0,
+        -0.9848610162734985
+      ],
+      "v": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "w": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "report": {
+      "protocol": "first_episode_per_replica",
+      "env_steps": 800,
+      "scheduled_episodes": 64,
+      "completed_episodes": 64,
+      "all_replicas_finished": true,
+      "incomplete_replicas": [],
+      "success_rate": 0.0,
+      "successes": 0,
+      "mean_success_time_s": null,
+      "mean_gates_passed": 0.0,
+      "crash_rate": 0.0,
+      "gate_collision_rate": 0.0,
+      "mean_clearance_m": null,
+      "mean_speed": 0.2482101431938203,
+      "mean_body_rate": 0.04887915889428965,
+      "episodes": [
+        {
+          "replica": 0,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24803772747515357,
+          "max_speed": 1.8800749848464602,
+          "mean_body_rate": 0.04898116643239044,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 1,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24848500416854488,
+          "max_speed": 1.8904139050151088,
+          "mean_body_rate": 0.048771839952310436,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 2,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2481993177363907,
+          "max_speed": 1.8831142560660163,
+          "mean_body_rate": 0.04907321733345268,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 3,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24753854062718114,
+          "max_speed": 1.855394608774311,
+          "mean_body_rate": 0.049092629664433056,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 4,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24795717689601512,
+          "max_speed": 1.895070836046704,
+          "mean_body_rate": 0.0492115120463186,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 5,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.247492515664246,
+          "max_speed": 1.8813296068030552,
+          "mean_body_rate": 0.04921410081789264,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 6,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24869300261836405,
+          "max_speed": 1.9187900607075878,
+          "mean_body_rate": 0.04871725413020775,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 7,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24731064316814355,
+          "max_speed": 1.8751838071726532,
+          "mean_body_rate": 0.049771448268177726,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 8,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2482357196683865,
+          "max_speed": 1.885120458601258,
+          "mean_body_rate": 0.0486325358285496,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 9,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24814778698196752,
+          "max_speed": 1.9112412507291496,
+          "mean_body_rate": 0.0488041300874455,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 10,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24782949011150157,
+          "max_speed": 1.891355142362974,
+          "mean_body_rate": 0.04882445584812266,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 11,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24873993987859933,
+          "max_speed": 1.9482602590983609,
+          "mean_body_rate": 0.048463819528791564,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 12,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24850356592647208,
+          "max_speed": 1.8951224551016295,
+          "mean_body_rate": 0.04860170991934418,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 13,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24770458299691236,
+          "max_speed": 1.873190975982343,
+          "mean_body_rate": 0.04895868155318655,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 14,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24850446635119486,
+          "max_speed": 1.8932155433331592,
+          "mean_body_rate": 0.048841119821427276,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 15,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2488074710040414,
+          "max_speed": 1.8986758020287715,
+          "mean_body_rate": 0.04883334848399667,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 16,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2488509689714806,
+          "max_speed": 1.9283713997919942,
+          "mean_body_rate": 0.04897811191386918,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 17,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2481097025317607,
+          "max_speed": 1.8881614763584054,
+          "mean_body_rate": 0.04885085288757424,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 18,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24784645182501322,
+          "max_speed": 1.887967588974835,
+          "mean_body_rate": 0.04882639176150215,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 19,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24770686522947868,
+          "max_speed": 1.8996503244631786,
+          "mean_body_rate": 0.04889441859873449,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 20,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2477510192077644,
+          "max_speed": 1.9273539437290916,
+          "mean_body_rate": 0.04890062076021698,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 21,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24877810784926638,
+          "max_speed": 1.8973288955874819,
+          "mean_body_rate": 0.04839734653592969,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 22,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24852456042409068,
+          "max_speed": 1.8928345044365191,
+          "mean_body_rate": 0.048822240989964814,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 23,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2477297859410632,
+          "max_speed": 1.8783602732033473,
+          "mean_body_rate": 0.049025269199933115,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 24,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24843988031626305,
+          "max_speed": 1.885146294599945,
+          "mean_body_rate": 0.04889466287681754,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 25,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2482526523074271,
+          "max_speed": 1.904855416613905,
+          "mean_body_rate": 0.048724232470312684,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 26,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24809193471798072,
+          "max_speed": 1.9144446039601388,
+          "mean_body_rate": 0.049042275162840786,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 27,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24759236433296494,
+          "max_speed": 1.8968344958715422,
+          "mean_body_rate": 0.04907081174146686,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 28,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2488118366434865,
+          "max_speed": 1.9194392561551448,
+          "mean_body_rate": 0.04866202320180117,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 29,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24822688181525165,
+          "max_speed": 1.8672371943908888,
+          "mean_body_rate": 0.04907069499164926,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 30,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24749532003671873,
+          "max_speed": 1.8600509955760949,
+          "mean_body_rate": 0.04912475962463678,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 31,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2484546967579815,
+          "max_speed": 1.8949223074466908,
+          "mean_body_rate": 0.049197383816884814,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 32,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24874282971944572,
+          "max_speed": 1.9089850267404367,
+          "mean_body_rate": 0.048985422440349695,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 33,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2481666878308194,
+          "max_speed": 1.8988756027684344,
+          "mean_body_rate": 0.04900016084362936,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 34,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2475839374793636,
+          "max_speed": 1.8882637184776843,
+          "mean_body_rate": 0.049012939662640385,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 35,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24818806697222873,
+          "max_speed": 1.8655128249377317,
+          "mean_body_rate": 0.04900304104940323,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 36,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24807785373816243,
+          "max_speed": 1.8836285670889938,
+          "mean_body_rate": 0.048855303314835744,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 37,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24774757887108687,
+          "max_speed": 1.8960263369726547,
+          "mean_body_rate": 0.04892488385389795,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 38,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24793370996483874,
+          "max_speed": 1.908271131324543,
+          "mean_body_rate": 0.0487658766444759,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 39,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24784321087881436,
+          "max_speed": 1.9292277200238424,
+          "mean_body_rate": 0.049044221838765834,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 40,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2484214596075174,
+          "max_speed": 1.908896919607797,
+          "mean_body_rate": 0.048951523426155934,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 41,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24814457227618011,
+          "max_speed": 1.9033072299711133,
+          "mean_body_rate": 0.049007375754901474,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 42,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2480268358275714,
+          "max_speed": 1.8979339991889677,
+          "mean_body_rate": 0.04899325839458993,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 43,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24863937715636245,
+          "max_speed": 1.9092947093382475,
+          "mean_body_rate": 0.048822160139534096,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 44,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24931042226368774,
+          "max_speed": 1.8877873086644303,
+          "mean_body_rate": 0.04876898727547777,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 45,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24924376149807992,
+          "max_speed": 1.9205567503073868,
+          "mean_body_rate": 0.04859633142784667,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 46,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24937993210171783,
+          "max_speed": 1.9535766926471014,
+          "mean_body_rate": 0.0483877194505326,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 47,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24729973758415771,
+          "max_speed": 1.8970089170891407,
+          "mean_body_rate": 0.048877871336095544,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 48,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24812555734947842,
+          "max_speed": 1.8792548197006418,
+          "mean_body_rate": 0.048879257906094736,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 49,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24792631983220795,
+          "max_speed": 1.8967858407885283,
+          "mean_body_rate": 0.04885822306015052,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 50,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24934848180323632,
+          "max_speed": 1.917521575447328,
+          "mean_body_rate": 0.048767399209018056,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 51,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2481240057692635,
+          "max_speed": 1.9003137014903075,
+          "mean_body_rate": 0.04883573637337383,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 52,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2476988459359947,
+          "max_speed": 1.8713614595982464,
+          "mean_body_rate": 0.04891629324849422,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 53,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24879474584829975,
+          "max_speed": 1.909754667069902,
+          "mean_body_rate": 0.04867420861496394,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 54,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24812691643507728,
+          "max_speed": 1.858035469990285,
+          "mean_body_rate": 0.04849036521816452,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 55,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24896467707827025,
+          "max_speed": 1.895873607420288,
+          "mean_body_rate": 0.04855861919603694,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 56,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24882506468610605,
+          "max_speed": 1.8844797378989249,
+          "mean_body_rate": 0.048647554526336415,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 57,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2482737860006677,
+          "max_speed": 1.8742029536517977,
+          "mean_body_rate": 0.049008368780289795,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 58,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.2487430922912927,
+          "max_speed": 1.9144697593003437,
+          "mean_body_rate": 0.04851235679740778,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 59,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24800244944525304,
+          "max_speed": 1.8928917421730536,
+          "mean_body_rate": 0.048841863357498315,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 60,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24776969369154306,
+          "max_speed": 1.9039250279988749,
+          "mean_body_rate": 0.049142081542679336,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 61,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24834057713329846,
+          "max_speed": 1.8947850067025445,
+          "mean_body_rate": 0.04877654146493222,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 62,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24765136215987724,
+          "max_speed": 1.8749060880325086,
+          "mean_body_rate": 0.04912631308817428,
+          "lap_times_s": [
+            null
+          ]
+        },
+        {
+          "replica": 63,
+          "success": false,
+          "gates_passed": 0,
+          "laps": 0,
+          "crash": false,
+          "gate_collision": false,
+          "out_of_bounds": false,
+          "timeout": true,
+          "time_s": 20.0,
+          "min_clearance_m": null,
+          "mean_speed": 0.24713363499348873,
+          "max_speed": 1.848132532993958,
+          "mean_body_rate": 0.04895884374760921,
+          "lap_times_s": [
+            null
+          ]
+        }
+      ]
+    },
+    "out_of_bounds_rate": 0.0,
+    "timeout_rate": 1.0,
+    "mean_time_s": 20.0
+  }
+]

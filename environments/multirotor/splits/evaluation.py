@@ -10,19 +10,23 @@ from .env import QuadXSplitsEnv
 from .ppo import SplitsRunner
 
 
-def load_env_policy(out,num_envs,backend,seed,laps=1,max_episode_seconds=None):
+def load_env_policy(out,num_envs,backend,seed,laps=1,max_episode_seconds=None,
+                    *,full_track=True,checkpoint=None):
     out=Path(out)
     cfg=json.loads((out/'config.json').read_text(encoding='utf-8'))
     if cfg.get('splits_schema')!='racing36_v1':raise ValueError('expected a new 36-D Split-S checkpoint')
     kwargs=dict(cfg.get('env_kwargs') or {})
-    kwargs.update(full_track=True,laps=laps,initialization='fixed')
+    kwargs.update(full_track=full_track,laps=laps,initialization='fixed' if full_track else 'segment')
     kwargs['max_episode_seconds']=(max_episode_seconds if max_episode_seconds is not None
                                    else kwargs.get('max_episode_seconds',20.)*laps)
     torch.manual_seed(seed)
     env=QuadXSplitsEnv(num_envs=num_envs,backend=backend,seed=seed,**kwargs)
     try:
         runner=SplitsRunner(RslVecEnv(env),copy.deepcopy(cfg),device=str(env.device))
-        runner.load(str(out/'checkpoint.pt'),map_location=str(env.device))
+        # Evaluation restores only learned parameters. In particular, segment
+        # evaluation must not restore the training curriculum or its RNG state.
+        state=torch.load(checkpoint or out/'checkpoint.pt',map_location=str(env.device),weights_only=False)
+        runner.alg.load(state,dict(actor=True,critic=True),strict=True)
         return env,runner.get_inference_policy(),cfg
     except BaseException:
         env.close();raise
@@ -37,6 +41,7 @@ def _number(value):
 def evaluate_policy(env,policy,max_steps=None):
     seen=torch.zeros(env.num_envs,device=env.device,dtype=torch.bool)
     records=[];obs=env.get_observations();steps=0
+    sequences=env.gate_ids.detach().cpu().tolist()
     for _ in range(max_steps if max_steps is not None else env.max_steps):
         actions=policy(obs)
         if not torch.isfinite(actions).all():raise ValueError('non-finite policy action')
@@ -52,10 +57,25 @@ def evaluate_policy(env,policy,max_steps=None):
                 for key in ('time_s','min_clearance_m','mean_speed','max_speed','mean_body_rate'):
                     row[key]=_number(outcome[key][i])
                 row['lap_times_s']=[_number(t) for t in outcome['lap_times'][i]]
+                row['gate_sequence']=[g+1 for g in sequences[i]]
+                row['target_gate_at_end']=(None if row['success'] else sequences[i][row['gates_passed']]+1)
                 records.append(row)
             seen|=take
         if bool(seen.all()):break
     successes=sum(r['success'] for r in records)
+    per_gate=[]
+    for gate in range(1,8):
+        passed=attempts=0
+        failures={k:0 for k in ('gate_collision','ground_contact','out_of_bounds','timeout')}
+        for row in records:
+            seq=row['gate_sequence'];n=row['gates_passed']
+            passed+=seq[:n].count(gate)
+            attempts+=seq[:min(n+1,len(seq))].count(gate)
+            if row['target_gate_at_end']==gate:
+                for key in failures:
+                    failures[key]+=int(row['crash'] and not row['gate_collision'] if key=='ground_contact' else row[key])
+        per_gate.append(dict(gate=gate,attempts=attempts,passed=passed,
+                             pass_rate=passed/attempts if attempts else None,**failures))
     def mean(key,success_only=False):
         values=[r[key] for r in records if r[key] is not None and (not success_only or r['success'])]
         return sum(values)/len(values) if values else None
@@ -66,6 +86,9 @@ def evaluate_policy(env,policy,max_steps=None):
                 mean_success_time_s=mean('time_s',True),mean_gates_passed=mean('gates_passed'),
                 crash_rate=sum(r['crash'] for r in records)/env.num_envs,
                 gate_collision_rate=sum(r['gate_collision'] for r in records)/env.num_envs,
+                out_of_bounds_rate=sum(r['out_of_bounds'] for r in records)/env.num_envs,
+                timeout_rate=sum(r['timeout'] for r in records)/env.num_envs,
+                per_gate=per_gate,task=env.cfg,
                 mean_clearance_m=mean('min_clearance_m'),mean_speed=mean('mean_speed'),
                 mean_body_rate=mean('mean_body_rate'),episodes=records)
 

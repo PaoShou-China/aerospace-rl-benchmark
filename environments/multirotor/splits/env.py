@@ -8,7 +8,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
-from environments.common.dynamics import inverse_rotate, quat_from_euler
+from environments.common.dynamics import inverse_rotate
 from algorithms.baselines.baselines import QuadXSE3Baseline
 from .split_s import BOUNDS_RADIUS, NUM_GATES, DEFAULT_TRAIN_GATE_COUNT, PAPER_LOOKAHEAD_GATES, sample_gate_indices, full_track_indices, sequence_indices
 from .gate_geometry import GateGeometry
@@ -56,6 +56,10 @@ class QuadXSplitsEnv:
                       physics='unchanged_quadx',policy_hz=40,pid_hz=120,physics_hz=240,
                       max_episode_seconds=max_episode_seconds,buffer_cfg=dict(buffer_cfg or {}))
         self.task_cfg=self.cfg
+        if not self.full_track:
+            self.cfg['terminal_gate_lookahead']='next_track_gate_before_segment_completion'
+        if self.full_track:
+            self.cfg['test_initialization']='fixed_segment_midpoint_facing_gate'
         def zeros(*shape,dtype=torch.float64):return torch.zeros(*shape,device=self.device,dtype=dtype)
         self.action=zeros(num_envs,4);self.reward=zeros(num_envs)
         self.count=zeros(num_envs,dtype=torch.long)
@@ -108,6 +112,12 @@ class QuadXSplitsEnv:
         slots=self.target_index[:,None]+torch.arange(PAPER_LOOKAHEAD_GATES,device=self.device)
         valid=slots<self.num_targets
         ids=self.gate_ids.gather(1,slots.clamp_max(self.num_targets-1))
+        if not self.full_track:
+            # Preview the gate after this training segment, without extending
+            # its success condition. Terminal observations remain masked out.
+            preview=(slots==self.num_targets)&(self.target_index[:,None]<self.num_targets)
+            ids=torch.where(preview,(self.gate_ids[:,-1:]+1)%NUM_GATES,ids)
+            valid=valid|preview
         corners=self.gate_geometry.corners()[ids]
         local=torch.einsum('nkj,n...k->n...j',rotation,corners-p[:,None,None])
         local*=valid[:,:,None,None]
@@ -210,19 +220,27 @@ class QuadXSplitsEnv:
             if self.initial_states is not None:
                 self.initial_states.update(done,self.complete)
                 self.extras['episode'].update(initial_state_buffer_size=self.initial_states.count,
-                                              reset_curriculum_ready=float(self.initial_states.ready))
+                                              reset_curriculum_ready=float(self.initial_states.ready),
+                                              curriculum_success_window_rate=self.initial_states.success_rate,
+                                              curriculum_success_window_count=len(self.initial_states.success_history))
             self.reset_idx(done)
+            if self.initial_states is not None:
+                buffer=self.initial_states
+                self.extras['episode'].update(curriculum_replay_used_total=buffer.replay_count,
+                                              curriculum_reset_total=buffer.reset_count,
+                                              curriculum_replay_fraction_cumulative=buffer.replay_count/max(buffer.reset_count,1))
         else:
             for key in ('outcome','terminal_state','episode'):self.extras.pop(key,None)
         return self.get_observations(),self.rew_buf,term,trunc,self.extras
 
-    def _hover_states(self,start,mask):
+    def _hover_states(self,start,mask,randomize=True):
         centres=self.gate_geometry.centres;normal=self.gate_geometry.rotations[start,:,0]
         target=centres[start];mid=(centres[(start-1)%NUM_GATES]+target)/2
         spawn=target-normal
         pending=mask.clone()
         for _ in range(8):
-            candidate=mid+.5*(self.plant.rng.uniform(3,pending)*2-1)
+            candidate=(mid+.5*(self.plant.rng.uniform(3,pending)*2-1)
+                       if randomize else mid.clone())
             signed=((candidate-target)*normal).sum(-1)
             candidate-=(signed+.5).clamp_min(0)[:,None]*normal
             candidate[:,2].clamp_min_(.4)
@@ -231,8 +249,10 @@ class QuadXSplitsEnv:
             spawn=torch.where((pending&valid)[:,None],candidate,spawn)
             pending&=~valid
         yaw=torch.atan2(target[:,1]-spawn[:,1],target[:,0]-spawn[:,0])
-        rpy=torch.zeros_like(spawn);rpy[:,2]=yaw
-        return spawn,quat_from_euler(rpy)
+        # Construct a unit wxyz quaternion locally; roll and pitch are zero.
+        rotation=torch.zeros(spawn.shape[0],4,device=spawn.device,dtype=spawn.dtype)
+        rotation[:,0]=torch.cos(yaw/2);rotation[:,3]=torch.sin(yaw/2)
+        return spawn,rotation
 
     def reset_idx(self,mask):
         p,q,v,w=self.plant.state()
@@ -243,6 +263,8 @@ class QuadXSplitsEnv:
         use=torch.zeros_like(mask)
         if self.full_track:
             ids=full_track_indices(self.device,self.num_targets//NUM_GATES)[None].expand(self.num_envs,-1)
+            # Fixed centre of the training reset distribution for the first gate.
+            spawn,rotation=self._hover_states(ids[:,0],mask,randomize=False)
         else:
             ids=sample_gate_indices(self.plant.rng,mask,DEFAULT_TRAIN_GATE_COUNT)
             start=ids[:,0]

@@ -62,6 +62,8 @@ class SplitsRunner(OnPolicyRunner):
         torch.save(state,path)
         if hasattr(self.logger,'writer'):
             self.logger.save_model(path,self.current_learning_iteration)
+        callback=getattr(self,'checkpoint_callback',None)
+        if callback is not None:callback(Path(path),self)
 
     def load(self,path,load_cfg=None,strict=True,map_location=None):
         infos=super().load(path,load_cfg,strict,map_location)
@@ -75,7 +77,7 @@ class SplitsRunner(OnPolicyRunner):
 
 
 def run_training(env_cls,*,num_envs=1024,updates=1000,seed=7,backend='gpu',resume=False,
-                 out_dir=None,env_kwargs=None,**ppo_kwargs):
+                 out_dir=None,env_kwargs=None,checkpoint_callback=None,**ppo_kwargs):
     out=Path(out_dir) if out_dir is not None else Path(__file__).resolve().parents[3]/'results'/'quadx_splits'
     cfg=build_config(**ppo_kwargs);cfg['env_kwargs']=dict(env_kwargs or {})
     cfg.update(training_seed=seed,training_num_envs=num_envs)
@@ -89,6 +91,7 @@ def run_training(env_cls,*,num_envs=1024,updates=1000,seed=7,backend='gpu',resum
     env=env_cls(num_envs=num_envs,backend=backend,seed=seed,**cfg['env_kwargs'])
     try:
         runner=SplitsRunner(RslVecEnv(env),copy.deepcopy(cfg),log_dir=str(out),device=str(env.device))
+        runner.checkpoint_callback=checkpoint_callback
         if resume:runner.load(str(out/'checkpoint.pt'))
         (out/'config.json').write_text(json.dumps(cfg,indent=2),encoding='utf-8')
         start=time.perf_counter();runner.learn(updates);elapsed=time.perf_counter()-start
@@ -100,6 +103,11 @@ def run_training(env_cls,*,num_envs=1024,updates=1000,seed=7,backend='gpu',resum
                     completed_episodes=env.completed_episodes.cpu().tolist(),
                     completed_successes=env.completed_successes.cpu().tolist(),
                     completed_metrics={k:float(v)/max(episodes,1) for k,v in env.completed_metrics.items()},
+                    curriculum=(dict(success_rate=env.initial_states.success_rate,
+                                     window_count=len(env.initial_states.success_history),
+                                     reset_count=env.initial_states.reset_count,
+                                     replay_count=env.initial_states.replay_count)
+                                if env.initial_states is not None else None),
                     source_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in source.glob('*.py')},
                     dynamics_sha256=hashlib.sha256((source.parents[1]/'common'/'plant.py').read_bytes()).hexdigest(),
                     resume_note='curriculum and RNG restored; trajectories restart at reset, not bitwise in-flight replay')
