@@ -73,5 +73,5 @@ QuadX-Track
     track_env.py and docs/method/env-quadx-track.md.
 """
 
-from .env import QuadXWaypointsEnv
-from .track_env import QuadXTrackEnv
+from .env import QuadXWaypointsEnv as QuadXWaypointsEnv
+from .track_env import QuadXTrackEnv as QuadXTrackEnv

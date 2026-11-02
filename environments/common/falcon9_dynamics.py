@@ -58,7 +58,7 @@ from typing import Tuple
 import torch
 from torch import Tensor
 
-from .falcon9_params import P, Falcon9Params, TimingParams
+from .falcon9_params import P, Falcon9Params
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ from .falcon9_params import P, Falcon9Params, TimingParams
 
 _H_b = (0.0, 11.0, 20.0, 32.0, 47.0, 51.0, 71.0, 84.852)
 _T_b = (288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65, 186.946)
-_L_b = (-6.5, 0.0, 1.0, 2.8, 0.0, -2.8, -2.0)      # lapse K/km', len(H)-1
+_L_b = (-6.5, 0.0, 1.0, 2.8, 0.0, -2.8, -2.0)  # lapse K/km', len(H)-1
 _P_b = (101_325.0, 22_632.1, 5_474.89, 868.019, 110.906, 66.9389, 3.95642, 0.373384)
 
 
@@ -108,9 +108,11 @@ def atmosphere_eval(h_world: Tensor, p: Falcon9Params = P) -> Tuple[Tensor, Tens
     # Pressure
     p_out = torch.zeros_like(h)
     exp_mask = Lm.abs() < 1e-9
-    p_out = torch.where(exp_mask,
-                        Pb * torch.exp(-W.g0 * dz * 1000.0 / (W.R_air * Tb)),
-                        Pb * (T / Tb).pow(-W.g0 / (W.R_air * Lm)))
+    p_out = torch.where(
+        exp_mask,
+        Pb * torch.exp(-W.g0 * dz * 1000.0 / (W.R_air * Tb)),
+        Pb * (T / Tb).pow(-W.g0 / (W.R_air * Lm)),
+    )
     T = T.clamp_min(1.0)
     rho = p_out / (W.R_air * T)
     a = (W.gamma_air * W.R_air * T).sqrt()
@@ -121,8 +123,10 @@ def atmosphere_eval(h_world: Tensor, p: Falcon9Params = P) -> Tuple[Tensor, Tens
 # Mass properties (two-column LOX/RP-1 model)
 # ---------------------------------------------------------------------------
 
-def mass_props_batch(m_lox: Tensor, m_rp1: Tensor,
-                     p: Falcon9Params = P) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+
+def mass_props_batch(
+    m_lox: Tensor, m_rp1: Tensor, p: Falcon9Params = P
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Batched mass properties from propellant masses.
 
     Args:
@@ -142,8 +146,8 @@ def mass_props_batch(m_lox: Tensor, m_rp1: Tensor,
     m_lox = m_lox.clamp_min(0.0)
     m_rp1 = m_rp1.clamp_min(0.0)
 
-    rt2 = Pr.TANK_AREA / math.pi       # m² column radius²
-    R2 = V.VEH_RADIUS ** 2
+    rt2 = Pr.TANK_AREA / math.pi  # m² column radius²
+    R2 = V.VEH_RADIUS**2
     m_dry = V.VEH_DRY
     z_dry = V.VEH_DRY_COMZ
 
@@ -151,8 +155,8 @@ def mass_props_batch(m_lox: Tensor, m_rp1: Tensor,
     Itl_dry = m_dry * (6.0 * R2 + V.VEH_LEN * V.VEH_LEN) / 12.0
 
     # Fluid columns: height + midpoint z
-    h_l = m_lox / (Pr.LOX_RHO * Pr.TANK_AREA)          # (N,)
-    z_l = Pr.LOX_BASE_Z + 0.5 * h_l                     # (N,)
+    h_l = m_lox / (Pr.LOX_RHO * Pr.TANK_AREA)  # (N,)
+    z_l = Pr.LOX_BASE_Z + 0.5 * h_l  # (N,)
     h_r = m_rp1 / (Pr.RP1_RHO * Pr.TANK_AREA)
     z_r = Pr.RP1_BASE_Z + 0.5 * h_r
 
@@ -161,19 +165,24 @@ def mass_props_batch(m_lox: Tensor, m_rp1: Tensor,
     Iax_r = 0.5 * m_rp1 * rt2
     Itl_r = m_rp1 * (3.0 * rt2 + h_r * h_r) / 12.0
 
-    M = m_dry + m_lox + m_rp1                           # (N,)
+    M = m_dry + m_lox + m_rp1  # (N,)
     com = (m_dry * z_dry + m_lox * z_l + m_rp1 * z_r) / M
 
     # Transverse parallel-axis about COM
-    I_tr = (Itl_dry + m_dry * (z_dry - com) ** 2
-            + Itl_l + m_lox * (z_l - com) ** 2
-            + Itl_r + m_rp1 * (z_r - com) ** 2)
+    I_tr = (
+        Itl_dry
+        + m_dry * (z_dry - com) ** 2
+        + Itl_l
+        + m_lox * (z_l - com) ** 2
+        + Itl_r
+        + m_rp1 * (z_r - com) ** 2
+    )
     I_ax = Iax_dry + Iax_l + Iax_r
 
     # Analytic dI/dm for each tank (derived in constants.h comment)
     half_LOX_area = 2.0 * Pr.LOX_RHO * Pr.TANK_AREA
     half_RP1_area = 2.0 * Pr.RP1_RHO * Pr.TANK_AREA
-    dz_l = 1.0 / half_LOX_area   # dz/dm  (height rate of change per kg removed)
+    dz_l = 1.0 / half_LOX_area  # dz/dm  (height rate of change per kg removed)
     dz_r = 1.0 / half_RP1_area
     dItl_l = (3.0 * rt2 + h_l * h_l) / 12.0 + m_lox * h_l / half_LOX_area
     dItl_r = (3.0 * rt2 + h_r * h_r) / 12.0 + m_rp1 * h_r / half_RP1_area
@@ -183,9 +192,9 @@ def mass_props_batch(m_lox: Tensor, m_rp1: Tensor,
     dIax_dmr = 0.5 * rt2
 
     # Caller multiplies mdot (negative) with these to get Idot
-    Idot_tr_coeff = dItr_dml, dItr_dmr    # (2, N)
+    Idot_tr_coeff = dItr_dml, dItr_dmr  # (2, N)
     # source dynamics.c:86 -> Idot_ax = 0.5*rt2*(mdot_lox + mdot_rp1)
-    Idot_ax_coeff = 0.5 * (dIax_dml + dIax_dmr) # (N,)
+    Idot_ax_coeff = 0.5 * (dIax_dml + dIax_dmr)  # (N,)
 
     return M, com, I_tr, I_ax, Idot_tr_coeff, Idot_ax_coeff
 
@@ -194,9 +203,15 @@ def mass_props_batch(m_lox: Tensor, m_rp1: Tensor,
 # Engine thrust + mass flow
 # ---------------------------------------------------------------------------
 
-def engine_deriv_batch(throttle_cmd: Tensor, throttle_act: Tensor,
-                       ignition_ramp_act: Tensor, eng_on: Tensor,
-                       pressure: Tensor, p: Falcon9Params = P):
+
+def engine_deriv_batch(
+    throttle_cmd: Tensor,
+    throttle_act: Tensor,
+    ignition_ramp_act: Tensor,
+    eng_on: Tensor,
+    pressure: Tensor,
+    p: Falcon9Params = P,
+):
     """Thrust magnitude (N, world-z body-frame) and mass flow split.
 
     Args:
@@ -226,9 +241,7 @@ def engine_deriv_batch(throttle_cmd: Tensor, throttle_act: Tensor,
     # Pressure-corrected thrust
     T_vac = ep.ENG_T_VAC
     thrust_per = torch.where(
-        burning,
-        throttle_act * ignition_ramp_act * (T_vac - ep.ENG_AE * pressure),
-        thrust_per
+        burning, throttle_act * ignition_ramp_act * (T_vac - ep.ENG_AE * pressure), thrust_per
     )
 
     mdot_total = torch.zeros_like(throttle_act)
@@ -240,8 +253,9 @@ def engine_deriv_batch(throttle_cmd: Tensor, throttle_act: Tensor,
     return thrust_per, mdot_total, mdot_lox, mdot_rp1, thr_rate
 
 
-def ignition_ramp_tick(ign_timer: Tensor, eng_on_cmd: Tensor,
-                       dt: float, p: Falcon9Params = P) -> Tuple[Tensor, Tensor]:
+def ignition_ramp_tick(
+    ign_timer: Tensor, eng_on_cmd: Tensor, dt: float, p: Falcon9Params = P
+) -> Tuple[Tensor, Tensor]:
     """Advance ignition timer and return ramp [0,1].
 
     Args:
@@ -265,9 +279,16 @@ def ignition_ramp_tick(ign_timer: Tensor, eng_on_cmd: Tensor,
 # Gimbal (second-order system + accel limit)
 # ---------------------------------------------------------------------------
 
-def gimbal_deriv_batch(g0_act: Tensor, g1_act: Tensor, gr0: Tensor, gr1: Tensor,
-                       g0_cmd: Tensor, g1_cmd: Tensor,
-                       p: Falcon9Params = P) -> Tuple[Tensor, Tensor]:
+
+def gimbal_deriv_batch(
+    g0_act: Tensor,
+    g1_act: Tensor,
+    gr0: Tensor,
+    gr1: Tensor,
+    g0_cmd: Tensor,
+    g1_cmd: Tensor,
+    p: Falcon9Params = P,
+) -> Tuple[Tensor, Tensor]:
     """Gimbal second-order model (PD feedback with acceleration clamp).
 
     Args:
@@ -288,17 +309,20 @@ def gimbal_deriv_batch(g0_act: Tensor, g1_act: Tensor, gr0: Tensor, gr1: Tensor,
     return gacc0, gacc1
 
 
-def gimbal_saturate(g0: Tensor, g1: Tensor, gr0: Tensor, gr1: Tensor,
-                    p: Falcon9Params = P) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+def gimbal_saturate(
+    g0: Tensor, g1: Tensor, gr0: Tensor, gr1: Tensor, p: Falcon9Params = P
+) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     """Hard gimbal stop with rate anti-windup (matches source integrator.c)."""
     ep = p.engine
     # position clamp + rate zeroing on anti-drive
     g0_new = g0.clamp(-ep.ENG_GIMBAL_MAX, ep.ENG_GIMBAL_MAX)
     g1_new = g1.clamp(-ep.ENG_GIMBAL_MAX, ep.ENG_GIMBAL_MAX)
-    gr0_new = gr0 * ~((g0.abs() >= ep.ENG_GIMBAL_MAX) & (gr0.abs() > 1e-6) &
-                      (gr0.sign() == g0.sign()))
-    gr1_new = gr1 * ~((g1.abs() >= ep.ENG_GIMBAL_MAX) & (gr1.abs() > 1e-6) &
-                      (gr1.sign() == g1.sign()))
+    gr0_new = gr0 * ~(
+        (g0.abs() >= ep.ENG_GIMBAL_MAX) & (gr0.abs() > 1e-6) & (gr0.sign() == g0.sign())
+    )
+    gr1_new = gr1 * ~(
+        (g1.abs() >= ep.ENG_GIMBAL_MAX) & (gr1.abs() > 1e-6) & (gr1.sign() == g1.sign())
+    )
     return g0_new, g1_new, gr0_new, gr1_new
 
 
@@ -319,6 +343,7 @@ def gimbal_to_direction(g0: Tensor, g1: Tensor) -> Tensor:
 # ---------------------------------------------------------------------------
 # Body aerodynamics (slender-body)
 # ---------------------------------------------------------------------------
+
 
 def _table_lookup_torch(x: Tensor, xs: tuple, ys: tuple) -> Tensor:
     """Linear interpolation over sorted tables. Both xs and ys must be same length."""
@@ -341,15 +366,20 @@ def _xcp_frac_torch(M: Tensor, alpha: Tensor, p: Falcon9Params = P) -> Tensor:
     """CoP fraction of STAGE length from base. A smooth transonic bump,
     CoP stays marginally below bare-body CG ~0.30·L for structural stability.
     """
-    xcp = p.aero.XCP_BASE + p.aero.XCP_TRANSONIC_BUMP * torch.exp(-((M - 1.05) / 0.3) ** 2)
+    xcp = p.aero.XCP_BASE + p.aero.XCP_TRANSONIC_BUMP * torch.exp(-(((M - 1.05) / 0.3) ** 2))
     amod = 0.015 * (alpha.abs() / math.radians(15.0)).clamp(0.0, 1.0)
     return xcp - amod
 
 
-def aero_body_torch(v_rel_body: Tensor, qbar: Tensor, M: Tensor,
-                    speed: Tensor, com_body_z: Tensor, p: Falcon9Params = P,
-                    srp_shield: Tensor | None = None
-                    ) -> Tuple[Tensor, Tensor, Tensor]:
+def aero_body_torch(
+    v_rel_body: Tensor,
+    qbar: Tensor,
+    M: Tensor,
+    speed: Tensor,
+    com_body_z: Tensor,
+    p: Falcon9Params = P,
+    srp_shield: Tensor | None = None,
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Body-frame aero force and torque about the CoM.
 
     Args:
@@ -412,12 +442,18 @@ def aero_body_torch(v_rel_body: Tensor, qbar: Tensor, M: Tensor,
 # Grid fins (4, 45° spacing, proper CG-relative local flow)
 # ---------------------------------------------------------------------------
 
-def grid_fins_torch(v_rel_body: Tensor, omega_body: Tensor, qbar: Tensor,
-                    M: Tensor, com_body: Tensor, body_quat_wxyz: Tensor,
-                    p: Falcon9Params = P,
-                    fin_deflection: Tensor | None = None,
-                    srp_shield: Tensor | None = None
-                    ) -> Tuple[Tensor, Tensor]:
+
+def grid_fins_torch(
+    v_rel_body: Tensor,
+    omega_body: Tensor,
+    qbar: Tensor,
+    M: Tensor,
+    com_body: Tensor,
+    body_quat_wxyz: Tensor,
+    p: Falcon9Params = P,
+    fin_deflection: Tensor | None = None,
+    srp_shield: Tensor | None = None,
+) -> Tuple[Tensor, Tensor]:
     """4-fin body-frame force + torque about the CoM.
 
     Mirrors source dynamics.c:199-226:
@@ -454,11 +490,11 @@ def grid_fins_torch(v_rel_body: Tensor, omega_body: Tensor, qbar: Tensor,
     # 4 fins at 45 deg spacing
     fin_idx = torch.arange(4, device=dev, dtype=dt_)
     phi = torch.deg2rad(45.0 + 90.0 * fin_idx)
-    er = torch.stack([phi.cos(), phi.sin(), torch.zeros_like(phi)], dim=-1)   # radial
+    er = torch.stack([phi.cos(), phi.sin(), torch.zeros_like(phi)], dim=-1)  # radial
     et = torch.stack([-phi.sin(), phi.cos(), torch.zeros_like(phi)], dim=-1)  # tangential
 
     # Mount positions relative to BODY ORIGIN
-    rm = V.VEH_RADIUS * er.clone()   # (4, 3)
+    rm = V.VEH_RADIUS * er.clone()  # (4, 3)
     rm[:, 2] = F.FIN_Z
     # Moment arm measured from the CoM (source: arm = rm - com ẑ)
     rm_rel_com = rm.unsqueeze(0).expand(N, -1, -1).clone()
@@ -469,26 +505,33 @@ def grid_fins_torch(v_rel_body: Tensor, omega_body: Tensor, qbar: Tensor,
         omega_body[:, None, :], rm.unsqueeze(0)
     )  # (N, 4, 3)
 
-    vsp = v_fin.norm(dim=-1)              # (N, 4)
-    qbi = 0.5 * qbar[:, None] * (vsp / torch.maximum(
-        v_rel_body.norm(dim=-1, keepdim=True), torch.full_like(vsp[:, :1], 1e-6)
-    )).pow(2)                             # local q̄ scaled from global q̄
+    vsp = v_fin.norm(dim=-1)  # (N, 4)
+    qbi = (
+        0.5
+        * qbar[:, None]
+        * (
+            vsp
+            / torch.maximum(
+                v_rel_body.norm(dim=-1, keepdim=True), torch.full_like(vsp[:, :1], 1e-6)
+            )
+        ).pow(2)
+    )  # local q̄ scaled from global q̄
 
-    w_ax = -v_fin[:, :, 2]                                  # leading edge is body -z
-    w_r = (v_fin * er[None, :, :]).sum(dim=-1)              # radial component
+    w_ax = -v_fin[:, :, 2]  # leading edge is body -z
+    w_r = (v_fin * er[None, :, :]).sum(dim=-1)  # radial component
 
     delta = fin_deflection
     alpha_i = delta + torch.atan2(w_r, w_ax.clamp_min(1e-6))
     aeff = alpha_i.clamp(-F.FIN_STALL, F.FIN_STALL)
 
-    L = qbi * F.FIN_AREA * CNa_f * aeff * srp_shield[:, None]                      # radial
+    L = qbi * F.FIN_AREA * CNa_f * aeff * srp_shield[:, None]  # radial
     Ft = qbi * F.FIN_AREA * (F.FIN_CT_DELTA_FRAC * CNa_f) * delta * srp_shield[:, None]
 
-    F_per_fin = (-L[..., None] * er[None, :, :] - Ft[..., None] * et[None, :, :])
+    F_per_fin = -L[..., None] * er[None, :, :] - Ft[..., None] * et[None, :, :]
     F_per_fin = F_per_fin * (vsp > 1.0)[..., None].to(dt_)
 
-    F_fins = F_per_fin.sum(dim=1)                                   # (N, 3)
-    T_fins = torch.linalg.cross(rm_rel_com, F_per_fin).sum(dim=1)   # (N, 3) about CoM
+    F_fins = F_per_fin.sum(dim=1)  # (N, 3)
+    T_fins = torch.linalg.cross(rm_rel_com, F_per_fin).sum(dim=1)  # (N, 3) about CoM
 
     return F_fins, T_fins
 
@@ -516,8 +559,10 @@ def _fin_dip_torch(M: Tensor) -> Tensor:
 # RCS
 # ---------------------------------------------------------------------------
 
-def rcs_torque_from_cmd(tau_cmd_body: Tensor, eng_on: Tensor, p: Falcon9Params = P
-                        ) -> Tuple[Tensor, Tensor]:
+
+def rcs_torque_from_cmd(
+    tau_cmd_body: Tensor, eng_on: Tensor, p: Falcon9Params = P
+) -> Tuple[Tensor, Tensor]:
     """Saturate RCS body-frame torque command. Returns (saturated_tau, mass_flow_rate).
 
     gimbal_active (engine_on and thrust > small) → gimbal handles pitch/yaw;
@@ -542,6 +587,7 @@ def rcs_torque_from_cmd(tau_cmd_body: Tensor, eng_on: Tensor, p: Falcon9Params =
 # Vector helpers (body ↔ world rotation)
 # ---------------------------------------------------------------------------
 
+
 def rotate_body_to_world(q_wxyz: Tensor, v_body: Tensor) -> Tensor:
     """(N,4) quaternion (w,x,y,z), (N,3) body vector → world vector."""
     q = q_wxyz.to(v_body.dtype)
@@ -564,10 +610,11 @@ def rotate_world_to_body(q_wxyz: Tensor, v_world: Tensor) -> Tensor:
 # Assemble all forces + torques
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ForceTorque:
-    F_body: Tensor      # (N, 3) total body-frame forces (non-gravity)
-    T_body: Tensor      # (N, 3) total body-frame torque ABOUT THE CoM (source ref)
+    F_body: Tensor  # (N, 3) total body-frame forces (non-gravity)
+    T_body: Tensor  # (N, 3) total body-frame torque ABOUT THE CoM (source ref)
     # Individual components for logging
     F_thrust_body: Tensor
     T_thrust_body: Tensor
@@ -576,23 +623,28 @@ class ForceTorque:
     F_fins_body: Tensor
     T_fins_body: Tensor
     T_rcs_body: Tensor
-    mdot_rcs_n2: Tensor      # (N,) kg/s N2 consumed by RCS
+    mdot_rcs_n2: Tensor  # (N,) kg/s N2 consumed by RCS
     Cdamp_prefactor: Tensor  # (N,) — body damping prefactor, caller applies with ω
-
-
 
 
 def assemble_forces_torques(
     # State
-    m_lox: Tensor, m_rp1: Tensor,   # (N,) kg
-    p_world: Tensor, q_wxyz: Tensor, v_world: Tensor, w_world: Tensor,  # (N, ...)
+    m_lox: Tensor,
+    m_rp1: Tensor,  # (N,) kg
+    p_world: Tensor,
+    q_wxyz: Tensor,
+    v_world: Tensor,
+    w_world: Tensor,  # (N, ...)
     # Actuators
-    throttle_act: Tensor, throttle_cmd: Tensor,
-    ignition_ramp: Tensor, eng_on: Tensor,
-    g0_act: Tensor, g1_act: Tensor,
+    throttle_act: Tensor,
+    throttle_cmd: Tensor,
+    ignition_ramp: Tensor,
+    eng_on: Tensor,
+    g0_act: Tensor,
+    g1_act: Tensor,
     fins_deployed: Tensor,  # (N,) bool
     fin_deflection: Tensor,  # (N, 4) rad  # kept for future; 0 for now
-    tau_rcs_body_cmd: Tensor,  # (N, 3) rad/s² target (NOT used as raw torque here; we saturate inside)
+    tau_rcs_body_cmd: Tensor,  # (N, 3) rad/s² target (NOT used as raw torque here; we saturate inside)  # noqa: E501
     wind_world: Tensor,  # (N, 3) m/s
     # Timing
     dt: float,
@@ -617,9 +669,9 @@ def assemble_forces_torques(
     v_rel_world = v_world - wind_world
     q_bwxyz = q_wxyz
     v_rel_body = rotate_world_to_body(q_bwxyz, v_rel_world)  # (N, 3)
-    w_body = rotate_world_to_body(q_bwxyz, w_world)          # (N, 3)
+    w_body = rotate_world_to_body(q_bwxyz, w_world)  # (N, 3)
     speed = v_rel_body.norm(dim=-1)
-    qbar = 0.5 * rho * speed ** 2
+    qbar = 0.5 * rho * speed**2
     M_mach = speed / a_sound.clamp_min(1.0)
 
     # --- ENGINE ---
@@ -631,7 +683,7 @@ def assemble_forces_torques(
     F_thrust_body = thrust_per.unsqueeze(-1) * tdir  # (N, 3)
     # Torque from thrust offset (thrust applied at body z=0 (base), CG at z=com_body)
     arm_thrust_body = torch.zeros(N, 3, device=thrust_per.device, dtype=thrust_per.dtype)
-    arm_thrust_body[:, 2] = -com_body   # base at z=0, CG at z=com → arm = (0,0,-com)
+    arm_thrust_body[:, 2] = -com_body  # base at z=0, CG at z=com → arm = (0,0,-com)
     T_thrust_body = torch.linalg.cross(arm_thrust_body, F_thrust_body)
 
     # --- SRP (plume) shielding (dynamics.c:161-165) ---
@@ -652,8 +704,15 @@ def assemble_forces_torques(
     fins_mask = fins_deployed & (qbar > 1.0)
     if fins_mask.any():
         F_f_b, T_f_b = grid_fins_torch(
-            v_rel_body, w_body, qbar, M_mach, com_body, q_wxyz, p,
-            fin_deflection=fin_deflection, srp_shield=srp_shield,
+            v_rel_body,
+            w_body,
+            qbar,
+            M_mach,
+            com_body,
+            q_wxyz,
+            p,
+            fin_deflection=fin_deflection,
+            srp_shield=srp_shield,
         )
         F_fins_body = F_f_b * fins_mask.unsqueeze(-1).to(F_f_b.dtype)
         T_fins_body = T_f_b * fins_mask.unsqueeze(-1).to(T_f_b.dtype)
@@ -672,15 +731,20 @@ def assemble_forces_torques(
     tau_damp_perp = -Cdamp_prefactor.unsqueeze(-1) * w_perp
     T_body[:, :2] += tau_damp_perp
     # Roll damping from fins (small passive term)
-    roll_damp = 4.0 * 0.5 * rho * speed * p.fins.FIN_AREA * p.fins.FIN_CNA * p.vehicle.VEH_RADIUS ** 2
+    roll_damp = 4.0 * 0.5 * rho * speed * p.fins.FIN_AREA * p.fins.FIN_CNA * p.vehicle.VEH_RADIUS**2
     T_body[:, 2] += -roll_damp * w_body[:, 2]
 
     return ForceTorque(
-        F_body=F_body, T_body=T_body,
-        F_thrust_body=F_thrust_body, T_thrust_body=T_thrust_body,
-        F_aero_body=F_aero_body, T_aero_body=T_aero_body,
-        F_fins_body=F_fins_body, T_fins_body=T_fins_body,
-        T_rcs_body=T_rcs_body, mdot_rcs_n2=mdot_rcs,
+        F_body=F_body,
+        T_body=T_body,
+        F_thrust_body=F_thrust_body,
+        T_thrust_body=T_thrust_body,
+        F_aero_body=F_aero_body,
+        T_aero_body=T_aero_body,
+        F_fins_body=F_fins_body,
+        T_fins_body=T_fins_body,
+        T_rcs_body=T_rcs_body,
+        mdot_rcs_n2=mdot_rcs,
         Cdamp_prefactor=Cdamp_prefactor,
     )
 
@@ -689,17 +753,29 @@ def assemble_forces_torques(
 # Open-system state derivative (RK4 path if Genesis fails to integrate)
 # ---------------------------------------------------------------------------
 
+
 def state_deriv(
     # State
-    pos_world: Tensor, quat_wxyz: Tensor, vel_world: Tensor, ang_world: Tensor,
-    m_lox: Tensor, m_rp1: Tensor,
+    pos_world: Tensor,
+    quat_wxyz: Tensor,
+    vel_world: Tensor,
+    ang_world: Tensor,
+    m_lox: Tensor,
+    m_rp1: Tensor,
     # Actuation
-    throttle_act: Tensor, ignition_timer: Tensor, eng_on: Tensor,
-    g0_act: Tensor, g1_act: Tensor, gr0: Tensor, gr1: Tensor,
+    throttle_act: Tensor,
+    ignition_timer: Tensor,
+    eng_on: Tensor,
+    g0_act: Tensor,
+    g1_act: Tensor,
+    gr0: Tensor,
+    gr1: Tensor,
     fins_deployed: Tensor,
     # Wind / RCS
-    wind_world: Tensor, tau_rcs_body: Tensor,
-    dt: float, p: Falcon9Params = P,
+    wind_world: Tensor,
+    tau_rcs_body: Tensor,
+    dt: float,
+    p: Falcon9Params = P,
 ) -> Tuple[Tensor, ...]:
     """Full d(state)/dt. 17 outputs packed flat:
       rx,ry,rz, vx,vy,vz, qx,qy,qz,qw, wx,wy,wz, mdot_lox, mdot_rp1, thr_dot, ign_dot
@@ -716,7 +792,7 @@ def state_deriv(
     v_rel_body = rotate_world_to_body(quat_wxyz, vel_world - wind_world)
     w_body = rotate_world_to_body(quat_wxyz, ang_world)
     speed = v_rel_body.norm(dim=-1)
-    qbar = 0.5 * rho * speed ** 2
+    qbar = 0.5 * rho * speed**2
     M_mach = speed / a_sound.clamp_min(1.0)
 
     # Ignition ramp
@@ -741,9 +817,7 @@ def state_deriv(
     T_fins_body = torch.zeros(N, 3, device=thrust_per.device, dtype=thrust_per.dtype)
     fins_mask = fins_deployed & (qbar > 1.0)
     if fins_mask.any():
-        F_f_b, T_f_b = grid_fins_torch(
-            v_rel_body, w_body, qbar, M_mach, com_body, quat_wxyz, p
-        )
+        F_f_b, T_f_b = grid_fins_torch(v_rel_body, w_body, qbar, M_mach, com_body, quat_wxyz, p)
         F_fins_body = F_f_b * fins_mask.unsqueeze(-1)
         T_fins_body = T_f_b * fins_mask.unsqueeze(-1)
 
@@ -757,7 +831,7 @@ def state_deriv(
 
     # Pitch/yaw damping
     T_body[:, :2] += -Cdamp_prefactor.unsqueeze(-1) * w_body[:, :2]
-    roll_damp = 4.0 * 0.5 * rho * speed * p.fins.FIN_AREA * p.fins.FIN_CNA * p.vehicle.VEH_RADIUS ** 2
+    roll_damp = 4.0 * 0.5 * rho * speed * p.fins.FIN_AREA * p.fins.FIN_CNA * p.vehicle.VEH_RADIUS**2
     T_body[:, 2] += -roll_damp * w_body[:, 2]
 
     # Linear acceleration (world frame) = rotate(F_body) / M - g(z)
@@ -772,7 +846,9 @@ def state_deriv(
     wxIw = torch.linalg.cross(w_body, Iw)
     Idot_tr = Idot_tr_coeff[0] * (-mdot_lox) + Idot_tr_coeff[1] * (-mdot_rp1)
     Idot_ax = Idot_ax_coeff * (-mdot_total)
-    I_dot_omega = torch.stack([Idot_tr * w_body[:, 0], Idot_tr * w_body[:, 1], Idot_ax * w_body[:, 2]], dim=-1)
+    I_dot_omega = torch.stack(
+        [Idot_tr * w_body[:, 0], Idot_tr * w_body[:, 1], Idot_ax * w_body[:, 2]], dim=-1
+    )
     wdot_body = (T_body - wxIw - I_dot_omega) / torch.stack([I_tr, I_tr, I_ax], dim=-1)
 
     # Convert angular accel back to world (optional; we integrate in world frame below)
@@ -784,29 +860,52 @@ def state_deriv(
 
     # Quaternion derivative: q̇ = 0.5·q⊙[0, ω_body]   (scalar-last, but our quat is wxyz)
     # Our convention: dq = 0.5 * omega_body_body_frame * q (Hamilton product)
-    w_body_col = torch.cat([torch.zeros(N, 1, device=q_wxyz.device, dtype=q_wxyz.dtype),
-                             w_body], dim=-1)  # (N, 4)
+    w_body_col = torch.cat(
+        [torch.zeros(N, 1, device=quat_wxyz.device, dtype=quat_wxyz.dtype), w_body], dim=-1
+    )  # (N, 4)
     # Hamilton: [w,x,y,z] ⊗ [0, wx, wy, wz]
     q = quat_wxyz
-    qd_x = q[:, 0]*w_body_col[:, 1] + q[:, 1]*w_body_col[:, 0] + q[:, 2]*w_body_col[:, 3] - q[:, 3]*w_body_col[:, 2]
-    qd_y = q[:, 0]*w_body_col[:, 2] - q[:, 1]*w_body_col[:, 3] + q[:, 2]*w_body_col[:, 0] + q[:, 3]*w_body_col[:, 1]
-    qd_z = q[:, 0]*w_body_col[:, 3] + q[:, 1]*w_body_col[:, 2] - q[:, 2]*w_body_col[:, 1] + q[:, 3]*w_body_col[:, 0]
-    qd_w = q[:, 0]*w_body_col[:, 0] - q[:, 1]*w_body_col[:, 1] - q[:, 2]*w_body_col[:, 2] - q[:, 3]*w_body_col[:, 3]
+    qd_x = (
+        q[:, 0] * w_body_col[:, 1]
+        + q[:, 1] * w_body_col[:, 0]
+        + q[:, 2] * w_body_col[:, 3]
+        - q[:, 3] * w_body_col[:, 2]
+    )
+    qd_y = (
+        q[:, 0] * w_body_col[:, 2]
+        - q[:, 1] * w_body_col[:, 3]
+        + q[:, 2] * w_body_col[:, 0]
+        + q[:, 3] * w_body_col[:, 1]
+    )
+    qd_z = (
+        q[:, 0] * w_body_col[:, 3]
+        + q[:, 1] * w_body_col[:, 2]
+        - q[:, 2] * w_body_col[:, 1]
+        + q[:, 3] * w_body_col[:, 0]
+    )
+    qd_w = (
+        q[:, 0] * w_body_col[:, 0]
+        - q[:, 1] * w_body_col[:, 1]
+        - q[:, 2] * w_body_col[:, 2]
+        - q[:, 3] * w_body_col[:, 3]
+    )
     qd = 0.5 * torch.stack([qd_w, qd_x, qd_y, qd_z], dim=-1)
 
     # Gimbal accelerations
-    gacc0, gacc1 = gimbal_deriv_batch(g0_act, g1_act, gr0, gr1, g0_act + 0.0, g1_act + 0.0, p)  # placeholders — caller supplies cmd
+    gacc0, gacc1 = gimbal_deriv_batch(
+        g0_act, g1_act, gr0, gr1, g0_act + 0.0, g1_act + 0.0, p
+    )  # placeholders — caller supplies cmd
 
     # Pack
     return (
-        vel_world,                     # pos_world_dot = vel_world
-        qd,                            # quat_wxyz_dot
-        a_world,                       # vel_world_dot = F/m - g
-        wdot_world,                    # ang_world_dot = R·wdot_body
-        -mdot_lox,                     # m_lox_dot
-        -mdot_rp1,                     # m_rp1_dot
-        thr_rate,                      # throttle_dot
-        -1.0 if True else 0.0,         # placeholder ign_timer_dot (caller handles directly)
+        vel_world,  # pos_world_dot = vel_world
+        qd,  # quat_wxyz_dot
+        a_world,  # vel_world_dot = F/m - g
+        wdot_world,  # ang_world_dot = R·wdot_body
+        -mdot_lox,  # m_lox_dot
+        -mdot_rp1,  # m_rp1_dot
+        thr_rate,  # throttle_dot
+        -1.0 if True else 0.0,  # placeholder ign_timer_dot (caller handles directly)
     )
 
 
@@ -814,33 +913,76 @@ def state_deriv(
 # RK4 integrator (fallback when Genesis doesn't integrate rigid body)
 # ---------------------------------------------------------------------------
 
+
 def rk4_step(
-    pos: Tensor, quat: Tensor, vel: Tensor, ang: Tensor,
-    m_lox: Tensor, m_rp1: Tensor,
-    throttle_act: Tensor, ignition_timer: Tensor, eng_on: Tensor,
-    g0_act: Tensor, g1_act: Tensor, gr0: Tensor, gr1: Tensor,
-    fins_deployed: Tensor, wind_world: Tensor, tau_rcs_body: Tensor,
-    throttle_cmd: Tensor, g0_cmd: Tensor, g1_cmd: Tensor,
-    dt: float, p: Falcon9Params = P,
+    pos: Tensor,
+    quat: Tensor,
+    vel: Tensor,
+    ang: Tensor,
+    m_lox: Tensor,
+    m_rp1: Tensor,
+    throttle_act: Tensor,
+    ignition_timer: Tensor,
+    eng_on: Tensor,
+    g0_act: Tensor,
+    g1_act: Tensor,
+    gr0: Tensor,
+    gr1: Tensor,
+    fins_deployed: Tensor,
+    wind_world: Tensor,
+    tau_rcs_body: Tensor,
+    throttle_cmd: Tensor,
+    g0_cmd: Tensor,
+    g1_cmd: Tensor,
+    dt: float,
+    p: Falcon9Params = P,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """RK4 over [pos, quat(wxyz), vel, ang, m_lox, m_rp1, throttle, ign_timer, g0, g1, gr0, gr1].
 
-    State vector: y = [pos(3), quat(4), vel(3), ang(3), m_lox, m_rp1, throttle, ign_timer, g0, g1, gr0, gr1] = 22 dims
+    State vector: y = [pos(3), quat(4), vel(3), ang(3), m_lox, m_rp1,
+    throttle, ign_timer, g0, g1, gr0, gr1] = 22 dims
     We do 4 RK4 stages. For each stage:
       - Advance throttle, ignition timer, gimbal (first-order / second-order dynamics)
       - Compute state derivative from assembled forces
     Then final update.
     """
     N = pos.shape[0]
+
     def pack():
-        return torch.cat([
-            pos, quat, vel, ang, m_lox[:, None], m_rp1[:, None],
-            throttle_act[:, None], ignition_timer[:, None],
-            g0_act[:, None], g1_act[:, None], gr0[:, None], gr1[:, None],
-        ], dim=-1)
+        return torch.cat(
+            [
+                pos,
+                quat,
+                vel,
+                ang,
+                m_lox[:, None],
+                m_rp1[:, None],
+                throttle_act[:, None],
+                ignition_timer[:, None],
+                g0_act[:, None],
+                g1_act[:, None],
+                gr0[:, None],
+                gr1[:, None],
+            ],
+            dim=-1,
+        )
+
     def unpack(y):
-        return (y[:, :3], y[:, 3:7], y[:, 7:10], y[:, 10:13], y[:, 13], y[:, 14],
-                y[:, 15], y[:, 16], y[:, 17], y[:, 18], y[:, 19], y[:, 20])
+        return (
+            y[:, :3],
+            y[:, 3:7],
+            y[:, 7:10],
+            y[:, 10:13],
+            y[:, 13],
+            y[:, 14],
+            y[:, 15],
+            y[:, 16],
+            y[:, 17],
+            y[:, 18],
+            y[:, 19],
+            y[:, 20],
+        )
+
     def deriv(y, eng_on_now):
         xp, xq, xv, xw, xlox, xrp1, xthr, xign, xg0, xg1, xgr0, xgr1 = unpack(y)
         # Throttle rate-limited toward command
@@ -848,7 +990,6 @@ def rk4_step(
         thr_rate = thr_err / p.engine.ENG_THR_TAU
         thr_rate = thr_rate.clamp(-p.engine.ENG_THR_RATE, p.engine.ENG_THR_RATE)
         # Ignition ramp
-        ign_on = eng_on_now & (xign > -1.0) & (xign >= 0.0)
         if eng_on_now.any() and (ignition_timer < 0.0).any():
             # Start timer for newly commanded on
             xign = torch.where((eng_on_now) & (ignition_timer < 0.0), torch.zeros_like(xign), xign)
@@ -865,7 +1006,7 @@ def rk4_step(
         v_rel_body = rotate_world_to_body(xq, xv - wind_world)
         w_body = rotate_world_to_body(xq, xw)
         speed = v_rel_body.norm(dim=-1)
-        qbar = 0.5 * rho * speed ** 2
+        qbar = 0.5 * rho * speed**2
         M_mach = speed / a_sound.clamp_min(1.0)
         M, com_body, I_tr, I_ax, Idot_tr_coeff, Idot_ax_coeff = mass_props_batch(xlox, xrp1, p)
         F_aero, T_aero, Cdamp_pref = aero_body_torch(v_rel_body, qbar, M_mach, speed, com_body, p)
@@ -893,16 +1034,40 @@ def rk4_step(
         wxIw = torch.linalg.cross(w_body, Iw)
         Idot_tr = Idot_tr_coeff[0] * (-mdot_lox) + Idot_tr_coeff[1] * (-mdot_rp1)
         Idot_ax = Idot_ax_coeff * (-mdot_total)
-        I_dot_omega = torch.stack([Idot_tr * w_body[:, 0], Idot_tr * w_body[:, 1], Idot_ax * w_body[:, 2]], dim=-1)
+        I_dot_omega = torch.stack(
+            [Idot_tr * w_body[:, 0], Idot_tr * w_body[:, 1], Idot_ax * w_body[:, 2]], dim=-1
+        )
         wdot_body = (T_body - wxIw - I_dot_omega) / torch.stack([I_tr, I_tr, I_ax], dim=-1)
         wdot_world = rotate_body_to_world(xq, wdot_body)
         # Quat dot
-        w_body_full = torch.cat([torch.zeros(N, 1, device=xp.device, dtype=xp.dtype), w_body], dim=-1)
+        w_body_full = torch.cat(
+            [torch.zeros(N, 1, device=xp.device, dtype=xp.dtype), w_body], dim=-1
+        )
         q = xq
-        qd_w = 0.5 * (q[:, 0]*w_body_full[:, 0] - q[:, 1]*w_body_full[:, 1] - q[:, 2]*w_body_full[:, 2] - q[:, 3]*w_body_full[:, 3])
-        qd_x = 0.5 * (q[:, 0]*w_body_full[:, 1] + q[:, 1]*w_body_full[:, 0] + q[:, 2]*w_body_full[:, 3] - q[:, 3]*w_body_full[:, 2])
-        qd_y = 0.5 * (q[:, 0]*w_body_full[:, 2] - q[:, 1]*w_body_full[:, 3] + q[:, 2]*w_body_full[:, 0] + q[:, 3]*w_body_full[:, 1])
-        qd_z = 0.5 * (q[:, 0]*w_body_full[:, 3] + q[:, 1]*w_body_full[:, 2] - q[:, 2]*w_body_full[:, 1] + q[:, 3]*w_body_full[:, 0])
+        qd_w = 0.5 * (
+            q[:, 0] * w_body_full[:, 0]
+            - q[:, 1] * w_body_full[:, 1]
+            - q[:, 2] * w_body_full[:, 2]
+            - q[:, 3] * w_body_full[:, 3]
+        )
+        qd_x = 0.5 * (
+            q[:, 0] * w_body_full[:, 1]
+            + q[:, 1] * w_body_full[:, 0]
+            + q[:, 2] * w_body_full[:, 3]
+            - q[:, 3] * w_body_full[:, 2]
+        )
+        qd_y = 0.5 * (
+            q[:, 0] * w_body_full[:, 2]
+            - q[:, 1] * w_body_full[:, 3]
+            + q[:, 2] * w_body_full[:, 0]
+            + q[:, 3] * w_body_full[:, 1]
+        )
+        qd_z = 0.5 * (
+            q[:, 0] * w_body_full[:, 3]
+            + q[:, 1] * w_body_full[:, 2]
+            - q[:, 2] * w_body_full[:, 1]
+            + q[:, 3] * w_body_full[:, 0]
+        )
         qd = torch.stack([qd_w, qd_x, qd_y, qd_z], dim=-1)
 
         # Gimbal
@@ -910,47 +1075,66 @@ def rk4_step(
         gacc0 = gacc0.clamp(-p.engine.ENG_GIMBAL_ACC, p.engine.ENG_GIMBAL_ACC)
         gacc1 = gacc1.clamp(-p.engine.ENG_GIMBAL_ACC, p.engine.ENG_GIMBAL_ACC)
 
-        ydot = torch.cat([
-            xv, qd, a_world, wdot_world,
-            -mdot_lox[:, None], -mdot_rp1[:, None],
-            thr_rate[:, None], xign_rate[:, None],
-            xgr0[:, None], xgr1[:, None], gacc0[:, None], gacc1[:, None],
-        ], dim=-1)
+        ydot = torch.cat(
+            [
+                xv,
+                qd,
+                a_world,
+                wdot_world,
+                -mdot_lox[:, None],
+                -mdot_rp1[:, None],
+                thr_rate[:, None],
+                xign_rate[:, None],
+                xgr0[:, None],
+                xgr1[:, None],
+                gacc0[:, None],
+                gacc1[:, None],
+            ],
+            dim=-1,
+        )
         return ydot
 
     k1 = deriv(pack(), eng_on)
     # midpoint updates via Euler half-step
     y2 = pack() + 0.5 * dt * k1
-    y2[:, 3:7] = (y2[:, 3:7] / y2[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9))  # renormalize
+    y2[:, 3:7] = y2[:, 3:7] / y2[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9)  # renormalize
     # Clamp throttle
     y2[:, 15] = y2[:, 15].clamp(0.0, 1.0)
     y2[:, 17:19] = y2[:, 17:19].clamp(-p.engine.ENG_GIMBAL_MAX, p.engine.ENG_GIMBAL_MAX)
     k2 = deriv(y2, eng_on)
     y3 = pack() + 0.5 * dt * k2
-    y3[:, 3:7] = (y3[:, 3:7] / y3[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9))
+    y3[:, 3:7] = y3[:, 3:7] / y3[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9)
     y3[:, 15] = y3[:, 15].clamp(0.0, 1.0)
     y3[:, 17:19] = y3[:, 17:19].clamp(-p.engine.ENG_GIMBAL_MAX, p.engine.ENG_GIMBAL_MAX)
     k3 = deriv(y3, eng_on)
     y4 = pack() + dt * k3
-    y4[:, 3:7] = (y4[:, 3:7] / y4[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9))
+    y4[:, 3:7] = y4[:, 3:7] / y4[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9)
     y4[:, 15] = y4[:, 15].clamp(0.0, 1.0)
     y4[:, 17:19] = y4[:, 17:19].clamp(-p.engine.ENG_GIMBAL_MAX, p.engine.ENG_GIMBAL_MAX)
     k4 = deriv(y4, eng_on)
 
     y_new = pack() + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
     # Post-step clamping
-    y_new[:, 3:7] = (y_new[:, 3:7] / y_new[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9))
+    y_new[:, 3:7] = y_new[:, 3:7] / y_new[:, 3:7].norm(dim=-1, keepdim=True).clamp_min(1e-9)
     y_new[:, 13] = y_new[:, 13].clamp_min(0.0)
     y_new[:, 14] = y_new[:, 14].clamp_min(0.0)
     y_new[:, 15] = y_new[:, 15].clamp(0.0, 1.0)
     y_new[:, 17:19] = y_new[:, 17:19].clamp(-p.engine.ENG_GIMBAL_MAX, p.engine.ENG_GIMBAL_MAX)
 
     # Gimbal rate anti-windup
-    g0_new = y_new[:, 17]; g1_new = y_new[:, 18]
-    gr0_new = y_new[:, 19]; gr1_new = y_new[:, 20]
-    clamped_g0, clamped_g1, clamped_gr0, clamped_gr1 = gimbal_saturate(g0_new, g1_new, gr0_new, gr1_new, p)
-    y_new[:, 17] = clamped_g0; y_new[:, 18] = clamped_g1
-    y_new[:, 19] = clamped_gr0; y_new[:, 20] = clamped_gr1
+    g0_new = y_new[:, 17]
+    g1_new = y_new[:, 18]
+    gr0_new = y_new[:, 19]
+    gr1_new = y_new[:, 20]
+    clamped_g0, clamped_g1, clamped_gr0, clamped_gr1 = gimbal_saturate(
+        g0_new, g1_new, gr0_new, gr1_new, p
+    )
+    y_new[:, 17] = clamped_g0
+    y_new[:, 18] = clamped_g1
+    y_new[:, 19] = clamped_gr0
+    y_new[:, 20] = clamped_gr1
 
-    pos, quat, vel, ang, m_lox, m_rp1, throttle_act, ignition_timer, g0_act, g1_act, gr0, gr1 = unpack(y_new)
+    pos, quat, vel, ang, m_lox, m_rp1, throttle_act, ignition_timer, g0_act, g1_act, gr0, gr1 = (
+        unpack(y_new)
+    )
     return pos, quat, vel, ang, m_lox, m_rp1, throttle_act, ignition_timer, g0_act, g1_act, gr0, gr1

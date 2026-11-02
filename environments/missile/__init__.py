@@ -71,4 +71,4 @@ References
     - Method documentation: docs/method/env-missile-intercept.md.
 """
 
-from .env import MissileInterceptEnv
+from .env import MissileInterceptEnv as MissileInterceptEnv

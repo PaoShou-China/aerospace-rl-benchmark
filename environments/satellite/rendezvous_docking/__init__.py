@@ -89,4 +89,4 @@ References
       docs/method/env-rendezvous.md.
 """
 
-from .env import SpaceDockingEnv, SpaceRendezvousEnv
+from .env import SpaceDockingEnv as SpaceDockingEnv, SpaceRendezvousEnv as SpaceRendezvousEnv

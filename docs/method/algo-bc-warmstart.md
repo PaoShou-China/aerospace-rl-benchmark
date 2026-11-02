@@ -7,9 +7,8 @@ random network initialization (`algorithms/warmstart/bc_warmstart.py`). The proc
 training env under the task's `conventional_controller`, regresses the actor's Gaussian mean onto
 the collected expert actions, optionally regresses the critic onto the empirical discounted
 returns-to-go of the same rollouts, and then lets PPO refine from there. The warm start is
-PPO-only by design: FlashSAC's tanh-bounded actor head is a different regression target and its
-runner is not touched (`run_training` raises `ValueError` if `bc_warmstart` is combined with
-`algo='flash_sac'`).
+PPO-only by design: PPO's state-independent Gaussian mean is the regression
+target, and `run_training` only supports PPO.
 
 ## 2. Data collection
 

@@ -43,29 +43,25 @@ task table (goal, keep-out, 1000-step horizon, reward) is unchanged, and
 eval.py (no env kwargs) always evaluates the full benchmark spawn
 (1000-1500 m since 2026-10-24, widened from 800-1200 m after the baseline
 sat at 100% success).
-
-Narrow net: 64x64 was the only arm that learned this task (22% success vs
-0.8% for 512x256x128) under the retired residual trunk; with the trunk removed
-(2026-10-28) the shared 2x128 tanh MLP is used, i.e. the archived 64x64 recipe
-is no longer reproducible.
 """
+
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.satellite.rendezvous_docking import SpaceRendezvousEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.satellite.rendezvous_docking import SpaceRendezvousEnv  # noqa: E402
 
-TASK = 'rendezvous'
+TASK = "rendezvous"
 NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
-CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # resume from the newest model_*.pt / checkpoint.pt
+CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
+ALGORITHM = "ppo"
 # 2026-10-28: BC warm start proved the init/reward fine (93-98% rolling success,
 # iterations 1-5) and lr 1e-3 (+400-update decay) destroyed it within ~5 updates;
 # with the warm start on, the lr drops to the gentler fixed 3e-4 (decay dropped).
@@ -107,8 +103,7 @@ SIGMA_PIN = 0.2
 # (closer spawn + harder hover floor). New default = a2: the PPO constants
 # below are UNCHANGED, the env moves to (200,400) + time_penalty .02 (see
 # satellite/rendezvous_docking/env.py).
-PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=.999, num_mini_batches=1,
-                     entropy_coef=0.0)
+PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=0.999, num_mini_batches=1, entropy_coef=0.0)
 UPDATES = 1500
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
@@ -117,17 +112,31 @@ UPDATES = 1500
 # booming to 78% success (100-pt spread); BC inherits the 100%-success expert's ceiling.
 # 2026-10-29: OFF by user decision ("默认不用热启动") -- time_penalty + spawn easing
 # (env.py) must bootstrap from scratch on their own.
-BC_WARMSTART = None
+# 2026-10-30: re-enabled by user request ("每个环境都加上 IL warm start") -- shared
+# defaults restored across all train entries.
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+
 
 # 2026-10-29: training-only spawn easing as a local subclass. The env default
 # stays at the benchmark (1000,1500) so scripts/eval.py (which rebuilds the env
 # from config.json env_kwargs, empty here) always evaluates benchmark spawn.
 class _EasedSpawnEnv(SpaceRendezvousEnv):
-    init_range=(200.,400.)   # sweep winner a2 (see the sweep table above)
+    init_range = (200.0, 400.0)  # sweep winner a2 (see the sweep table above)
 
-if __name__ == '__main__':
-    run_training(TASK, _EasedSpawnEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, bc_warmstart=BC_WARMSTART,
-                 lr_sigma_coupling=LR_SIGMA_COUPLING, sigma_pin=SIGMA_PIN,
-                 **PPO_OVERRIDES)
+
+if __name__ == "__main__":
+    run_training(
+        TASK,
+        _EasedSpawnEnv,
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        bc_warmstart=BC_WARMSTART,
+        lr_sigma_coupling=LR_SIGMA_COUPLING,
+        sigma_pin=SIGMA_PIN,
+        **PPO_OVERRIDES,
+    )

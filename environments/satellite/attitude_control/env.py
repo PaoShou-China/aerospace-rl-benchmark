@@ -68,6 +68,7 @@ def quat_mul(q1,q2):
 
 
 def quat_conj(q):
+    """Return the conjugate (w, -x, -y, -z) of a wxyz unit quaternion."""
     return torch.cat((q[...,:1],-q[...,1:]),-1)
 
 
@@ -106,17 +107,62 @@ def _rotor_axes_ref(num_cmgs):
     return torch.tensor([[0.,0.,1.],[0.,1.,0.],[1.,0.,0.],[0.,0.,1.],[0.,1.,0.],[1.,0.,0.]])
 
 
-class SatelliteAttitudeEnv:
+from environments.common.residual import ResidualActionMixin
+from environments.common.base_env import BaseEnv
+from environments.common.domain_randomization import (
+    apply_static_perturbation,
+    apply_domain_randomization,
+    resolve_domain_randomize,
+)
+
+
+class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
+    """Satellite attitude control RL environment using control moment gyros.
+
+    Task objective: slew a rigid-body satellite bus to a target attitude
+    (uniformly sampled on SO(3) at reset) while avoiding CMG cluster
+    singularities. The agent observes (as a flat float32 tensor): body
+    quaternion wxyz (4), 3-vector attitude error via the quaternion log
+    map (3), body angular velocity (3), gimbal sin/cos (2*num_cmgs), gimbal
+    rates (num_cmgs), normalized manipulability metric (1), and a min-norm
+    unit-torque allocation direction (3). Actions are per-CMG gimbal-rate
+    commands scaled from [-1, 1] to [-3, 3] rad/s. Success terminates
+    immediately with settle bonus when |att_err| < 0.05 rad and |omega| <
+    0.02 rad/s; failure when |omega| > 10 rad/s; truncation at 1200 steps.
+    Physics is a reduced-order rigid-body + CMG model integrated with RK4
+    at 40 Hz. Domain randomization covers inertia (0.90, 1.10) and rotor_h_dyn
+    (0.95, 1.05).
+    """
     target_angle_cap=math.pi # target rotation-angle cap [rad]
     # conventional controller: quaternion PD + singularity-robust damped CMG
     # steering, Schaub & Junkins (baselines.py; gimbal-rate commands)
     conventional_controller=SatelliteCMGBaseline
+    PERTURBABLE_PARAMS = {"inertia": 1.0, "rotor_h_dyn": 1.0}
+    # Literature: inertia-matrix uncertainty for agile satellites.  The
+    # Hybrid-MPC satellite-attitude paper (arXiv 2602.15954) injects up to 10%
+    # random error into the inertia matrix and up to 20% into mass.  Sun 2010
+    # ("Analysis of Inertia Dyadic Uncertainty for Small Agile Satellite with
+    # CMGs") specifically analyses the inertia-dyadic variation introduced by a
+    # CMG cluster.  We use inertia +/-10%.  The CMG stored angular momentum
+    # (rotor_h_dyn) uncertainty comes from rotor-speed telemetry error and is
+    # smaller: +/-5%.
+    DEFAULT_DOMAIN_RANDOMIZE = {"inertia": (0.90, 1.10), "rotor_h_dyn": (0.95, 1.05)}
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4):
+    def __init__(self,num_envs=64,backend='cpu',seed=7,num_cmgs=4,
+                 residual=False,reset_noise_scale=None,plant_kwargs=None,
+                 param_mismatch=None,domain_randomize=None):
+        """Initialize the SatelliteAttitude CMG environment.
+
+        Set physical constants (4- or 6-CMG cluster, inertia, rotor momentum),
+        allocate task buffers (q, omega, gimbals, reward, potential), and
+        finalize with a reset().
+        """
         if num_cmgs not in (4,6):raise ValueError('num_cmgs must be 4 or 6')
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
+        # experiment-only overrides (defaults keep the benchmark contract)
+        plant_kwargs=dict(plant_kwargs or {})
         self.task_cfg={'vehicle':'satellite','num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized','num_cmgs':num_cmgs,
                        'task_defaults':'torchrl SatelliteEnv reference (Wie 2008 CMG steering)'}
@@ -127,6 +173,10 @@ class SatelliteAttitudeEnv:
         # Reference-model constants (torchrl SatelliteEnv defaults).
         self.clip_actions=1.
         self.action_scale=3.
+        # physical actuator bounds: gimbal rates [rad/s]; the policy space is
+        # [-1, 1] and step() multiplies by action_scale, so physical = +/-3.
+        self.action_low=torch.full((num_cmgs,),-self.action_scale,device=d,dtype=torch.float64)
+        self.action_high=torch.full((num_cmgs,),self.action_scale,device=d,dtype=torch.float64)
         self.singularity_weight=.5  # telescoped singularity potential w_sing/(m_norm+soft), bounded in [w/2.05, w/soft]
         self.singularity_soft=.5   # soft denominator keeps the potential bounded (max w_sing/soft)
         self.ctrl_cost_weight=.0005  # full-scale command costs .018/step
@@ -143,6 +193,9 @@ class SatelliteAttitudeEnv:
         # so replicas must actively damp rates; worst-case momentum injection
         # I*w ~ 2 N m s stays far inside the CMG cluster capacity (4 x 20).
         self.reset_noise_scale=.01
+        if reset_noise_scale is not None:
+            self.reset_noise_scale=float(reset_noise_scale)
+            self.task_cfg['reset_noise_scale']=self.reset_noise_scale
         self.success_att_tol=.05;self.success_omega_tol=.02
         self.settle_bonus=1.         # one-time bonus on the success-terminating step.
                                      # Was a per-step Gaussian state reward: with no
@@ -178,6 +231,15 @@ class SatelliteAttitudeEnv:
         else:
             self.rotor_speed=200.;self.rotor_h_dyn=1.25e-2  # 6.25e-5 kg m^2 rotor at 200 rad/s
             self.inertia=torch.tensor((.055,.055,.085),device=d,dtype=torch.float64)
+        # experiment-only TRUE-PLANT overrides (inertia / rotor momentum / speed)
+        if plant_kwargs:
+            if 'inertia' in plant_kwargs:
+                self.inertia=torch.as_tensor(plant_kwargs['inertia'],device=d,dtype=torch.float64)
+            if 'rotor_h_dyn' in plant_kwargs:
+                self.rotor_h_dyn=float(plant_kwargs['rotor_h_dyn'])
+            if 'rotor_speed' in plant_kwargs:
+                self.rotor_speed=float(plant_kwargs['rotor_speed'])
+            self.task_cfg['plant_kwargs']=dict(plant_kwargs)
         self.rotor_h=self.rotor_speed  # proxy unit for the singularity metric
         self.num_gimbals=num_cmgs;self.num_actions=num_cmgs
         self.gimbal_axes=_CMG_GIMBAL_AXES[num_cmgs].to(device=d,dtype=torch.float64)
@@ -224,9 +286,24 @@ class SatelliteAttitudeEnv:
         self.completed_episodes=torch.zeros_like(self.episode_length_buf)
         self.completed_successes=torch.zeros_like(self.episode_length_buf)
 
+        self._seed = seed
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
+        # capture nominal model for the controller BEFORE perturbing the plant
+        self.controller_design = {
+            "inertia": self.inertia.clone(),
+            "rotor_h_dyn": self.rotor_h_dyn,
+            "rotor_speed": self.rotor_speed,
+            "action_scale": self.action_scale,
+        }
+        apply_static_perturbation(self, param_mismatch)
+        self._dr_counter = 0
+        self._domain_randomize = resolve_domain_randomize(
+            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        )
+        self.residual=residual
+        self._init_residual()
 
         self.reset()
 
@@ -236,11 +313,13 @@ class SatelliteAttitudeEnv:
         return cos*self.rotor_axes_ref+sin*self.g_cross_r0
 
     def _dynamics(self,q,w,theta,delta):
+        """Compute (q_dot, w_dot) for the rigid bus + CMG cluster at the current state."""
         n=q.shape[0]
         r=self._rotor_axes(theta)                                   # (n,N,3)
-        h_momentum=self.rotor_h_dyn*r.sum(1)                        # stored rotor momentum
+        h_dyn = self.rotor_h_dyn if torch.is_tensor(self.rotor_h_dyn) else torch.as_tensor(self.rotor_h_dyn, device=q.device, dtype=q.dtype)
+        h_momentum=h_dyn.view(-1,1)*r.sum(1)                        # stored rotor momentum
         gr=torch.linalg.cross(self.gimbal_axes.expand(n,-1,-1),r,dim=-1)
-        tau=-(self.rotor_h_dyn*delta.unsqueeze(-1)*gr).sum(1)       # CMG reaction torque
+        tau=-(h_dyn.view(-1,1,1)*delta.unsqueeze(-1)*gr).sum(1)       # CMG reaction torque
         wdot=(-torch.linalg.cross(w,self.inertia*w)
               -torch.linalg.cross(w,h_momentum)+tau)/self.inertia
         w_quat=torch.zeros_like(q);w_quat[:,1:]=w
@@ -264,6 +343,7 @@ class SatelliteAttitudeEnv:
         self.gimbal_rate.copy_(torch.where(mask[:,None],delta,self.gimbal_rate))
 
     def _attitude_error(self):
+        """Return the 3-vector attitude error log map: current^-1 * target."""
         # q_err = current^-1 * target, as the 3-vector log map.
         return quat_log(quat_mul(quat_conj(self.q),self.target_quat))
 
@@ -298,9 +378,16 @@ class SatelliteAttitudeEnv:
                 +self.singularity_weight/(m_norm+self.singularity_soft))
 
     def get_observations(self):
+        """Return the current observation packed in a TensorDict under 'policy'."""
         return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
 
     def _observe(self,mask):
+        """Refresh the internal observation buffer from bus state and CMG geometry.
+
+        Exposes attitude error, manipulability, and a min-norm unit-torque
+        allocation direction so the MLP has direct access to the CMG
+        Jacobian structure.
+        """
         quat_err=self._attitude_error()
         r=self._rotor_axes(self.gimbal)
         gr=torch.linalg.cross(self.gimbal_axes.expand(self.num_envs,-1,-1),r,dim=-1)  # (n,N,3)
@@ -322,13 +409,22 @@ class SatelliteAttitudeEnv:
         return quat_err
 
     def _update_observation(self):
+        """Copy the float64 internal observation into the float32 obs_buf used downstream."""
         if self.obs_buf is None:
             self.obs_buf=torch.zeros(self._observation.shape,device=self.device,dtype=torch.float32)
         self.obs_buf.copy_(self._observation)
 
     def step(self,actions):
+        """Advance one policy step: integrate CMG dynamics and evaluate reward.
+
+        Multiply scaled gimbal rates through the CMG RK4 integrator, compute
+        the telescoping potential-based progress reward, and return
+        (observations, reward, terminated, truncated, extras). Success and
+        runaway-spin failure both terminate immediately.
+        """
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
+        actions=self._residual_input(actions)
         rates=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*self.action_scale
         self.action.copy_(rates)
         active=~(self.terminated|self.truncated)
@@ -346,8 +442,8 @@ class SatelliteAttitudeEnv:
         phi=self._potential(att_err,m_norm)
         shaping=self._prev_phi-phi
         # termination/reward set (docking convention): success terminates the
-        # episode immediately (marked truncated but NOT time_out -- rsl_rl and
-        # FlashSAC treat it as terminal and skip bootstrapping) and pays a
+        # episode immediately (marked truncated but NOT time_out -- the RL
+        # algorithms treat it as terminal and skip bootstrapping) and pays a
         # one-time settle bonus; runaway spin (|omega| > fail_omega) terminates
         # as a failure with a one-time penalty. Before this change episodes
         # always ran the full 1200 steps, the per-step settle bonus scaled the
@@ -400,9 +496,28 @@ class SatelliteAttitudeEnv:
         self._update_observation()
         return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
+    def _apply_perturbation(self, name, scale):
+        """Scale inertia or rotor_h_dyn; called by the DR helper."""
+        nom = self.controller_design[name]
+        if name == "inertia":
+            # scale can be float or (num_envs,); broadcast to (num_envs, 3)
+            if isinstance(scale, (int, float)):
+                self.inertia = nom * scale
+            else:
+                self.inertia = nom[None, :] * scale.to(self.device)[:, None]
+        elif name == "rotor_h_dyn":
+            self.rotor_h_dyn = nom * scale
+        else:
+            raise KeyError(name)
+
     def reset_idx(self,envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
         mask=envs_idx
+        if self._domain_randomize:
+            self._dr_counter += 1
+            apply_domain_randomization(
+                self, self._domain_randomize, self._seed, self._dr_counter, mask
+            )
         u=self.rng.uniform(3,mask)
         s1=torch.sqrt(1-u[:,0]);s2=torch.sqrt(u[:,0])
         ang1=2*math.pi*u[:,1];ang2=2*math.pi*u[:,2]
@@ -426,6 +541,7 @@ class SatelliteAttitudeEnv:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        self._residual_reset(mask)
 
     def reset(self):
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)

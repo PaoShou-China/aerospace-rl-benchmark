@@ -192,7 +192,6 @@ to back on the same machine; the learned arms are the unchanged shipped entries.
 | SE(3) geometric (`baseline.json`) | 1025 | **100.0%** | 4.000 | 0 / 0 / 0 | 583 steps | 72.30 | 509 s |
 | Cascaded PID (`baseline_cascaded_pid.json`) | 1024 | **99.12%** | 3.991 | 0 / 0 / 9 | 800 steps | 72.53 | 629 s |
 | PPO (`train_quadx.py`, unchanged) | — | reuse shipped checkpoint with `scripts/eval.py quadx` | | | | | |
-| FlashSAC (`train_quadx.py`, unchanged) | — | reuse shipped checkpoint with `scripts/eval.py quadx` | | | | | |
 
 The cascade is 0.9 pp behind the geometric arm and reaches the same mean
 return. Its only failures are 9 timeouts (0.88%): those replicas chase a
@@ -334,7 +333,7 @@ Narrative:
   `results/quadx/cascade_pid_tests.json`.
 - **Fair-comparison commands.** The learned arms are the shipped entries, unchanged:
   ```bash
-  python environments/multirotor/train_quadx.py     # ALGORITHM = 'ppo' | 'flash_sac'
+  python environments/multirotor/train_quadx.py     # ALGORITHM = 'ppo'
   python scripts/eval.py quadx                      # deterministic checkpoint evaluation
   python scripts/baseline_eval.py quadx             # SE(3)
   python scripts/baseline_eval.py quadx --baseline cascaded_pid

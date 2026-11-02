@@ -79,4 +79,4 @@ References
     - Method documentation: docs/method/env-satellite-attitude.md.
 """
 
-from .env import SatelliteAttitudeEnv
+from .env import SatelliteAttitudeEnv as SatelliteAttitudeEnv

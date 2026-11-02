@@ -11,23 +11,24 @@ arguments. Edit the constants and run `python train_satellite.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
 """
+
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.satellite.attitude_control import SatelliteAttitudeEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.satellite.attitude_control import SatelliteAttitudeEnv  # noqa: E402
 
-TASK = 'satellite'
+TASK = "satellite"
 NUM_ENVS = 1024
-UPDATES = 1000           # fair-comparison budget (matches the other 6 task entries)
+UPDATES = 1000  # fair-comparison budget (matches the other 6 task entries)
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # pure-RL from scratch (warm-start protocol superseded)
-CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # pure-RL from scratch (warm-start protocol superseded)
+CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
+ALGORITHM = "ppo"
 # 2026-10-22 warm-start refinement (run-9): the archived BC+DAgger checkpoint
 # (results/satellite, seed-7 1024-env run) re-evaluates at 94.8% deterministic
 # on the benchmark (results/satellite/eval.json) -- far above every pure-RL
@@ -44,16 +45,22 @@ INIT_STD = 1.0
 # The fixed schedule replaces SB3's KL-adaptive schedule (adaptive is proven
 # to clamp to 1e-5 on this task). lr/sigma coupling and obs-norm freezing are
 # warm-start-specific and removed.
-PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=150, num_mini_batches=5,
-                     num_learning_epochs=40, entropy_coef=0.0, init_std=INIT_STD,
-                     clip_param=0.2)
+PPO_OVERRIDES = dict(
+    gamma=0.999,
+    num_steps_per_env=150,
+    num_mini_batches=5,
+    num_learning_epochs=40,
+    entropy_coef=0.0,
+    init_std=INIT_STD,
+    clip_param=0.2,
+)
 # 2026-10-20 ROOT-CAUSE FIX: all 7 prior runs failed because the telescoped
 # shaping sign was INVERTED (negative potential with Phi_prev - Phi subtraction):
 # approaching the target and braking were penalized, so PPO plateaued at
 # att_err~0.3-0.6 with <=5% success. env.py now uses the positive
 # distance-to-go potential (docking 'progress' convention) with the absolute
 # per-step state costs folded into the potential.
-LR_SCHEDULE = 'fixed'
+LR_SCHEDULE = "fixed"
 # Run 7 (2026-10-20): 100-update dose-response gates at 256 envs isolated the
 #   refinement-destroyer: the EXPLORATION SIGMA. At sigma=0.5 the in-rollout
 #   success collapses to 2-25% vs 50%+ greedy, so PPO's gradient chases
@@ -162,11 +169,21 @@ LR_SCHEDULE = 'fixed'
 #   (gamma^300), leaving no gradient toward capture.
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = None
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
-    run_training(TASK, SatelliteAttitudeEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 bc_warmstart=BC_WARMSTART,
-                 **PPO_OVERRIDES)
+if __name__ == "__main__":
+    run_training(
+        TASK,
+        SatelliteAttitudeEnv,
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        lr_schedule=LR_SCHEDULE,
+        learning_rate=LEARNING_RATE,
+        bc_warmstart=BC_WARMSTART,
+        **PPO_OVERRIDES,
+    )

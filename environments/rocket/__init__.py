@@ -77,4 +77,4 @@ References
     - Method documentation: docs/method/env-rocket-landing.md.
 """
 
-from .env import RocketLandingEnv
+from .env import RocketLandingEnv as RocketLandingEnv

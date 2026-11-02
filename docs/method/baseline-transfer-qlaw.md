@@ -200,7 +200,7 @@ before the official seed-7 evaluation; see §6 for the selected values.
   - `phase_b()` — tuning grid over (`RP_RAISE`, $W_e$, $\eta_{\min}$)
     on seeds 13/21.
   - `phase_c()` — official-protocol evaluation of the frozen law.
-  - `phase_d()` — four-way comparison Gauss / Q-law / PPO / FlashSAC
+  - `phase_d()` — three-way comparison Gauss / Q-law / PPO
     with per-arm success rate, terminal R, perigee gain, apogee drift,
     propellant, $\Delta v$ and burn duty.
 
@@ -249,11 +249,11 @@ near-apogee transverse thrust is almost always effective for this
 objective, whereas the Gauss greedy rule prices propellant explicitly
 and coasts more.
 
-**Four-way comparison with the learned arms (PPO / FlashSAC):** see
+**Comparison with the learned arm (PPO):** see
 `results/transfer/comparison.json` and `qlaw_report.json` once the
-equal-interaction-budget training runs complete (PPO 1000 updates x 32
-steps x 1024 envs; FlashSAC 32768 iterations x 1024 envs = 32.8M
-transitions each, seed 7, evaluated with `scripts/eval.py` semantics).
+equal-interaction-budget training run completes (PPO 1000 updates x 32
+steps x 1024 envs = 32.8M transitions, seed 7, evaluated with
+`scripts/eval.py` semantics).
 
 ## 7. Known limitations
 

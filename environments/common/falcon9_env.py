@@ -38,14 +38,23 @@ import genesis as gs
 import torch
 from torch import Tensor
 
-from .falcon9_params import Falcon9Params, P, SCENARIO_PRESETS, ScenarioDef
+from .falcon9_params import Falcon9Params, P, SCENARIO_PRESETS
 from .falcon9_dynamics import (
-    atmosphere_eval, mass_props_batch, engine_deriv_batch, ignition_ramp_tick,
-    gimbal_to_direction, gimbal_saturate, gimbal_deriv_batch,
-    assemble_forces_torques, rotate_body_to_world, rotate_world_to_body,
+    atmosphere_eval,
+    mass_props_batch,
+    engine_deriv_batch,
+    ignition_ramp_tick,
+    gimbal_saturate,
+    gimbal_deriv_batch,
+    assemble_forces_torques,
+    rotate_body_to_world,
+    rotate_world_to_body,
 )
 from .falcon9_reward import (
-    falcon9_shaping, default_reward_cfg, landing_thresholds, _body_tilt_from_quat,
+    falcon9_shaping,
+    default_reward_cfg,
+    landing_thresholds,
+    _body_tilt_from_quat,
 )
 
 
@@ -54,31 +63,33 @@ from .falcon9_reward import (
 # ---------------------------------------------------------------------------
 @dataclass
 class Falcon9EngineState:
-    throttle_act: Tensor       # (N,) [0, 1] rate-limited throttle
-    throttle_cmd: Tensor      # (N,) commanded throttle
-    eng_on: Tensor            # (N,) bool
-    ignition_timer: Tensor    # (N,) s since ignition command (negative when off)
-    relights_used: Tensor     # (N,) int
+    """Per-env batched Falcon 9 engine state (throttle, TVC gimbal, fuel)."""
+    throttle_act: Tensor  # (N,) [0, 1] rate-limited throttle
+    throttle_cmd: Tensor  # (N,) commanded throttle
+    eng_on: Tensor  # (N,) bool
+    ignition_timer: Tensor  # (N,) s since ignition command (negative when off)
+    relights_used: Tensor  # (N,) int
     # Gimbal
-    g0_cmd: Tensor            # (N,) rad — commanded TVC deflection
-    g1_cmd: Tensor            # (N,) rad
-    g0_act: Tensor            # (N,) rad about body +X
-    g1_act: Tensor            # (N,) rad about body +Y
-    gr0: Tensor               # (N,) rad/s
-    gr1: Tensor               # (N,) rad/s
+    g0_cmd: Tensor  # (N,) rad — commanded TVC deflection
+    g1_cmd: Tensor  # (N,) rad
+    g0_act: Tensor  # (N,) rad about body +X
+    g1_act: Tensor  # (N,) rad about body +Y
+    gr0: Tensor  # (N,) rad/s
+    gr1: Tensor  # (N,) rad/s
     # Fuel
-    m_lox: Tensor             # (N,) kg
-    m_rp1: Tensor             # (N,) kg
-    m_rcs_n2: Tensor          # (N,) kg
+    m_lox: Tensor  # (N,) kg
+    m_rp1: Tensor  # (N,) kg
+    m_rcs_n2: Tensor  # (N,) kg
 
 
 @dataclass
 class Falcon9ActuatorState:
-    fins_deployed: Tensor          # (N,) bool
-    fin_deflection: Tensor         # (N, 4) rad  — zero for v1 (passive aero)
-    rcs_on: Tensor                 # (N,) bool
-    tau_rcs_body_cmd: Tensor       # (N, 3) N·m body-frame torque
-    legs_deployed: Tensor          # (N,) bool
+    """Per-env batched Falcon 9 actuator state (fins, legs, RCS)."""
+    fins_deployed: Tensor  # (N,) bool
+    fin_deflection: Tensor  # (N, 4) rad  — zero for v1 (passive aero)
+    rcs_on: Tensor  # (N,) bool
+    tau_rcs_body_cmd: Tensor  # (N, 3) N·m body-frame torque
+    legs_deployed: Tensor  # (N,) bool
 
 
 # ---------------------------------------------------------------------------
@@ -96,28 +107,29 @@ class Falcon9Env:
         wind_world: (N, 3) m/s world-frame wind
     """
 
-    def __init__(self,
-                 num_envs: int = 1,
-                 backend: str = 'gpu',
-                 p: Falcon9Params = P,
-                 urdf_path: str | None = None,
-                 pos: Optional[tuple] = None,
-                 quat: Optional[tuple] = None,
-                 vel: Optional[tuple] = None,
-                 ang: Optional[tuple] = None,
-                 wind_world: tuple = (0.0, 0.0, 0.0),
-                 scenario: Optional[str] = None,
-                 seed: int = 1,
-                 run_idx: int = 0,
-                 dispersion: bool = True,
-                 ):
+    def __init__(
+        self,
+        num_envs: int = 1,
+        backend: str = "gpu",
+        p: Falcon9Params = P,
+        urdf_path: str | None = None,
+        pos: Optional[tuple] = None,
+        quat: Optional[tuple] = None,
+        vel: Optional[tuple] = None,
+        ang: Optional[tuple] = None,
+        wind_world: tuple = (0.0, 0.0, 0.0),
+        scenario: Optional[str] = None,
+        seed: int = 1,
+        run_idx: int = 0,
+        dispersion: bool = True,
+    ):
         self.p = p
         self.g0 = p.world.g0
-        self.dt = p.timing.physics_dt     # 0.001 s (1 kHz)
+        self.dt = p.timing.physics_dt  # 0.001 s (1 kHz)
         self.policy_dt = p.timing.policy_dt  # 0.02 s  (50 Hz)
         self.n_sub = p.timing.substeps_per_policy
         self.N = num_envs
-        self.device = 'cuda' if backend == 'gpu' else 'cpu'
+        self.device = "cuda" if backend == "gpu" else "cpu"
         self.scenario_name = scenario or p.default_scenario
         self._scenario_seed = seed
         self._scenario_run_idx = run_idx
@@ -132,7 +144,7 @@ class Falcon9Env:
         # Torsional/rolling friction are enabled so the four footpads dissipate the
         # rocking motion of an off-vertical touchdown (a point contact otherwise has
         # no rolling resistance at all and the body rocks forever).
-        gs.init(backend=gs.gpu if backend == 'gpu' else gs.cpu, logging_level='warning')
+        gs.init(backend=gs.gpu if backend == "gpu" else gs.cpu, logging_level="warning")
         self.scene = gs.Scene(
             show_viewer=False,
             sim_options=gs.options.SimOptions(dt=self.dt, gravity=(0, 0, -self.g0)),
@@ -153,36 +165,49 @@ class Falcon9Env:
 
         # Falcon 9 stage — merge_fixed_links=True → 1 rigid body
         urdf_path = urdf_path or (
-            __file__.replace('falcon9_env.py',
-                             'original_pyflyt/models/vehicles/rocket/rocket_falcon9_stage1.urdf')
+            __file__.replace(
+                "falcon9_env.py",
+                "original_pyflyt/models/vehicles/rocket/rocket_falcon9_stage1.urdf",
+            )
         )
         scen = SCENARIO_PRESETS[self.scenario_name]
-        cos_t = math.cos(scen.tilt0 / 2); sin_t = math.sin(scen.tilt0 / 2)
+        cos_t = math.cos(scen.tilt0 / 2)
+        sin_t = math.sin(scen.tilt0 / 2)
         # Genesis needs concrete tuple defaults for the URDF morph; we prime
         # with the scenario preset's nominal state and reset_from_scenario
         # overwrites everything after scene.build.
-        _pos_prime   = (0.0, 0.0, scen.h0)              if pos  is None else tuple(pos)
-        _quat_prime  = (cos_t, sin_t, 0.0, 0.0)         if quat is None else tuple(quat)
-        _vel_prime   = (0.0, 0.0, scen.vz0)             if vel  is None else tuple(vel)
-        _ang_prime   = (0.0, 0.0, 0.0)                   if ang  is None else tuple(ang)
+        _pos_prime = (0.0, 0.0, scen.h0) if pos is None else tuple(pos)
+        _quat_prime = (cos_t, sin_t, 0.0, 0.0) if quat is None else tuple(quat)
+        _vel_prime = (0.0, 0.0, scen.vz0) if vel is None else tuple(vel)
+        _ang_prime = (0.0, 0.0, 0.0) if ang is None else tuple(ang)
 
         self.vehicle = self.scene.add_entity(
             gs.morphs.URDF(
                 file=urdf_path,
-                pos=_pos_prime, quat=_quat_prime, fixed=False, align=False,
-                merge_fixed_links=True, recompute_inertia=True, scale=1.0,
+                pos=_pos_prime,
+                quat=_quat_prime,
+                fixed=False,
+                align=False,
+                merge_fixed_links=True,
+                recompute_inertia=True,
+                scale=1.0,
             ),
             material=gs.materials.Rigid(
-                friction=0.6, friction_torsional=0.5, friction_rolling=0.5,
-                coup_friction=0.5, coup_softness=0.001, coup_restitution=0.0,
+                friction=0.6,
+                friction_torsional=0.5,
+                friction_rolling=0.5,
+                coup_friction=0.5,
+                coup_softness=0.001,
+                coup_restitution=0.0,
                 contact_resistance=1e7,
             ),
         )
 
         self.scene.build(n_envs=num_envs)
         # With merge_fixed_links=True there is exactly ONE link → idx 0
-        assert len(self.vehicle.links) == 1, \
-            f"Expected 1 link (merge_fixed_links=True), got {len(self.vehicle.links)}"
+        assert (
+            len(self.vehicle.links) == 1
+        ), f"Expected 1 link (merge_fixed_links=True), got {len(self.vehicle.links)}"
         self.idx_root = 0
 
         # Initial state — build from the scenario preset by default; explicit
@@ -190,7 +215,8 @@ class Falcon9Env:
         # run reset_from_scenario to apply per-env dispersion (seeded), so the
         # tensors below are only used to prime Genesis' state bookkeeping.
         scen = SCENARIO_PRESETS[self.scenario_name]
-        cos_t = math.cos(scen.tilt0 / 2); sin_t = math.sin(scen.tilt0 / 2)
+        cos_t = math.cos(scen.tilt0 / 2)
+        sin_t = math.sin(scen.tilt0 / 2)
         # Default: upright, zero lateral, prescribed h0/vz0 from preset
         _pos = pos if pos is not None else (0.0, 0.0, scen.h0)
         _quat = quat if quat is not None else (cos_t, sin_t, 0.0, 0.0)
@@ -198,13 +224,17 @@ class Falcon9Env:
         _ang = ang if ang is not None else (0.0, 0.0, 0.0)
 
         initial_pos = torch.tensor(list(_pos), dtype=torch.float32, device=self.device)
-        if initial_pos.ndim == 1: initial_pos = initial_pos.repeat(num_envs, 1)
+        if initial_pos.ndim == 1:
+            initial_pos = initial_pos.repeat(num_envs, 1)
         initial_quat = torch.tensor(list(_quat), dtype=torch.float32, device=self.device)
-        if initial_quat.ndim == 1: initial_quat = initial_quat.repeat(num_envs, 1)
+        if initial_quat.ndim == 1:
+            initial_quat = initial_quat.repeat(num_envs, 1)
         initial_vel = torch.tensor(list(_vel), dtype=torch.float32, device=self.device)
-        if initial_vel.ndim == 1: initial_vel = initial_vel.repeat(num_envs, 1)
+        if initial_vel.ndim == 1:
+            initial_vel = initial_vel.repeat(num_envs, 1)
         initial_ang = torch.tensor(list(_ang), dtype=torch.float32, device=self.device)
-        if initial_ang.ndim == 1: initial_ang = initial_ang.repeat(num_envs, 1)
+        if initial_ang.ndim == 1:
+            initial_ang = initial_ang.repeat(num_envs, 1)
 
         self.vehicle.set_pos(initial_pos)
         self.vehicle.set_quat(initial_quat)
@@ -212,7 +242,8 @@ class Falcon9Env:
 
         # Actuator state (allocated on self.device from the start)
         dev = self.device
-        ep = p.engine; pp = p.propellant
+        ep = p.engine
+        pp = p.propellant
         prop0 = scen.prop0
         m_rp1_init = prop0 / (1.0 + pp.MIX_RATIO)
         m_lox_init = prop0 - m_rp1_init
@@ -250,7 +281,7 @@ class Falcon9Env:
         # ------------------------------------------------------------------
         self.reward_cfg = default_reward_cfg()
         self.thr = landing_thresholds()
-        self.max_steps = self.thr['episode_seconds'] * self.policy_dt ** -1  # 2000
+        self.max_steps = self.thr["episode_seconds"] * self.policy_dt**-1  # 2000
 
         # Per-env episode buffers
         self.count = torch.zeros(num_envs, device=self.device, dtype=torch.int64)
@@ -265,9 +296,19 @@ class Falcon9Env:
         self.touch_any = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self.touch_vz_first = torch.zeros(num_envs, device=self.device)
 
-        self._last_reward_components: dict = {k: torch.zeros(num_envs) for k in
-                                              ('hover', 'hold', 'lateral', 'descent',
-                                               'decel', 'attitude', 'contact', 'success')}
+        self._last_reward_components: dict = {
+            k: torch.zeros(num_envs)
+            for k in (
+                "hover",
+                "hold",
+                "lateral",
+                "descent",
+                "decel",
+                "attitude",
+                "contact",
+                "success",
+            )
+        }
 
         # ------------------------------------------------------------------
         # Prime Genesis state with the scenario preset and apply seeded dispersion.
@@ -284,20 +325,20 @@ class Falcon9Env:
     # Scenario initialisation / domain randomisation
     # ------------------------------------------------------------------
     def reset_from_scenario(
-            self,
-            scenario_name: Optional[str] = None,
-            seed: Optional[int] = None,
-            run_idx: Optional[int] = None,
-            dispersion: Optional[bool] = None,
-            env_ids: Optional[list[int]] = None,
-            *,
-            pos: Optional[Tensor | tuple | list] = None,
-            quat: Optional[Tensor | tuple | list] = None,
-            vel: Optional[Tensor | tuple | list] = None,
-            ang: Optional[Tensor | tuple | list] = None,
-            m_lox: Optional[Tensor | float] = None,
-            m_rp1: Optional[Tensor | float] = None,
-            wind_world: Optional[Tensor | tuple | list] = None,
+        self,
+        scenario_name: Optional[str] = None,
+        seed: Optional[int] = None,
+        run_idx: Optional[int] = None,
+        dispersion: Optional[bool] = None,
+        env_ids: Optional[list[int]] = None,
+        *,
+        pos: Optional[Tensor | tuple | list] = None,
+        quat: Optional[Tensor | tuple | list] = None,
+        vel: Optional[Tensor | tuple | list] = None,
+        ang: Optional[Tensor | tuple | list] = None,
+        m_lox: Optional[Tensor | float] = None,
+        m_rp1: Optional[Tensor | float] = None,
+        wind_world: Optional[Tensor | tuple | list] = None,
     ) -> None:
         """Reset (a subset of) environments to a scenario preset.
 
@@ -313,9 +354,7 @@ class Falcon9Env:
         """
         sn = scenario_name or self.scenario_name
         if sn not in SCENARIO_PRESETS:
-            raise KeyError(
-                f"Unknown scenario {sn!r}. Choose one of: {list(SCENARIO_PRESETS)}"
-            )
+            raise KeyError(f"Unknown scenario {sn!r}. Choose one of: {list(SCENARIO_PRESETS)}")
         sd = SCENARIO_PRESETS[sn]
         ids = list(range(self.N)) if env_ids is None else list(env_ids)
         idx = torch.tensor(ids, device=self.device, dtype=torch.int64)
@@ -328,19 +367,27 @@ class Falcon9Env:
 
         # ---- RNG (numpy-free, torch.Generator on target device) ----
         def _g(section: int) -> torch.Generator:
-            g = torch.Generator(device='cpu')
+            g = torch.Generator(device="cpu")
             g.manual_seed(int(seed_i) * 1000 + int(run_i) * 10 + int(section))
             return g
 
-        g_h   = _g(1); g_lat = _g(2); g_ly  = _g(3)
-        g_vz  = _g(4); g_vx  = _g(5); g_vy  = _g(6)
-        g_tilt= _g(7); g_wx  = _g(8); g_wy  = _g(9); g_wz = _g(11)
-        g_az  = _g(12); g_prop = _g(10)
+        g_h = _g(1)
+        g_lat = _g(2)
+        g_ly = _g(3)
+        g_vz = _g(4)
+        g_vx = _g(5)
+        g_vy = _g(6)
+        g_tilt = _g(7)
+        g_wx = _g(8)
+        g_wy = _g(9)
+        g_wz = _g(11)
+        g_az = _g(12)
+        g_prop = _g(10)
 
         def _disps(g: torch.Generator, sigma: float) -> Tensor:
             """Batch of normal samples with sigma=0 → zeros."""
             if not use_disp or sigma <= 0:
-                return torch.zeros(n, device='cpu')
+                return torch.zeros(n, device="cpu")
             return torch.randn(n, generator=g) * sigma
 
         # ---- Propellant load (with ±2% dispersion) ----
@@ -353,17 +400,22 @@ class Falcon9Env:
         # Vertical: vehicle body origin sits at world-z = h0 + CoM(body frame)
         # We don't know mp.com yet so set body-origin z = h0 + analytic com.
         _, com_a, _, _, _, _ = mass_props_batch(
-            m_lox_b.to(dev), m_rp1_b.to(dev), self.p,
+            m_lox_b.to(dev),
+            m_rp1_b.to(dev),
+            self.p,
         )
         h0_b = sd.h0 + _disps(g_h, sd.h0_sigma_frac * sd.h0)
         lx_b = sd.lateral + _disps(g_lat, sd.lat_sigma)
         ly_b = _disps(g_ly, sd.lat_sigma)
 
-        pos_b = torch.stack([
-            lx_b.to(dev),
-            ly_b.to(dev),
-            (h0_b + com_a.detach().cpu()).to(dev),
-        ], dim=-1)
+        pos_b = torch.stack(
+            [
+                lx_b.to(dev),
+                ly_b.to(dev),
+                (h0_b + com_a.detach().cpu()).to(dev),
+            ],
+            dim=-1,
+        )
 
         # ---- Velocity (world frame) ----
         vx_b = _disps(g_vx, sd.velxy_sigma)
@@ -378,11 +430,14 @@ class Falcon9Env:
         else:
             az_b = torch.zeros(n)
         # body-z axis in world frame
-        bz_w = torch.stack([
-            torch.sin(tilt_b) * torch.cos(az_b),
-            torch.sin(tilt_b) * torch.sin(az_b),
-            torch.cos(tilt_b),
-        ], dim=-1).to(dev)
+        bz_w = torch.stack(
+            [
+                torch.sin(tilt_b) * torch.cos(az_b),
+                torch.sin(tilt_b) * torch.sin(az_b),
+                torch.cos(tilt_b),
+            ],
+            dim=-1,
+        ).to(dev)
         # Convert (body_z_world) → unit quaternion from world +z to body_z_world
         q_b = torch.empty(n, 4, device=dev)
         q_b[:, 0] = 1.0 + bz_w[:, 2]
@@ -392,35 +447,46 @@ class Falcon9Env:
         q_b = torch.nn.functional.normalize(q_b, dim=-1)
 
         # ---- Angular velocity ----
-        ang_b = torch.stack([
-            _disps(g_wx, sd.angvel_sigma),
-            _disps(g_wy, sd.angvel_sigma),
-            _disps(g_wz, sd.angvel_sigma),
-        ], dim=-1).to(dev)
+        ang_b = torch.stack(
+            [
+                _disps(g_wx, sd.angvel_sigma),
+                _disps(g_wy, sd.angvel_sigma),
+                _disps(g_wz, sd.angvel_sigma),
+            ],
+            dim=-1,
+        ).to(dev)
 
         # ---- Apply explicit overrides (no dispersion applied to overridden channels) ----
         def _override(field, val):
-            if val is None: return field
+            if val is None:
+                return field
             t = torch.as_tensor(val, dtype=torch.float32, device=dev)
             if t.ndim == 1 and t.shape[0] == field.shape[-1]:
                 return t.unsqueeze(0).repeat(n, 1)
             return t.to(dev).float()
+
         pos_b = _override(pos_b, pos)
         q_b = _override(q_b, quat)
         vel_b = _override(vel_b, vel)
         ang_b = _override(ang_b, ang)
         if m_lox is not None:
-            if isinstance(m_lox, (int, float)): m_lox_b = torch.full((n,), float(m_lox))
-            else: m_lox_b = torch.as_tensor(m_lox, dtype=torch.float32)
+            if isinstance(m_lox, (int, float)):
+                m_lox_b = torch.full((n,), float(m_lox))
+            else:
+                m_lox_b = torch.as_tensor(m_lox, dtype=torch.float32)
         if m_rp1 is not None:
-            if isinstance(m_rp1, (int, float)): m_rp1_b = torch.full((n,), float(m_rp1))
-            else: m_rp1_b = torch.as_tensor(m_rp1, dtype=torch.float32)
-        m_lox_b = m_lox_b.to(dev); m_rp1_b = m_rp1_b.to(dev)
+            if isinstance(m_rp1, (int, float)):
+                m_rp1_b = torch.full((n,), float(m_rp1))
+            else:
+                m_rp1_b = torch.as_tensor(m_rp1, dtype=torch.float32)
+        m_lox_b = m_lox_b.to(dev)
+        m_rp1_b = m_rp1_b.to(dev)
 
         # ---- Wind (power-law profile, mean reference at deck height) ----
         if wind_world is not None:
             w_b = torch.as_tensor(wind_world, dtype=torch.float32, device=dev)
-            if w_b.ndim == 1: w_b = w_b.unsqueeze(0).repeat(n, 1)
+            if w_b.ndim == 1:
+                w_b = w_b.unsqueeze(0).repeat(n, 1)
             self.wind_world[idx] = w_b
         else:
             self.wind_world[idx] = 0.0
@@ -431,16 +497,21 @@ class Falcon9Env:
         self.vehicle.set_dofs_velocity(torch.cat([vel_b, ang_b], dim=-1), envs_idx=idx)
 
         # ---- Engine / actuator reset (mirrors legacy reset defaults) ----
-        eng = self.engine; act = self.act
-        ep = self.p.engine; pp_ = self.p.propellant
+        eng = self.engine
+        act = self.act
+        ep = self.p.engine
+        pp_ = self.p.propellant
         eng.throttle_act[idx] = ep.ENG_THR_MIN
         eng.throttle_cmd[idx] = ep.ENG_THR_MIN
         eng.eng_on[idx] = False
         eng.ignition_timer[idx] = -1.0
         eng.relights_used[idx] = 0
-        eng.g0_cmd[idx] = 0.0; eng.g1_cmd[idx] = 0.0
-        eng.g0_act[idx] = 0.0; eng.g1_act[idx] = 0.0
-        eng.gr0[idx] = 0.0; eng.gr1[idx] = 0.0
+        eng.g0_cmd[idx] = 0.0
+        eng.g1_cmd[idx] = 0.0
+        eng.g0_act[idx] = 0.0
+        eng.g1_act[idx] = 0.0
+        eng.gr0[idx] = 0.0
+        eng.gr1[idx] = 0.0
         eng.m_lox[idx] = m_lox_b
         eng.m_rp1[idx] = m_rp1_b
         eng.m_rcs_n2[idx] = pp_.RCS_N2
@@ -470,15 +541,27 @@ class Falcon9Env:
     # ------------------------------------------------------------------
     # Reset (legacy passthrough — forwards to reset_from_scenario)
     # ------------------------------------------------------------------
-    def reset(self,
-              env_ids: Optional[list[int]] = None,
-              pos=None, quat=None, vel=None, ang=None,
-              m_lox=None, m_rp1=None, wind_world=None):
+    def reset(
+        self,
+        env_ids: Optional[list[int]] = None,
+        pos=None,
+        quat=None,
+        vel=None,
+        ang=None,
+        m_lox=None,
+        m_rp1=None,
+        wind_world=None,
+    ):
         """Legacy reset API — forwards to reset_from_scenario with overrides."""
         self.reset_from_scenario(
             env_ids=env_ids,
-            pos=pos, quat=quat, vel=vel, ang=ang,
-            m_lox=m_lox, m_rp1=m_rp1, wind_world=wind_world,
+            pos=pos,
+            quat=quat,
+            vel=vel,
+            ang=ang,
+            m_lox=m_lox,
+            m_rp1=m_rp1,
+            wind_world=wind_world,
         )
 
     # ------------------------------------------------------------------
@@ -517,19 +600,19 @@ class Falcon9Env:
     # Substep (single dt=0.002 s, 500 Hz)
     # ------------------------------------------------------------------
     def _substep(self):
-        p = self.p; ep = p.engine
-        eng = self.engine; act = self.act
+        p = self.p
+        ep = p.engine
+        eng = self.engine
+        act = self.act
 
         # Genesis state (world frame)
-        pos = self.vehicle.get_pos()          # (N, 3)
-        quat = self.vehicle.get_quat()        # (N, 4) wxyz
-        vel = self.vehicle.get_vel()          # (N, 3)
-        ang = self.vehicle.get_ang()          # (N, 3)
+        pos = self.vehicle.get_pos()  # (N, 3)
+        quat = self.vehicle.get_quat()  # (N, 4) wxyz
+        vel = self.vehicle.get_vel()  # (N, 3)
+        ang = self.vehicle.get_ang()  # (N, 3)
 
         # --- 1. Ignition ramp (smoothstep TEA-TEB flash) ---
-        eng.ignition_timer, ramp = ignition_ramp_tick(
-            eng.ignition_timer, eng.eng_on, self.dt, p
-        )
+        eng.ignition_timer, ramp = ignition_ramp_tick(eng.ignition_timer, eng.eng_on, self.dt, p)
 
         # --- 2. Throttle dynamics (first-order lag + shutdown decay) ---
         thr_err = eng.throttle_cmd - eng.throttle_act
@@ -539,15 +622,19 @@ class Falcon9Env:
         eng.throttle_act = torch.where(
             eng.eng_on,
             eng.throttle_act,
-            eng.throttle_act * torch.exp(
-                torch.tensor(-self.dt / ep.ENG_SHUT_TAU, device=self.device)
-            ),
+            eng.throttle_act
+            * torch.exp(torch.tensor(-self.dt / ep.ENG_SHUT_TAU, device=self.device)),
         )
 
         # --- 3. Gimbal second-order PD (servo tracks the commanded deflection) ---
         gacc0, gacc1 = gimbal_deriv_batch(
-            eng.g0_act, eng.g1_act, eng.gr0, eng.gr1,
-            eng.g0_cmd, eng.g1_cmd, p,
+            eng.g0_act,
+            eng.g1_act,
+            eng.gr0,
+            eng.gr1,
+            eng.g0_cmd,
+            eng.g1_cmd,
+            p,
         )
         eng.gr0 = eng.gr0 + gacc0 * self.dt
         eng.gr1 = eng.gr1 + gacc1 * self.dt
@@ -571,7 +658,8 @@ class Falcon9Env:
 
         # RCS command is zero once the N2 bottles run dry
         rcs_cmd = torch.where(
-            (eng.m_rcs_n2 > 0.0).unsqueeze(-1), act.tau_rcs_body_cmd,
+            (eng.m_rcs_n2 > 0.0).unsqueeze(-1),
+            act.tau_rcs_body_cmd,
             torch.zeros_like(act.tau_rcs_body_cmd),
         )
 
@@ -583,14 +671,24 @@ class Falcon9Env:
 
         # --- 7. Assemble forces/torques (body frame, torques about the CoM) ---
         ft = assemble_forces_torques(
-            eng.m_lox, eng.m_rp1,
-            pos, quat, vel, ang,
-            eng.throttle_act, eng.throttle_cmd,
-            ramp, eng.eng_on,
-            eng.g0_act, eng.g1_act,
-            act.fins_deployed, act.fin_deflection,
-            rcs_cmd, self.wind_world,
-            dt=self.dt, p=p,
+            eng.m_lox,
+            eng.m_rp1,
+            pos,
+            quat,
+            vel,
+            ang,
+            eng.throttle_act,
+            eng.throttle_cmd,
+            ramp,
+            eng.eng_on,
+            eng.g0_act,
+            eng.g1_act,
+            act.fins_deployed,
+            act.fin_deflection,
+            rcs_cmd,
+            self.wind_world,
+            dt=self.dt,
+            p=p,
         )
 
         # --- 8. RCS propellant depletion ---
@@ -600,9 +698,7 @@ class Falcon9Env:
         # Genesis integrates a closed-system rigid body, so the -İ·ω term from
         # fuel leaving the vehicle must be injected explicitly. It is a pure
         # couple, hence frame-independent: -İ·ω in body axes.
-        _, _, I_tr, I_ax, Idot_tr_coeff, Idot_ax_coeff = mass_props_batch(
-            eng.m_lox, eng.m_rp1, p
-        )
+        _, _, I_tr, I_ax, Idot_tr_coeff, Idot_ax_coeff = mass_props_batch(eng.m_lox, eng.m_rp1, p)
         w_body = rotate_world_to_body(quat, ang)
         Idot_tr = Idot_tr_coeff[0] * (-mdot_lox) + Idot_tr_coeff[1] * (-mdot_rp1)
         Idot_ax = Idot_ax_coeff * (-mdot_total)
@@ -618,7 +714,8 @@ class Falcon9Env:
             force=F_total_world,
             torque=T_total_body,
             links_idx_local=0,
-            ref=gs.link_ref_frame.link_COM, local=True,
+            ref=gs.link_ref_frame.link_COM,
+            local=True,
         )
 
         # --- 11. Push updated composite mass / inertia / CoM ---
@@ -630,13 +727,14 @@ class Falcon9Env:
     # ------------------------------------------------------------------
     # Step (one policy tick = 10 substeps @ 500 Hz → 50 Hz)
     # ------------------------------------------------------------------
-    def step(self,
-             throttle_cmd: Optional[Tensor] = None,
-             eng_on: Optional[Tensor] = None,
-             gimbal_cmd: Optional[Tensor] = None,
-             rcs_torque_cmd: Optional[Tensor] = None,
-             fin_cmd: Optional[Tensor] = None,
-             ) -> dict:
+    def step(
+        self,
+        throttle_cmd: Optional[Tensor] = None,
+        eng_on: Optional[Tensor] = None,
+        gimbal_cmd: Optional[Tensor] = None,
+        rcs_torque_cmd: Optional[Tensor] = None,
+        fin_cmd: Optional[Tensor] = None,
+    ) -> dict:
         """Run n_sub physics substeps. Return state + reward + done flags."""
         N = self.N
         dev = self.device
@@ -677,22 +775,23 @@ class Falcon9Env:
 
         # --- 10 substeps ---
         for _ in range(self.n_sub):
-            vel_before = self.vehicle.get_vel()[:, 2].clone()   # PRE-substep vz (world)
+            vel_before = self.vehicle.get_vel()[:, 2].clone()  # PRE-substep vz (world)
             self._substep()
 
             # Per-substep contact check (any env, while active)
             contacts = self.vehicle.get_links_net_contact_force()  # (N, N_links, 3)
-            fc_norm = contacts.norm(dim=-1).squeeze(-1)          # (N,) after squeeze
-            sub_contact = fc_norm > 1e6                           # significant contact
+            fc_norm = contacts.norm(dim=-1).squeeze(-1)  # (N,) after squeeze
+            sub_contact = fc_norm > 1e6  # significant contact
             # Use PRE-substep velocity (before contact impulse) — AUDIT-5 fix
             vz_now = vel_before
 
             first_touch_episode = sub_contact & ~self.touch_any & active  # FIRST EVER in episode
             self.contact_vz_first = torch.where(
-                sub_contact & ~self.contact_pad,   # first within THIS policy step
-                vz_now, self.contact_vz_first,
+                sub_contact & ~self.contact_pad,  # first within THIS policy step
+                vz_now,
+                self.contact_vz_first,
             )
-            self.contact_pad |= sub_contact & active                     # ANY contact this step
+            self.contact_pad |= sub_contact & active  # ANY contact this step
             self.touch_vz_first = torch.where(first_touch_episode, vz_now, self.touch_vz_first)
             self.touch_any |= sub_contact & active
 
@@ -707,27 +806,31 @@ class Falcon9Env:
 
         # --- Termination logic ---
         # Bounds
-        bounds = (pos_e[:, :2].norm(dim=-1) > self.thr['bounds_xy']) | \
-                 (pos_e[:, 2] > self.thr['bounds_z_high'])          # z high = escaping
+        bounds = (pos_e[:, :2].norm(dim=-1) > self.thr["bounds_xy"]) | (
+            pos_e[:, 2] > self.thr["bounds_z_high"]
+        )  # z high = escaping
         bounds &= active
 
         # Below ground (fatal)
-        below_ground = (pos_e[:, 2] < self.thr['bounds_z_low']) & active
+        below_ground = (pos_e[:, 2] < self.thr["bounds_z_low"]) & active
 
         # Pad contact thresholds — use FIRST impact velocity for fatal check
         body_speed = vel_e.norm(dim=-1)
         touch_active = self.touch_any & active
         # Impact velocity at first contact EVER in this episode (pre-contact)
-        impact_speed = self.touch_vz_first.abs()   # world-frame descent speed at impact
+        impact_speed = self.touch_vz_first.abs()  # world-frame descent speed at impact
         fatal_pad = touch_active & (
-            (impact_speed > self.thr['fatal_pad_speed']) |
-            (w_body.norm(dim=-1) > self.thr['fatal_pad_spin'])
+            (impact_speed > self.thr["fatal_pad_speed"])
+            | (w_body.norm(dim=-1) > self.thr["fatal_pad_spin"])
         )
         # Success: post-contact settled state (body speed low, spin low, tilt low)
-        success_pad = touch_active & ~fatal_pad & \
-                      (body_speed < self.thr['success_vz_max']) & \
-                      (w_body.norm(dim=-1) < self.thr['success_spin_max']) & \
-                      (_body_tilt_from_quat(quat_e) < self.thr['success_tilt_max'])
+        success_pad = (
+            touch_active
+            & ~fatal_pad
+            & (body_speed < self.thr["success_vz_max"])
+            & (w_body.norm(dim=-1) < self.thr["success_spin_max"])
+            & (_body_tilt_from_quat(quat_e) < self.thr["success_tilt_max"])
+        )
 
         self.complete |= success_pad & active
 
@@ -741,48 +844,50 @@ class Falcon9Env:
         # --- Reward ---
         r_total, r_comps = falcon9_shaping(
             self.reward_cfg,
-            pos_s, pos_e,
-            vel_e[:, 2], vel_s[:, 2],
-            quat_e, w_body,
+            pos_s,
+            pos_e,
+            vel_e[:, 2],
+            vel_s[:, 2],
+            quat_e,
+            w_body,
             self.contact_pad,
             self.contact_vz_first,
-            success_pad,                 # newly complete this step
+            success_pad,  # newly complete this step
         )
         self.reward = r_total
         self._last_reward_components = {k: v.detach().clone() for k, v in r_comps.items()}
 
         # --- Read state dict ---
         state = self._read_state()
-        state['reward'] = self.reward.detach().clone()
-        state['terminated'] = self.terminated.detach().clone()
-        state['truncated'] = self.truncated.detach().clone()
-        state['complete'] = self.complete.detach().clone()
-        state['touch_any'] = self.touch_any.detach().clone()
-        state['body_speed'] = body_speed.detach().clone()
-        state['count'] = self.count.detach().clone()
+        state["reward"] = self.reward.detach().clone()
+        state["terminated"] = self.terminated.detach().clone()
+        state["truncated"] = self.truncated.detach().clone()
+        state["complete"] = self.complete.detach().clone()
+        state["touch_any"] = self.touch_any.detach().clone()
+        state["body_speed"] = body_speed.detach().clone()
+        state["count"] = self.count.detach().clone()
         return state
 
     def _read_state(self) -> dict:
         return {
-            'pos_world':        self.vehicle.get_pos().detach().clone(),
-            'quat_wxyz_world':  self.vehicle.get_quat().detach().clone(),
-            'vel_world':        self.vehicle.get_vel().detach().clone(),
-            'ang_world':        self.vehicle.get_ang().detach().clone(),
-            'm_lox':            self.engine.m_lox.detach().clone(),
-            'm_rp1':            self.engine.m_rp1.detach().clone(),
-            'm_rcs_n2':         self.engine.m_rcs_n2.detach().clone(),
-            'throttle':         self.engine.throttle_act.detach().clone(),
-            'eng_on':           self.engine.eng_on.detach().clone(),
-            'gimbal':           torch.stack(
-                                    [self.engine.g0_act, self.engine.g1_act], dim=-1
-                                ).detach().clone(),
-            'gimbal_rate':      torch.stack(
-                                    [self.engine.gr0, self.engine.gr1], dim=-1
-                                ).detach().clone(),
-            'fins_deployed':    self.act.fins_deployed.detach().clone(),
-            'legs_deployed':    self.act.legs_deployed.detach().clone(),
-            'wind_world':       self.wind_world.detach().clone(),
+            "pos_world": self.vehicle.get_pos().detach().clone(),
+            "quat_wxyz_world": self.vehicle.get_quat().detach().clone(),
+            "vel_world": self.vehicle.get_vel().detach().clone(),
+            "ang_world": self.vehicle.get_ang().detach().clone(),
+            "m_lox": self.engine.m_lox.detach().clone(),
+            "m_rp1": self.engine.m_rp1.detach().clone(),
+            "m_rcs_n2": self.engine.m_rcs_n2.detach().clone(),
+            "throttle": self.engine.throttle_act.detach().clone(),
+            "eng_on": self.engine.eng_on.detach().clone(),
+            "gimbal": torch.stack([self.engine.g0_act, self.engine.g1_act], dim=-1)
+            .detach()
+            .clone(),
+            "gimbal_rate": torch.stack([self.engine.gr0, self.engine.gr1], dim=-1).detach().clone(),
+            "fins_deployed": self.act.fins_deployed.detach().clone(),
+            "legs_deployed": self.act.legs_deployed.detach().clone(),
+            "wind_world": self.wind_world.detach().clone(),
         }
 
     def close(self):
+        """Shut down the Genesis scene; no engine resources remain."""
         pass

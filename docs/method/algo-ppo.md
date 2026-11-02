@@ -10,8 +10,7 @@ env's 5-tuple step `(obs, rew, terminated, truncated, extras)` into the 4-tuple 
 `dones = terminated | truncated`; time-out bootstrapping still flows through `extras['time_outs']`.
 Every per-task entry (`environments/**/train_*.py`) consumes the same configuration builder
 `build_cfg`, so a run differs from the shared baseline only in the variables that entry explicitly
-pins. The default policy/value network is the *flash-residual trunk* (Section 3), an
-architecture-matched transplant of the FlashSAC network structure onto the PPO update path.
+pins. The default policy/value network is the rsl-rl `MLPModel` (Section 3).
 
 ## 2. Objective and update rule
 
@@ -50,21 +49,15 @@ parameters, with per-module gradient-norm clipping at $1.0$ (rsl-rl default `max
 `build_cfg` fixes `schedule='fixed'` (the KL-adaptive rsl-rl schedule is available but disabled by
 default); `desired_kl=0.01` is retained in the config for reproducibility.
 
-## 3. Network architecture (the FlashSAC trunk was removed)
+## 3. Network architecture
 
 Both actor and critic are the rsl-rl `MLPModel`: two hidden layers of 128 units with tanh
-activation, a linear head, and running-statistics `EmpiricalNormalization` on the input. The
-`FlashResMLPModel` arm — FlashSAC's residual `UnitLinear` trunk with RMSNorm and unit-weight
-renormalization, selected by `arch='flash_residual'` in `algorithms/ppo/ppo_flashnet.py` — was
-removed on 2026-10-28 by user decision: under the frozen 1024-env single-seed protocol its docking
-arm scored 0.0% on the held-out evaluation where the MLP arm reached 85.0%, and its rocket arm
-0.0%. `build_cfg` therefore has no `arch` / `trunk_hidden` / `critic_trunk_hidden` knob, and
-`algorithms/ppo/ppo_flashnet.py` no longer exists.
+activation, a linear head, and running-statistics `EmpiricalNormalization` on the input.
 
 ## 4. Shared learning-rate schedule
 
-For cross-algorithm A/B arms, `run_training(lr_cosine=True)` applies the identical warmup-cosine
-schedule that FlashSAC's `_set_lr` uses (`algorithms/flashsac/flash_sac.py:_warmup_cosine_decay`):
+`run_training(lr_cosine=True)` applies a warmup-cosine schedule
+(`_warmup_cosine_decay` in `algorithms/train_utils.py`):
 \begin{equation}
 \eta(s) = \eta_{\mathrm{init}} + (\eta_{\mathrm{peak}}-\eta_{\mathrm{init}})\,\frac{s}{w},\quad s<w;\qquad
 \eta(s) = \eta_{\mathrm{end}} + \tfrac12(\eta_{\mathrm{peak}}-\eta_{\mathrm{end}})
@@ -77,8 +70,7 @@ standard $U=1000$ the warmup segment is a single update at the peak, so the sche
 pure cosine decay). Since `schedule='fixed'` never reapplies `alg.learning_rate`, the harness
 writes the optimizer's `param_groups` directly, once per chunk of $\max(1,\lfloor U/100\rfloor)$
 updates, evaluating the schedule at the chunk's start — including before the first chunk, so no
-update ever runs at a learning rate the schedule never prescribes. Arms under this schedule are
-reported as "same formula, chunked (PPO) vs per-update (FlashSAC) application".
+update ever runs at a learning rate the schedule never prescribes.
 
 ## 5. Fair-comparison protocol
 
@@ -105,7 +97,7 @@ efficiency) and equal wall clock (throughput) per the frozen evaluation protocol
 | learning rate / schedule / desired KL | $10^{-3}$ / `'fixed'` / 0.01 |
 | entropy coef $c_e$ / value coef $c_v$ / init $\sigma_0$ | 0.001 / 1.0 / 0.5 (log-std) |
 | grad-norm clip / value clipping | 1.0 (rsl-rl default) / enabled |
-| trunk | 2 blocks, expansion 4, actor $d{=}128$ / critic $d{=}256$, `use_bn=False` |
+| network | 2x128 tanh MLP, running-stats `EmpiricalNormalization` |
 | cosine schedule | peak $=$ lr, floor $1.5\times10^{-4}$, $w=\max(1,\lfloor10^{-6}U\rfloor)$, chunk $\lfloor U/100\rfloor$ |
 | replicas / seed / updates (default budget) | 1024 / 7 / 1000 |
 
@@ -117,5 +109,3 @@ efficiency) and equal wall clock (throughput) per the frozen evaluation protocol
   Continuous Control Using Generalized Advantage Estimation," ICLR — GAE.
 - Rudin, N., Hoeller, D., Reist, P., & Hutter, M. (2022), "Learning to Walk in Minutes Using
   Massively Parallel Deep Reinforcement Learning," CoRL — the rsl-rl implementation used here.
-- Kim et al. (2026), "FlashSAC," arXiv:2604.04539 — source of the transplanted trunk architecture
-  and its norm-control semantics.

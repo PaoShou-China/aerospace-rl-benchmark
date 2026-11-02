@@ -26,8 +26,7 @@ disagrees with the implementation, these documents follow the code.
 
 | Document | Content |
 |---|---|
-| [algo-ppo.md](algo-ppo.md) | rsl-rl PPO over the 2x128 tanh MLP (the FlashSAC-trunk option was removed 2026-10-28), shared warmup-cosine LR schedule, fair-comparison protocol |
-| [algo-flashsac.md](algo-flashsac.md) | FlashSAC (arXiv:2604.04539) port: norm-controlled off-policy SAC on the batched GPU protocol |
+| [algo-ppo.md](algo-ppo.md) | rsl-rl PPO over the 2x128 tanh MLP, shared warmup-cosine LR schedule, fair-comparison protocol |
 | [algo-bc-warmstart.md](algo-bc-warmstart.md) | Behavior-cloning warm start from the classical baselines (PPO-only), data contract and fitting procedure |
 
 ## Classical (non-learned) baselines

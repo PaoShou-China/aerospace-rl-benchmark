@@ -46,6 +46,7 @@ at the reference thrust but guard the metric against hyperparameter
 changes. Masked (inactive) replicas are frozen and consume no random
 numbers.
 """
+
 import math
 import torch
 from tensordict import TensorDict
@@ -53,244 +54,376 @@ from environments.common.plant import TensorRandom
 from algorithms.baselines.baselines import TransferGaussBaseline
 
 
-class LowThrustTransferEnv:
+from environments.common.residual import ResidualActionMixin
+from environments.common.base_env import BaseEnv
+from environments.common.domain_randomization import (
+    apply_static_perturbation,
+    apply_domain_randomization,
+    resolve_domain_randomize,
+)
+
+
+class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
+    """Low-thrust perigee-raising orbital transfer RL environment.
+
+    Task objective: raise the pericenter radius of an initial a=10000 km,
+    e=0.15, i=pi/3 medium-Earth orbit with a 10 mN Hall thruster (f_max=0.01 N,
+    Isp=4000 s) over 166 control steps of 5 minutes, while keeping apocenter
+    drift and propellant use low. The agent observes the raw 8-dim state:
+    elapsed time, world position (3), world velocity (3), and remaining mass
+    (1). Actions are 3-D normalized thrust direction in [-1, 1]^3 (physical
+    units after normalization by f_max). Dynamics are two-body point-mass
+    gravity (WGS84 mu) integrated with fixed-step RK4 (10 s substeps per
+    300 s control step). The reward is a telescoping potential decomposition
+    of the reference terminal objective; fixed-horizon so the 166-step limit
+    is a true terminal. Domain randomization covers f_max (0.95, 1.05), Isp
+    (0.97, 1.03), and mass0 (0.98, 1.02).
+    """
     # conventional controller: Gauss planetary-equation tangential-thrust perigee
     # raising (baselines.py; greedy coast/burn decision on the policy obs)
-    conventional_controller=TransferGaussBaseline
+    conventional_controller = TransferGaussBaseline
+    PERTURBABLE_PARAMS = {"f_max": 1.0, "isp": 1.0, "mass0": 1.0}
+    # Literature: electric propulsion (Hall/ion thruster) characterization.
+    # NASA 600W Hall-thruster long-duration test reports Isp standard
+    # deviation <1%; H10 Hall thruster measured Isp uncertainty +/-1.4-2.3%;
+    # Phase Four Valkyrie Xe Isp uncertainty +/-42 s (~+/-2.8% at 1500 s).
+    # In-flight thrust variation (plume divergence, facility effects) is
+    # larger than thrust-stand uncertainty: +/-5%.  Spacecraft dry mass is
+    # known from pre-launch weighing to +/-1-3%.  Isp=4000 s, f_max=0.01 N,
+    # mass0=100 kg are typical of a small Hall-thruster transfer vehicle.
+    DEFAULT_DOMAIN_RANDOMIZE = {
+        "f_max": (0.95, 1.05),
+        "isp": (0.97, 1.03),
+        "mass0": (0.98, 1.02),
+    }
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7):
-        if num_envs<1:raise ValueError('n must be positive')
-        if backend not in ('cpu','gpu'):raise ValueError(backend)
-        self.num_envs=num_envs
-        self.task_cfg={'vehicle':'transfer','num_envs':num_envs,'backend':backend,
-                       'implementation':'fully_tensorized',
-                       'task_defaults':'gym-satellite-trajectory PerigeeRaisingEnv (arXiv:2211.08272, IEEE)'}
+    def __init__(self, num_envs=64, backend="cpu", seed=7, residual=False,
+                 param_mismatch=None, domain_randomize=None):
+        """Initialize the LowThrustTransfer environment.
+
+        Set two-body constants, Keplerian initial orbit, thrust/mass/ISP,
+        RK4 substep timing, and allocate buffers (r, v, m, reward, potential,
+        domain-randomization counters). Finalizes with a reset().
+        """
+        if num_envs < 1:
+            raise ValueError("n must be positive")
+        if backend not in ("cpu", "gpu"):
+            raise ValueError(backend)
+        self.num_envs = num_envs
+        self.task_cfg = {
+            "vehicle": "transfer",
+            "num_envs": num_envs,
+            "backend": backend,
+            "implementation": "fully_tensorized",
+            "task_defaults": "gym-satellite-trajectory PerigeeRaisingEnv (arXiv:2211.08272, IEEE)",
+        }
         # Resolve the concrete device (with index) so action-device checks
         # compare equal against tensors created on the default device.
-        self.device=str(torch.empty(0,device='cuda' if backend=='gpu' else 'cpu').device)
-        d=self.device
+        self.device = str(torch.empty(0, device="cuda" if backend == "gpu" else "cpu").device)
+        d = self.device
         # Reference-model constants (PerigeeRaisingEnv defaults, Table I).
-        self.mu=3.986004418e14   # WGS84_EARTH_MU [m^3/s^2]
-        self.f_max=0.01          # thruster-pair force [N]
-        self.isp=4000.           # specific impulse [s]
-        self.g0=9.80665          # standard gravity [m/s^2]
-        self.mass0=100.          # initial mass [kg]
-        self.sma0=1.0e7            # initial semi-major axis [m]
+        self.mu = 3.986004418e14  # WGS84_EARTH_MU [m^3/s^2]
+        self.f_max = 0.01  # thruster-pair force [N]
+        self.isp = 4000.0  # specific impulse [s]
+        self.g0 = 9.80665  # standard gravity [m/s^2]
+        self.mass0 = 100.0  # initial mass [kg]
+        self.sma0 = 1.0e7  # initial semi-major axis [m]
         # 2026-10-24: e0 raised 0.1 -> 0.15 (baseline sat at 100% success);
         # rp0 = 8.5e6 m, ra0 = 1.15e7 m. ra_ref/rp_ref/vel_ref below recompute.
-        self.ecc0=0.15
-        self.inc0=math.pi/3
-        self.raan0=2*math.pi/3
-        self.argp0=4*math.pi/3
-        self.dt=300.               # control step [s]
-        self.substeps=30           # 10 s RK4 substeps per control step
-        self.max_steps=166         # ~5 revolutions
-        self.max_episode_length=self.max_steps+2
-        self.num_actions=3
-        self.clip_actions=1.
+        self.ecc0 = 0.15
+        self.inc0 = math.pi / 3
+        self.raan0 = 2 * math.pi / 3
+        self.argp0 = 4 * math.pi / 3
+        self.dt = 300.0  # control step [s]
+        self.substeps = 30  # 10 s RK4 substeps per control step
+        self.max_steps = 166  # ~5 revolutions
+        self.max_episode_length = self.max_steps + 2
+        self.num_actions = 3
+        self.clip_actions = 1.0
+        # physical actuator bounds: normalized thrust direction; step() uses the
+        # policy value directly (no scaling), so physical == policy space.
+        self.action_low = -torch.ones(self.num_actions, device=d, dtype=torch.float64)
+        self.action_high = torch.ones(self.num_actions, device=d, dtype=torch.float64)
         # Reference observation_space bounds (declared only; values are
         # returned raw): [dt*max_steps, ra, ra, ra, vmax, vmax, vmax, m0]*1.1.
-        self.ra_ref=self.sma0*(1+self.ecc0)
-        self.rp_ref=self.sma0*(1-self.ecc0)
-        self.vel_ref=math.sqrt(self.mu*(2/self.rp_ref-1/self.sma0))
+        self.ra_ref = self.sma0 * (1 + self.ecc0)
+        self.rp_ref = self.sma0 * (1 - self.ecc0)
+        self.vel_ref = math.sqrt(self.mu * (2 / self.rp_ref - 1 / self.sma0))
 
         # initialize buffers
-        self.action=torch.zeros((num_envs,self.num_actions),device=d,dtype=torch.float64)
-        self.r=torch.zeros((num_envs,3),device=d,dtype=torch.float64)
-        self.v=torch.zeros_like(self.r)
-        self.m=torch.full((num_envs,),self.mass0,device=d,dtype=torch.float64)
-        self.ra0=torch.zeros(num_envs,device=d,dtype=torch.float64)
-        self.rp0=torch.zeros_like(self.ra0)
-        self._phi=torch.zeros(num_envs,device=d,dtype=torch.float64)  # PBRS potential at the current state
-        self.reward=torch.zeros(num_envs,device=d,dtype=torch.float64)
-        self.terminal_reward=torch.zeros(num_envs,device=d,dtype=torch.float64)  # terminal R, metrics only
-        self.count=torch.zeros(num_envs,device=d,dtype=torch.long)
-        self.terminated=torch.zeros(num_envs,device=d,dtype=torch.bool)
-        self.truncated=self.terminated.clone()
-        self.complete=self.terminated.clone()
-        self._observation=None
-        self.obs_buf=None
-        self.rew_buf=torch.zeros(num_envs,device=d,dtype=torch.float32)
-        self.reset_buf=torch.zeros(num_envs,device=d,dtype=torch.bool)
-        self.episode_length_buf=torch.zeros(num_envs,device=d,dtype=torch.long)
-        self.returns=torch.zeros(num_envs,device=d,dtype=torch.float64)
-        self.completed_returns=torch.zeros_like(self.returns)
-        self.completed_episodes=torch.zeros_like(self.episode_length_buf)
-        self.completed_successes=torch.zeros_like(self.episode_length_buf)
-        self.completed_metrics={'perigee_raise_km':torch.zeros_like(self.returns),
-                                'apo_drift_km':torch.zeros_like(self.returns),
-                                'propellant_kg':torch.zeros_like(self.returns),
-                                'terminal_reward':torch.zeros_like(self.returns)}
+        self.action = torch.zeros((num_envs, self.num_actions), device=d, dtype=torch.float64)
+        self.r = torch.zeros((num_envs, 3), device=d, dtype=torch.float64)
+        self.v = torch.zeros_like(self.r)
+        self.m = torch.full((num_envs,), self.mass0, device=d, dtype=torch.float64)
+        self.ra0 = torch.zeros(num_envs, device=d, dtype=torch.float64)
+        self.rp0 = torch.zeros_like(self.ra0)
+        self._phi = torch.zeros(
+            num_envs, device=d, dtype=torch.float64
+        )  # PBRS potential at the current state
+        self.reward = torch.zeros(num_envs, device=d, dtype=torch.float64)
+        self.terminal_reward = torch.zeros(
+            num_envs, device=d, dtype=torch.float64
+        )  # terminal R, metrics only
+        self.count = torch.zeros(num_envs, device=d, dtype=torch.long)
+        self.terminated = torch.zeros(num_envs, device=d, dtype=torch.bool)
+        self.truncated = self.terminated.clone()
+        self.complete = self.terminated.clone()
+        self._observation = None
+        self.obs_buf = None
+        self.rew_buf = torch.zeros(num_envs, device=d, dtype=torch.float32)
+        self.reset_buf = torch.zeros(num_envs, device=d, dtype=torch.bool)
+        self.episode_length_buf = torch.zeros(num_envs, device=d, dtype=torch.long)
+        self.returns = torch.zeros(num_envs, device=d, dtype=torch.float64)
+        self.completed_returns = torch.zeros_like(self.returns)
+        self.completed_episodes = torch.zeros_like(self.episode_length_buf)
+        self.completed_successes = torch.zeros_like(self.episode_length_buf)
+        self.completed_metrics = {
+            "perigee_raise_km": torch.zeros_like(self.returns),
+            "apo_drift_km": torch.zeros_like(self.returns),
+            "propellant_kg": torch.zeros_like(self.returns),
+            "terminal_reward": torch.zeros_like(self.returns),
+        }
 
-        self.extras=dict()
-        self.cfg=dict(self.task_cfg)
-        self.rng=TensorRandom(num_envs,d,seed)
+        self._seed = seed
+        self.extras = dict()
+        self.cfg = dict(self.task_cfg)
+        self.rng = TensorRandom(num_envs, d, seed)
+        self.controller_design = {
+            "f_max": self.f_max,
+            "isp": self.isp,
+            "mass0": self.mass0,
+            "mu": self.mu,
+            "g0": self.g0,
+            "dt": self.dt,
+        }
+        apply_static_perturbation(self, param_mismatch)
+        self._dr_counter = 0
+        self._domain_randomize = resolve_domain_randomize(
+            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        )
+        self.residual = residual
+        self._init_residual()
 
         self.reset()
 
-    def _kepler_to_cartesian(self,mean_anomaly):
+    def _kepler_to_cartesian(self, mean_anomaly):
         """Perifocal -> GCRF state for the fixed (a,e,i,raan,argp) and given M."""
-        e,a,mu=self.ecc0,self.sma0,self.mu
-        E=mean_anomaly.clone()
+        e, a, mu = self.ecc0, self.sma0, self.mu
+        E = mean_anomaly.clone()
         for _ in range(8):
-            E=E-(E-e*E.sin()-mean_anomaly)/(1-e*E.cos())
-        b=a*math.sqrt(1-e*e);n_a=math.sqrt(mu/a**3)
-        den=1-e*E.cos()
-        r_pf=torch.stack((a*(E.cos()-e),b*E.sin(),torch.zeros_like(E)),-1)
-        v_pf=torch.stack((-a*n_a*E.sin()/den,b*n_a*E.cos()/den,torch.zeros_like(E)),-1)
-        cO,sO=math.cos(self.raan0),math.sin(self.raan0)
-        ci,si=math.cos(self.inc0),math.sin(self.inc0)
-        cw,sw=math.cos(self.argp0),math.sin(self.argp0)
-        rot=torch.tensor([[cO*cw-sO*sw*ci,-cO*sw-sO*cw*ci,sO*si],
-                          [sO*cw+cO*sw*ci,-sO*sw+cO*cw*ci,-cO*si],
-                          [sw*si,cw*si,ci]],device=self.device,dtype=torch.float64)
-        return r_pf@rot.T,v_pf@rot.T
+            E = E - (E - e * E.sin() - mean_anomaly) / (1 - e * E.cos())
+        b = a * math.sqrt(1 - e * e)
+        n_a = math.sqrt(mu / a**3)
+        den = 1 - e * E.cos()
+        r_pf = torch.stack((a * (E.cos() - e), b * E.sin(), torch.zeros_like(E)), -1)
+        v_pf = torch.stack(
+            (-a * n_a * E.sin() / den, b * n_a * E.cos() / den, torch.zeros_like(E)), -1
+        )
+        cO, sO = math.cos(self.raan0), math.sin(self.raan0)
+        ci, si = math.cos(self.inc0), math.sin(self.inc0)
+        cw, sw = math.cos(self.argp0), math.sin(self.argp0)
+        rot = torch.tensor(
+            [
+                [cO * cw - sO * sw * ci, -cO * sw - sO * cw * ci, sO * si],
+                [sO * cw + cO * sw * ci, -sO * sw + cO * cw * ci, -cO * si],
+                [sw * si, cw * si, ci],
+            ],
+            device=self.device,
+            dtype=torch.float64,
+        )
+        return r_pf @ rot.T, v_pf @ rot.T
 
     @staticmethod
-    def _radii(r,v,mu):
+    def _radii(r, v, mu):
         """(ra, rp) from a Cartesian state: a(1+e), a(1-e)."""
-        rm=r.norm(dim=-1,keepdim=True)
-        a=1./(2./rm-(v*v).sum(-1,keepdim=True)/mu)
-        h=torch.linalg.cross(r,v,dim=-1)
-        e_vec=torch.linalg.cross(v,h,dim=-1)/mu-r/rm
-        e=e_vec.norm(dim=-1,keepdim=True)
-        return (a*(1+e)).squeeze(-1),(a*(1-e)).squeeze(-1)
+        rm = r.norm(dim=-1, keepdim=True)
+        a = 1.0 / (2.0 / rm - (v * v).sum(-1, keepdim=True) / mu)
+        h = torch.linalg.cross(r, v, dim=-1)
+        e_vec = torch.linalg.cross(v, h, dim=-1) / mu - r / rm
+        e = e_vec.norm(dim=-1, keepdim=True)
+        return (a * (1 + e)).squeeze(-1), (a * (1 - e)).squeeze(-1)
 
-    def _deriv(self,s,action):
+    def _deriv(self, s, action):
         """Point-mass gravity + constant thrust ODE for state [r,v,m]."""
-        r,v,m=s[:,:3],s[:,3:6],s[:,6]
-        d=torch.zeros_like(s)
-        d[:,:3]=v
-        d[:,3:6]=-self.mu*r/r.norm(dim=-1,keepdim=True)**3+self.f_max*action/m[:,None]
-        d[:,6]=-self.f_max*action.abs().sum(-1)/(self.isp*self.g0)
+        r, v, m = s[:, :3], s[:, 3:6], s[:, 6]
+        d = torch.zeros_like(s)
+        d[:, :3] = v
+        f_max = self.f_max if torch.is_tensor(self.f_max) else torch.as_tensor(self.f_max, device=s.device, dtype=s.dtype)
+        d[:, 3:6] = (
+            -self.mu * r / r.norm(dim=-1, keepdim=True) ** 3 + f_max.view(-1, 1) * action / m[:, None]
+        )
+        isp = self.isp if torch.is_tensor(self.isp) else torch.as_tensor(self.isp, device=s.device, dtype=s.dtype)
+        d[:, 6] = -f_max * action.abs().sum(-1) / (isp * self.g0)
         return d
 
-    def _integrate(self,action,mask):
+    def _integrate(self, action, mask):
         """RK4 the [r,v,m] state under constant thrust for one control step."""
-        s=torch.cat((self.r,self.v,self.m[:,None]),-1)
-        h=self.dt/self.substeps
+        s = torch.cat((self.r, self.v, self.m[:, None]), -1)
+        h = self.dt / self.substeps
         for _ in range(self.substeps):
-            k1=self._deriv(s,action)
-            k2=self._deriv(s+h*.5*k1,action)
-            k3=self._deriv(s+h*.5*k2,action)
-            k4=self._deriv(s+h*k3,action)
-            s=torch.where(mask[:,None],s+h/6*(k1+2*k2+2*k3+k4),s)
-        self.r.copy_(s[:,:3]);self.v.copy_(s[:,3:6]);self.m.copy_(s[:,6])
+            k1 = self._deriv(s, action)
+            k2 = self._deriv(s + h * 0.5 * k1, action)
+            k3 = self._deriv(s + h * 0.5 * k2, action)
+            k4 = self._deriv(s + h * k3, action)
+            s = torch.where(mask[:, None], s + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4), s)
+        self.r.copy_(s[:, :3])
+        self.v.copy_(s[:, 3:6])
+        self.m.copy_(s[:, 6])
 
-    def _observe(self,mask):
-        t=self.count.to(torch.float64)*self.dt
-        obs=torch.cat((t[:,None],self.r,self.v,self.m[:,None]),-1)
-        if self._observation is None:self._observation=obs.clone()
-        else:self._observation.copy_(torch.where(mask[:,None],obs,self._observation))
+    def _observe(self, mask):
+        """Refresh the internal observation buffer from elapsed time, r, v, m."""
+        t = self.count.to(torch.float64) * self.dt
+        obs = torch.cat((t[:, None], self.r, self.v, self.m[:, None]), -1)
+        if self._observation is None:
+            self._observation = obs.clone()
+        else:
+            self._observation.copy_(torch.where(mask[:, None], obs, self._observation))
 
     def _update_observation(self):
+        """Copy the float64 internal observation into the float32 obs_buf used downstream."""
         if self.obs_buf is None:
-            self.obs_buf=torch.zeros(self._observation.shape,device=self.device,dtype=torch.float32)
+            self.obs_buf = torch.zeros(
+                self._observation.shape, device=self.device, dtype=torch.float32
+            )
         self.obs_buf.copy_(self._observation)
 
     def get_observations(self):
-        return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
+        """Return the current observation packed in a TensorDict under 'policy'."""
+        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
 
-    def step(self,actions):
-        if actions.device!=torch.device(self.device):
-            raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        rates=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
+    def step(self, actions):
+        """Advance one policy step: integrate low-thrust RK4 dynamics.
+
+        Clamp normalized thrust direction, run the constant-thrust ODE over
+        the control step, evaluate the telescoping potential-based reward,
+        detect defensive violations (impact, escape, mass depletion), and
+        return (observations, reward, terminated, truncated, extras).
+        """
+        if actions.device != torch.device(self.device):
+            raise ValueError(
+                "Actions must already be on env.device; implicit host/device copies are disabled"
+            )
+        actions = self._residual_input(actions)
+        rates = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
         self.action.copy_(rates)
-        active=~(self.terminated|self.truncated)
-        self._integrate(rates,active)
-        self.count+=1
+        active = ~(self.terminated | self.truncated)
+        self._integrate(rates, active)
+        self.count += 1
         self._observe(active)
-        ra,rp=self._radii(self.r,self.v,self.mu)
+        ra, rp = self._radii(self.r, self.v, self.mu)
         # Potential-based telescoping reward. Phi equals the reference terminal
         # reward functional and is zero at every reset, so the per-step reward
         # F = Phi(s') - Phi(s) sums over an episode to exactly the terminal R
         # (gamma = 1.0, fixed horizon) while crediting each step immediately.
-        phi=1.e-4*(-(ra-self.ra0).abs()+(rp-self.rp0)+2.e5*(self.m-self.mass0))
-        dense=torch.where(active,phi-self._phi,self.reward)
+        phi = 1.0e-4 * (-(ra - self.ra0).abs() + (rp - self.rp0) + 2.0e5 * (self.m - self.mass0))
+        dense = torch.where(active, phi - self._phi, self.reward)
         # Defensive terminations (unreachable at the reference 10 mN thrust):
         # impact below the WGS84 equatorial radius, escape (non-positive
         # orbital energy -> negative semi-major axis), mass depletion.
-        violation=(rp<6.378137e6)|(ra<=0)|(self.m<=1.)
-        self.terminated|=violation&active
-        ok=active&~violation
-        timeout=self.count>=self.max_steps
-        grant=ok&timeout
+        violation = (rp < 6.378137e6) | (ra <= 0) | (self.m <= 1.0)
+        self.terminated |= violation & active
+        ok = active & ~violation
+        timeout = self.count >= self.max_steps
+        grant = ok & timeout
         self.reward.copy_(dense)
         # Terminal R is metrics-only now (success criterion + Episode logging):
         # the training reward already contains it via telescoping.
-        self.terminal_reward.copy_(torch.where(grant,phi,self.terminal_reward))
+        self.terminal_reward.copy_(torch.where(grant, phi, self.terminal_reward))
         # Task-level success: reference objective R > 0 at the final orbit.
         # (The reference reports is_success=True at any done, vacuous here.)
-        self.complete|=grant&(phi>0)
-        self.truncated|=grant
+        self.complete |= grant & (phi > 0)
+        self.truncated |= grant
         self._phi.copy_(phi)
 
-        self.reset_buf=self.terminated|self.truncated
+        self.reset_buf = self.terminated | self.truncated
         # update buffers
         self.rew_buf.copy_(self.reward)
-        self.episode_length_buf+=1
-        self.returns+=self.reward
-        self.completed_returns+=torch.where(self.reset_buf,self.returns,0.)
-        self.completed_episodes+=self.reset_buf.to(torch.long)
-        self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
-        done=self.reset_buf
+        self.episode_length_buf += 1
+        self.returns += self.reward
+        self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
+        self.completed_episodes += self.reset_buf.to(torch.long)
+        self.completed_successes += (self.reset_buf & self.complete).to(torch.long)
+        done = self.reset_buf
         # snapshot for the step return: reset_idx below clears terminated/truncated
-        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
-        n_done=done.sum().clamp_min(1)
-        drp_km=torch.where(done,(rp-self.rp0)*1e-3,0.)
-        dra_km=torch.where(done,(ra-self.ra0).abs()*1e-3,0.)
-        dm_kg=torch.where(done,self.mass0-self.m,0.)
-        self.completed_metrics['perigee_raise_km']+=drp_km
-        self.completed_metrics['apo_drift_km']+=dra_km
-        self.completed_metrics['propellant_kg']+=dm_kg
-        self.completed_metrics['terminal_reward']+=torch.where(done,self.terminal_reward,0.)
+        term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
+        n_done = done.sum().clamp_min(1)
+        drp_km = torch.where(done, (rp - self.rp0) * 1e-3, 0.0)
+        dra_km = torch.where(done, (ra - self.ra0).abs() * 1e-3, 0.0)
+        dm_kg = torch.where(done, self.mass0 - self.m, 0.0)
+        self.completed_metrics["perigee_raise_km"] += drp_km
+        self.completed_metrics["apo_drift_km"] += dra_km
+        self.completed_metrics["propellant_kg"] += dm_kg
+        self.completed_metrics["terminal_reward"] += torch.where(done, self.terminal_reward, 0.0)
 
         # Fixed-horizon task: the step limit is a true terminal, so the rsl_rl
         # gamma*V timeout bootstrap is disabled (all-False key kept for API
         # parity with the other environments).
-        self.extras['time_outs']=torch.zeros_like(self.truncated)
-        self.extras['terminal_observations']=TensorDict(
-            {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
+        self.extras["time_outs"] = torch.zeros_like(self.truncated)
+        self.extras["terminal_observations"] = TensorDict(
+            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
+        )
         if bool(done.any()):
-            self.extras['episode']={
-                'success_rate':(done&self.complete).to(torch.float64).sum()/n_done,
-                'perigee_raise_km':drp_km.sum()/n_done,
-                'apo_drift_km':dra_km.sum()/n_done,
-                'propellant_kg':dm_kg.sum()/n_done}
+            self.extras["episode"] = {
+                "success_rate": (done & self.complete).to(torch.float64).sum() / n_done,
+                "perigee_raise_km": drp_km.sum() / n_done,
+                "apo_drift_km": dra_km.sum() / n_done,
+                "propellant_kg": dm_kg.sum() / n_done,
+            }
         else:
-            self.extras.pop('episode',None)
+            self.extras.pop("episode", None)
 
         self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
+        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
 
-    def reset_idx(self,envs_idx):
+    def _apply_perturbation(self, name, scale):
+        """Scale f_max, isp or mass0; called by the DR helper."""
+        nom = self.controller_design[name]
+        if name == "f_max":
+            self.f_max = nom * scale
+        elif name == "isp":
+            self.isp = nom * scale
+        elif name == "mass0":
+            self.mass0 = nom * scale
+        else:
+            raise KeyError(name)
+
+    def reset_idx(self, envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
-        mask=envs_idx
-        mean_anomaly=(2*self.rng.uniform(1,mask)-1).reshape(-1)*math.pi
-        r0,v0=self._kepler_to_cartesian(mean_anomaly)
-        self.r.copy_(torch.where(mask[:,None],r0,self.r))
-        self.v.copy_(torch.where(mask[:,None],v0,self.v))
-        self.m.copy_(torch.where(mask,torch.full_like(self.m,self.mass0),self.m))
-        ra,rp=self._radii(self.r,self.v,self.mu)
-        self.ra0.copy_(torch.where(mask,ra,self.ra0))
-        self.rp0.copy_(torch.where(mask,rp,self.rp0))
+        mask = envs_idx
+        if self._domain_randomize:
+            self._dr_counter += 1
+            apply_domain_randomization(
+                self, self._domain_randomize, self._seed, self._dr_counter, mask
+            )
+        mean_anomaly = (2 * self.rng.uniform(1, mask) - 1).reshape(-1) * math.pi
+        r0, v0 = self._kepler_to_cartesian(mean_anomaly)
+        self.r.copy_(torch.where(mask[:, None], r0, self.r))
+        self.v.copy_(torch.where(mask[:, None], v0, self.v))
+        mass0 = self.mass0 if torch.is_tensor(self.mass0) else torch.full_like(self.m, self.mass0)
+        self.m.copy_(torch.where(mask, mass0, self.m))
+        ra, rp = self._radii(self.r, self.v, self.mu)
+        self.ra0.copy_(torch.where(mask, ra, self.ra0))
+        self.rp0.copy_(torch.where(mask, rp, self.rp0))
         # Phi is exactly zero at every fresh initial condition.
-        self._phi.copy_(torch.where(mask,0.,self._phi))
-        self.terminal_reward.masked_fill_(mask,0)
-        self.count.masked_fill_(mask,0)
-        self.terminated.masked_fill_(mask,False);self.truncated.masked_fill_(mask,False)
-        self.complete.masked_fill_(mask,False)
-        self.action.masked_fill_(mask[:,None],0)
-        self.reward.masked_fill_(mask,0)
+        self._phi.copy_(torch.where(mask, 0.0, self._phi))
+        self.terminal_reward.masked_fill_(mask, 0)
+        self.count.masked_fill_(mask, 0)
+        self.terminated.masked_fill_(mask, False)
+        self.truncated.masked_fill_(mask, False)
+        self.complete.masked_fill_(mask, False)
+        self.action.masked_fill_(mask[:, None], 0)
+        self.reward.masked_fill_(mask, 0)
         self._observe(mask)
-        self.episode_length_buf.masked_fill_(mask,0)
-        self.returns.masked_fill_(mask,0)
+        self.episode_length_buf.masked_fill_(mask, 0)
+        self.returns.masked_fill_(mask, 0)
+        self._residual_reset(mask)
 
     def reset(self):
-        mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)
+        """Reset every replica by delegating to reset_idx on an all-True mask."""
+        mask = torch.ones((self.num_envs,), device=self.device, dtype=torch.bool)
         self.reset_idx(mask)
-        self.reset_buf=mask.clone()
+        self.reset_buf = mask.clone()
         self._update_observation()
         return self.get_observations()
 

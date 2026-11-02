@@ -49,20 +49,22 @@ missile-6dof-env.md):
   lam 0.97, 10 learning epochs : rocket-entry values under the same
       long-horizon sparse-bonus structure (arXiv:2407.15083 alignment).
 """
+
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
 # Zero-init the final linear head of MLPModel so the initial policy is exactly
 # do-nothing (zero body-rate commands).  See train_rocket.py for the full
 # rationale; here do-nothing additionally rides the fire-control lead aim
 # (straight-line collision course).
-import torch.nn as nn
-from rsl_rl.models import MLPModel as _MLPModel
+import torch.nn as nn  # noqa: E402
+from rsl_rl.models import MLPModel as _MLPModel  # noqa: E402
 
 _mlp_init_orig = _MLPModel.__init__
+
 
 def _mlp_init_zero_last(self, *args, **kwargs):
     _mlp_init_orig(self, *args, **kwargs)
@@ -74,19 +76,20 @@ def _mlp_init_zero_last(self, *args, **kwargs):
         nn.init.zeros_(last.weight)
         nn.init.zeros_(last.bias)
 
+
 _MLPModel.__init__ = _mlp_init_zero_last
 
-from algorithms.train_utils import run_training
-from environments.missile import MissileInterceptEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.missile import MissileInterceptEnv  # noqa: E402
 
-TASK = 'missile'
+TASK = "missile"
 NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # fresh from-scratch run; True resumes results/missile checkpoint
-CLEAN = True             # wipe results/missile before this fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # fresh from-scratch run; True resumes results/missile checkpoint
+CLEAN = True  # wipe results/missile before this fresh run
+ALGORITHM = "ppo"
 # Dense guidance shaping variant (see env.py reward block / _zem docstring):
 #   'graded_terminal' velocity/LOS alignment over the whole flight (default)
 #   'align_gated'     same signal, only inside ZEM_GATE (800 m). Measured on
@@ -103,38 +106,53 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/fla
 #                     bonus and per-episode std 51.6 -> 25.9.
 # Everything else (PPO hyperparameters, seed, reward terminal grading) is held
 # fixed so the arms differ in exactly one shaping term.
-REWARD_VARIANT = 'terminal_gauss'
-ENV_KWARGS = {'reward_variant': REWARD_VARIANT}
-# BC warm start: OFF for vanilla PPO (enable by setting a dict here and passing
-# bc_warmstart=BC_WARMSTART below; 300 epochs at seed 7 previously reached
-# 0.62 greedy SR at d=0 -- but the fit is brittle under PPO updates).
-BC_WARMSTART = None
+REWARD_VARIANT = "terminal_gauss"
+ENV_KWARGS = {"reward_variant": REWARD_VARIANT}
+# BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
+# conventional controller (driven directly by the BC collector) before PPO. None = off.
+# (300 epochs at seed 7 previously reached 0.62 greedy SR at d=0 -- the fit can be
+# brittle under PPO updates, so keep the standard 100-epoch recipe.)
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
-    run_training(TASK, MissileInterceptEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, bc_warmstart=None,
-                 out_dir=_ROOT/'results'/f'missile_{REWARD_VARIANT}',
-                 env_kwargs=ENV_KWARGS,
-                 num_steps_per_env=64,
-                 lr_schedule='fixed', learning_rate=3e-4,
-                 # 2026-10-28, adjustment 2 of 2 (root-cause reward rebalance in
-                 # env.py: KILL_BONUS 50->100, K_ALIGN 0.02->0.01, K_CTRL
-                 # 0.01->0.003; see constants there). Run 1 (gamma .995, ent
-                 # .007): kills decayed 11%->1% as ctrl collapsed -26->-1.7 and
-                 # std 0.46->0.21 -- the discounted kill bonus was too weak vs
-                 # the constant ~24/ep shaping plateau. Run 2 (gamma .999, ent
-                 # .015): std exploded 0.58->5.2, saturated noise. So: gamma back
-                 # to 0.995 (stable advantages), entropy to the 0.010 midpoint,
-                 # and the kill differential carried by the env weights instead.
-                 # 2026-10-28 run 4: entropy 0.010->0.007 -- run 3 showed the std
-                 # ratchet (0.57->160) under entropy 0.010 (clipped samples give
-                 # zero std-gradient); 0.007 kept std bounded in run 1. Env
-                 # reward rebalance kept as-is.
-                 # 2026-10-29 comparison arm: identical PPO hyperparameters and
-                 # seed; only the env terminal-miss grading and ctrl-penalty
-                 # removal change. Baseline remains in results/missile.
-                 gamma=0.995, lam=0.97, entropy_coef=0.007,
-                 init_std=0.5,
-                 num_learning_epochs=10,
-                 clip_param=0.2, value_loss_coef=1.0, desired_kl=0.01)
+if __name__ == "__main__":
+    run_training(
+        TASK,
+        MissileInterceptEnv,
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        bc_warmstart=BC_WARMSTART,
+        out_dir=_ROOT / "results" / f"missile_{REWARD_VARIANT}",
+        env_kwargs=ENV_KWARGS,
+        num_steps_per_env=64,
+        lr_schedule="fixed",
+        learning_rate=3e-4,
+        # 2026-10-28, adjustment 2 of 2 (root-cause reward rebalance in
+        # env.py: KILL_BONUS 50->100, K_ALIGN 0.02->0.01, K_CTRL
+        # 0.01->0.003; see constants there). Run 1 (gamma .995, ent
+        # .007): kills decayed 11%->1% as ctrl collapsed -26->-1.7 and
+        # std 0.46->0.21 -- the discounted kill bonus was too weak vs
+        # the constant ~24/ep shaping plateau. Run 2 (gamma .999, ent
+        # .015): std exploded 0.58->5.2, saturated noise. So: gamma back
+        # to 0.995 (stable advantages), entropy to the 0.010 midpoint,
+        # and the kill differential carried by the env weights instead.
+        # 2026-10-28 run 4: entropy 0.010->0.007 -- run 3 showed the std
+        # ratchet (0.57->160) under entropy 0.010 (clipped samples give
+        # zero std-gradient); 0.007 kept std bounded in run 1. Env
+        # reward rebalance kept as-is.
+        # 2026-10-29 comparison arm: identical PPO hyperparameters and
+        # seed; only the env terminal-miss grading and ctrl-penalty
+        # removal change. Baseline remains in results/missile.
+        gamma=0.995,
+        lam=0.97,
+        entropy_coef=0.007,
+        init_std=0.5,
+        num_learning_epochs=10,
+        clip_param=0.2,
+        value_loss_coef=1.0,
+        desired_kl=0.01,
+    )

@@ -39,29 +39,30 @@ ground-skimming captures at z ~ 0.5 m. Termination reasons are now logged
 run.json, so the remaining 4th-waypoint gap can be attributed instead of
 guessed.
 """
+
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.fixedwing import FixedwingWaypointsEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.fixedwing import FixedwingWaypointsEnv  # noqa: E402
 
-TASK = 'fixedwing'
+TASK = "fixedwing"
 NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
-CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # resume from the newest model_*.pt / checkpoint.pt
+CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
+ALGORITHM = "ppo"
 # Web-alignment (2026-10-21): PPO hyperparameters follow "Adversarial RL for
 # Robust Control of Fixed-Wing Aircraft" (arXiv:2510.16650): lr 3e-4, 10 epochs,
 # entropy 0, gamma 0.99, lam 0.95, clip 0.2, vf_coef 0.5, 2048 steps/env.
 # num_steps_per_env stays 64 (verified local improvement, see docstring above);
 # 2048 would multiply wall time ~32x at 1024 envs. 1024 envs kept.
-LR_SCHEDULE = 'fixed'
+LR_SCHEDULE = "fixed"
 LEARNING_RATE = 3e-4
 NUM_STEPS_PER_ENV = 64
 NUM_LEARNING_EPOCHS = 10
@@ -69,17 +70,29 @@ ENTROPY_COEF = 0.0
 VALUE_LOSS_COEF = 0.5
 # Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
 # (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
-WIND = dict(steady_wind=None, dryden=.3, severity='moderate')
+WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = None
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
-    run_training(TASK, FixedwingWaypointsEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 num_steps_per_env=NUM_STEPS_PER_ENV,
-                 num_learning_epochs=NUM_LEARNING_EPOCHS,
-                 entropy_coef=ENTROPY_COEF, value_loss_coef=VALUE_LOSS_COEF,
-                 env_kwargs=WIND, bc_warmstart=BC_WARMSTART)
+if __name__ == "__main__":
+    run_training(
+        TASK,
+        FixedwingWaypointsEnv,
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        lr_schedule=LR_SCHEDULE,
+        learning_rate=LEARNING_RATE,
+        num_steps_per_env=NUM_STEPS_PER_ENV,
+        num_learning_epochs=NUM_LEARNING_EPOCHS,
+        entropy_coef=ENTROPY_COEF,
+        value_loss_coef=VALUE_LOSS_COEF,
+        env_kwargs=WIND,
+        bc_warmstart=BC_WARMSTART,
+    )

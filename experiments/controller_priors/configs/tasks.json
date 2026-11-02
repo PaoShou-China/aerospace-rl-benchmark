@@ -1,0 +1,104 @@
+{
+  "docking": {
+    "task": "docking",
+    "env_module": "environments.satellite.rendezvous_docking",
+    "env_class": "SpaceDockingEnv",
+    "num_envs": 1024,
+    "updates": 250,
+    "stage_updates": [25, 50, 100, 150, 200],
+    "ppo": {
+      "lr_schedule": "fixed",
+      "learning_rate": 3e-4,
+      "entropy_coef": 0.005,
+      "gamma": 0.999,
+      "num_steps_per_env": 32,
+      "num_mini_batches": 4,
+      "num_learning_epochs": 4,
+      "init_std": 0.5,
+      "clip_param": 0.2
+    },
+    "bc": {
+      "episodes_per_replica": 3,
+      "epochs": 120,
+      "batch_size": 4096,
+      "lr": 1e-3,
+      "fit_critic": false,
+      "normalizer_mode": "fit_once",
+      "freeze_normalizer": false
+    },
+    "dagger": {"episodes_per_replica": 1},
+    "data_selection": {"episodes": 512, "dagger_episodes": 256, "method": "farthest_point"},
+    "residual": {"rho": 0.05, "squash": "tanh"},
+    "eval": {"num_envs": 1024, "max_steps": 2000, "dump_replicas": [0, 1, 2, 3]},
+    "action_semantics": "normalized per-axis thrust in [-1,1]; F_i = a_i * f_max (10 N/axis, 500 kg)",
+    "physical_cost": ["propellant_kg", "maneuver_time_s", "terminal_range_m", "terminal_speed_m_s", "action_saturation_fraction"]
+  },
+  "satellite": {
+    "task": "satellite",
+    "env_module": "environments.satellite.attitude_control",
+    "env_class": "SatelliteAttitudeEnv",
+    "num_envs": 512,
+    "updates": 150,
+    "stage_updates": [25, 50, 100],
+    "ppo": {
+      "lr_schedule": "fixed",
+      "learning_rate": 3e-4,
+      "gamma": 0.999,
+      "num_steps_per_env": 150,
+      "num_mini_batches": 5,
+      "num_learning_epochs": 40,
+      "entropy_coef": 0.0,
+      "init_std": 1.0,
+      "clip_param": 0.2
+    },
+    "bc": {
+      "episodes_per_replica": 3,
+      "epochs": 120,
+      "batch_size": 4096,
+      "lr": 1e-3,
+      "fit_critic": false,
+      "normalizer_mode": "fit_once",
+      "freeze_normalizer": false
+    },
+    "dagger": {"episodes_per_replica": 1},
+    "data_selection": {"episodes": 1024, "dagger_episodes": 256, "method": "farthest_point"},
+    "residual": {"rho": 0.05, "squash": "tanh"},
+    "eval": {"num_envs": 1024, "max_steps": 3000, "dump_replicas": [0, 1, 2, 3]},
+    "action_semantics": "normalized CMG gimbal rate in [-1,1]; rate_i = a_i * action_scale (3 rad/s), 4-CMG pyramid",
+    "physical_cost": ["gimbal_rate_squared_integral_proxy", "maneuver_time_s", "terminal_attitude_error_rad", "terminal_rate_rad_s", "action_saturation_fraction", "min_manipulability"]
+  },
+  "rendezvous": {
+    "task": "rendezvous",
+    "env_module": "environments.satellite.rendezvous_docking",
+    "env_class": "SpaceRendezvousEnv",
+    "num_envs": 512,
+    "updates": 300,
+    "stage_updates": [25, 50, 100, 150, 200, 250],
+    "ppo": {
+      "lr_schedule": "fixed",
+      "learning_rate": 3e-4,
+      "entropy_coef": 0.003,
+      "gamma": 0.999,
+      "num_steps_per_env": 250,
+      "num_mini_batches": 1,
+      "num_learning_epochs": 4,
+      "init_std": 0.5,
+      "clip_param": 0.2
+    },
+    "bc": {
+      "episodes_per_replica": 2,
+      "epochs": 120,
+      "batch_size": 4096,
+      "lr": 1e-3,
+      "fit_critic": false,
+      "normalizer_mode": "fit_once",
+      "freeze_normalizer": false
+    },
+    "dagger": {"episodes_per_replica": 1},
+    "data_selection": {"episodes": 512, "dagger_episodes": 256, "method": "farthest_point"},
+    "residual": {"rho": 0.05, "squash": "identity"},
+    "eval": {"num_envs": 1024, "max_steps": 3000, "dump_replicas": [0, 1, 2, 3]},
+    "action_semantics": "normalized per-axis thrust in [-1,1]; F_i = a_i * f_max (10 N/axis, 500 kg)",
+    "physical_cost": ["propellant_kg", "maneuver_time_s", "terminal_range_m", "terminal_speed_m_s", "min_range_m", "action_saturation_fraction"]
+  }
+}

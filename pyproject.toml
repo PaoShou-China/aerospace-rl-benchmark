@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+extend-exclude = ["environments/common/original_pyflyt"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.ruff.format]
+# Black-compatible formatting.
+quote-style = "double"
+indent-style = "space"
+
+[tool.black]
+line-length = 100
+extend-exclude = "environments/common/original_pyflyt"

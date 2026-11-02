@@ -16,25 +16,25 @@ task; makes the PBRS return undiscounted and exactly telescoping over the
 166-step episode) and a disabled timeout value bootstrap inside the env
 (timeouts are true terminals). Shared PPO machinery lives in
 algorithms/train_utils.py.
-ALGORITHM exposes the shared algorithm arm ('ppo' | 'flash_sac').
 """
+
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.satellite.orbit_transfer import LowThrustTransferEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.satellite.orbit_transfer import LowThrustTransferEnv  # noqa: E402
 
-TASK = 'transfer'
+TASK = "transfer"
 NUM_ENVS = 1024
 UPDATES = 1000
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
-CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # resume from the newest model_*.pt / checkpoint.pt
+CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
+ALGORITHM = "ppo"
 
 # Task-specific deviations from the shared fair-comparison PPO configuration.
 # lr pinned to the proven recipe (2026-10-20, 1000-update verification run:
@@ -48,16 +48,32 @@ ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/fla
 # lr 2.5e-4, entropy 4.75e-8, 30 epochs, clip 0.3, vf_coef 0.5. The paper
 # linearly decays lr (2.5e-4 -> 0) and clip (0.3 -> 0); rsl-rl only supports
 # fixed/adaptive schedules, so the constant start values are used here.
-PPO_OVERRIDES = {'gamma': 0.9999, 'lr_schedule': 'fixed', 'learning_rate': 2.5e-4,
-                 'lam': 0.99, 'entropy_coef': 4.75e-8, 'num_learning_epochs': 30,
-                 'clip_param': 0.3, 'value_loss_coef': 0.5}
+PPO_OVERRIDES = {
+    "gamma": 0.9999,
+    "lr_schedule": "fixed",
+    "learning_rate": 2.5e-4,
+    "lam": 0.99,
+    "entropy_coef": 4.75e-8,
+    "num_learning_epochs": 30,
+    "clip_param": 0.3,
+    "value_loss_coef": 0.5,
+}
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = None
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
-    run_training(TASK, LowThrustTransferEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, bc_warmstart=BC_WARMSTART,
-                 **PPO_OVERRIDES)
+if __name__ == "__main__":
+    run_training(
+        TASK,
+        LowThrustTransferEnv,
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        bc_warmstart=BC_WARMSTART,
+        **PPO_OVERRIDES,
+    )

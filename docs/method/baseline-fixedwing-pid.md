@@ -180,7 +180,6 @@ seed 7, so this table is out-of-sample for the PID arm.
 |---|---|---|---|---|---|---|
 | L1+TECS (frozen) | 93.5% [93.0, 94.3] | 3.82 | 28.4 | 0.0% | 3.0% | 3.6% |
 | **PID cascade (this arm)** | 80.4% [79.4, 81.3] | 3.54 | 35.0 | 0.0% | 10.8% | 8.8% |
-| FlashSAC (1024×1000, seed 7) | 0.0% [0.0, 0.0] | 0.02 | n/a | 97.6% | 2.4% | 0.0% |
 | PPO (1024×1000, seed 7) | pending training completion | | | | | |
 
 Raw per-seed data: `results/fixedwing_pid/comparison.json`; trajectories
@@ -244,10 +243,10 @@ Both controllers score 5/5 (L1) and 8/8 (PID incl. three airspeed setpoints).
 # 1. tuning / sanity scenes (straight, left/right turn, climb, descent, airspeed)
 python environments/fixedwing/eval_fixedwing_pid.py scenarios --out results/fixedwing_pid
 
-# 2. formal held-out comparison (PID + L1+TECS + shipped PPO / FlashSAC if present)
+# 2. formal held-out comparison (PID + L1+TECS + shipped PPO if present)
 python environments/fixedwing/eval_fixedwing_pid.py benchmark \
     --num-envs 1024 --seeds 2000 2001 2002 2003 \
-    --controllers l1_tecs pid_cascade ppo flashsac --out results/fixedwing_pid
+    --controllers l1_tecs pid_cascade ppo --out results/fixedwing_pid
 
 # 3. single-baseline check through the shared baseline harness
 python scripts/baseline_eval.py fixedwing --baseline pid_cascade --seed 101
@@ -257,9 +256,9 @@ Artifacts (under `results/fixedwing_pid/`): `scenarios_pid.json`,
 `scenarios_l1_tecs.json`, `comparison.json`, `comparison.md`, and per-controller
 `trajectories_<controller>_seed<k>.json` plus top-down PNG plots (x–y, colour = altitude).
 
-The learned arms are loaded from `results/fixedwing_ppo/checkpoint.pt` and
-`results/fixedwing_flashsac/checkpoint.pt` with the training `config.json`; missing
-checkpoints are reported and skipped rather than silently substituted.
+The learned arm (PPO) is loaded from `results/fixedwing_ppo/checkpoint.pt`
+with the training `config.json`; a missing checkpoint is reported and skipped
+rather than silently substituted.
 
 ## 9. References
 

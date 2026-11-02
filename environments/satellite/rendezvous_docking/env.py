@@ -45,7 +45,16 @@ from algorithms.baselines.baselines import (DockingCWHLQRBaseline,
                                 RendezvousTwoImpulseBaseline)
 
 
-class _CWHBase:
+from environments.common.residual import ResidualActionMixin
+from environments.common.base_env import BaseEnv
+from environments.common.domain_randomization import (
+    apply_static_perturbation,
+    apply_domain_randomization,
+    resolve_domain_randomize,
+)
+
+
+class _CWHBase(BaseEnv, ResidualActionMixin):
     """Shared CWH relative-motion machinery; subclasses set the task table."""
 
     # Task table (SpaceGym Table 1); overridden per task.
@@ -65,10 +74,35 @@ class _CWHBase:
     viol_penalty=100.         # progress-mode one-time terminal violation cost
     brake_ref=None            # progress-mode reference decel [m/s^2]; resolved in __init__
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7):
+    PERTURBABLE_PARAMS = {"mass": 1.0, "f_max": 1.0, "isp": 1.0}
+    # Literature: chemical (hydrazine monopropellant) docking thrusters.
+    # Stoisa et al. "Neural-based Control for CubeSat Docking Maneuvers"
+    # (2024) perturb the chaser mass observation by up to alpha=0.10
+    # (+/-10% of initial mass).  Hydrazine thruster impulse-bit variation can
+    # reach +/-15% over lifetime (NASA resistojet test reports), and
+    # steady-state vs pulse-mode Isp spans 200-175 s (~12%); we use
+    # conservative +/-10% thrust magnitude and +/-5% Isp.  The 500 kg chaser
+    # with 10 N thrusters and Isp=300 s matches a typical monopropellant
+    # rendezvous vehicle.
+    DEFAULT_DOMAIN_RANDOMIZE = {
+        "mass": (0.90, 1.10),
+        "f_max": (0.90, 1.10),
+        "isp": (0.95, 1.05),
+    }
+
+    def __init__(self,num_envs=64,backend='cpu',seed=7,
+                 residual=False,init_range=None,init_vmax=None,plant_kwargs=None,
+                 param_mismatch=None,domain_randomize=None):
         if num_envs<1:raise ValueError('n must be positive')
         if backend not in ('cpu','gpu'):raise ValueError(backend)
         self.num_envs=num_envs
+        # experiment-only overrides (defaults keep the benchmark contract):
+        # demonstration-coverage scans move the spawn shell; model-mismatch
+        # scans move the TRUE plant constants while the controller keeps its own
+        # explicit design model (``design=`` on the controller).
+        if init_range is not None:self.init_range=tuple(float(x) for x in init_range)
+        if init_vmax is not None:self.init_vmax=float(init_vmax)
+        plant_kwargs=dict(plant_kwargs or {})
         self.task_cfg={'vehicle':self.vehicle,'num_envs':num_envs,'backend':backend,
                        'implementation':'fully_tensorized',
                        'init_range':list(self.init_range),
@@ -80,10 +114,12 @@ class _CWHBase:
         # Shared dynamics constants (paper Section 3.1).
         self.mu=3.986e14         # Earth gravitational parameter [m^3/s^2]
         self.sma=6.778e6         # 400 km circular target orbit [m]
-        self.mass=500.           # chaser mass [kg]
-        self.f_max=10.           # per-axis thrust limit [N]
-        self.isp=300.            # RCS specific impulse [s] (paper leaves Isp symbolic)
-        self.g0=9.80665           # standard gravity [m/s^2]
+        self.mass=float(plant_kwargs.get('mass',500.))   # chaser mass [kg]
+        self.f_max=float(plant_kwargs.get('f_max',10.))  # per-axis thrust limit [N]
+        self.isp=float(plant_kwargs.get('isp',300.))     # RCS specific impulse [s] (paper leaves Isp symbolic)
+        self.g0=float(plant_kwargs.get('g0',9.80665))    # standard gravity [m/s^2]
+        if plant_kwargs:
+            self.task_cfg['plant_kwargs']=dict(plant_kwargs)
         self.n=math.sqrt(self.mu/self.sma**3)
         self.dt=1.                # integration step [s], Algorithm 1
         # progress-mode reference decel: 60% of the per-axis thrust authority,
@@ -92,6 +128,17 @@ class _CWHBase:
         self.max_episode_length=self.max_steps+2
         self.num_actions=3
         self.clip_actions=1.
+        # POLICY bounds: the action is normalized per axis ([-1, 1], clipped by
+        # clip_actions) and step() maps it onto the live thrust authority
+        # (``f_max``, per-env under domain randomization).  action_low/high must
+        # therefore live in the same normalized units as the action the
+        # controller emits -- storing +-f_max (newtons) here made
+        # physical_action_space disagree with the step() contract.
+        self.action_low=torch.full((3,),-self.clip_actions,device=d,dtype=torch.float64)
+        self.action_high=torch.full((3,),self.clip_actions,device=d,dtype=torch.float64)
+        # Nominal per-axis thrust bounds [N] for design-model bookkeeping (the
+        # live authority is ``self.f_max`` and becomes per-env under DR).
+        self.thrust_bounds_N=torch.full((3,),self.f_max,device=d,dtype=torch.float64)
         # Reward weights (paper Eq. 4/5).
         self.alpha=1.;self.beta=.1;self.gamma=.01;self.terminal_bonus=100.
 
@@ -116,9 +163,27 @@ class _CWHBase:
         self.completed_episodes=torch.zeros_like(self.episode_length_buf)
         self.completed_successes=torch.zeros_like(self.episode_length_buf)
 
+        self._seed = seed
         self.extras=dict()
         self.cfg=dict(self.task_cfg)
         self.rng=TensorRandom(num_envs,d,seed)
+        # nominal design model for the controller (pre-perturbation values)
+        self.controller_design = {
+            "mass": self.mass,
+            "f_max": self.f_max,
+            "isp": self.isp,
+            "mu": self.mu,
+            "sma": self.sma,
+            "g0": self.g0,
+            "dt": self.dt,
+        }
+        apply_static_perturbation(self, param_mismatch)
+        self._dr_counter = 0
+        self._domain_randomize = resolve_domain_randomize(
+            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        )
+        self.residual=residual
+        self._init_residual()
 
         self.reset()
 
@@ -150,12 +215,22 @@ class _CWHBase:
         self.obs_buf.copy_(self._observation)
 
     def get_observations(self):
+        """Return the current observation (p, v) packed in a TensorDict under 'policy'."""
         return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
 
     def step(self,actions):
+        """Advance one policy step: integrate CWH symplectic Euler dynamics.
+
+        Scale per-axis thrust, run the symplectic-Euler Clohessy-Wiltshire
+        Hill relative-motion step, evaluate the telescoping progress reward,
+        detect violations (fuel, range, keep-out), and return
+        (observations, reward, terminated, truncated, extras).
+        """
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        thrust=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*self.f_max
+        actions=self._residual_input(actions)
+        f_max_t = self.f_max if torch.is_tensor(self.f_max) else torch.as_tensor(self.f_max, device=actions.device, dtype=torch.float64)
+        thrust=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*f_max_t.view(-1,1)
         self.action.copy_(thrust)
         active=~(self.terminated|self.truncated)
         dist_pre=self.p.norm(dim=-1)
@@ -229,9 +304,26 @@ class _CWHBase:
         self._update_observation()
         return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 
+    def _apply_perturbation(self, name, scale):
+        """Scale mass, f_max or isp; called by the DR helper."""
+        nom = self.controller_design[name]
+        if name == "mass":
+            self.mass = nom * scale
+        elif name == "f_max":
+            self.f_max = nom * scale
+        elif name == "isp":
+            self.isp = nom * scale
+        else:
+            raise KeyError(name)
+
     def reset_idx(self,envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
         mask=envs_idx
+        if self._domain_randomize:
+            self._dr_counter += 1
+            apply_domain_randomization(
+                self, self._domain_randomize, self._seed, self._dr_counter, mask
+            )
         # Uniform sphere direction for p0, then |p0| in the task range;
         # v0 gets an independent uniform direction and |v0| <= init_vmax.
         u=self.rng.uniform(6,mask)
@@ -255,8 +347,10 @@ class _CWHBase:
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask,0)
         self.returns.masked_fill_(mask,0)
+        self._residual_reset(mask)
 
     def reset(self):
+        """Reset every replica by delegating to reset_idx on an all-True mask."""
         mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)
         self.reset_idx(mask)
         self.reset_buf=mask.clone()
@@ -270,15 +364,11 @@ class _CWHBase:
 class SpaceDockingEnv(_CWHBase):
     """SpaceGym docking: close-range final approach (Table 1, Section 3.1).
 
-    Uses the telescoping progress reward (see module docstring). The paper's
-    dense shaping was diagnosed as untrainable here: the absolute distance
-    term makes an early range-fail (suicide) outscore hovering to timeout
-    (~ -150 vs ~ -500 per episode), pinning PPO at that degenerate optimum,
-    and the KL-adaptive lr raced to its 1e-2 ceiling while the policy
-    collapsed. The progress potential removes the time pathology (hover ~0,
-    closing +, retreating -, round trips net 0) and its brake-distance term
-    steers the approach along a maximum-brake profile whose envelope lands
-    near the vel_goal at the goal distance.
+    Spawn 60-120 m from a 400 km target orbit and close to < 1 m position
+    and < 0.1 m/s velocity within 500 steps (500 s, 1 s control step). No
+    keep-out zone; fuel budget 2 kg is binding (full-thrust ~2.9 kg over
+    the horizon). Uses telescoping progress reward (not paper dense
+    shaping), which avoids the early-termination-suicide pathology.
     """
     vehicle='docking'
     max_steps=500
@@ -294,17 +384,25 @@ class SpaceDockingEnv(_CWHBase):
     pos_norm=100.
     vel_norm=1.
     reward_mode='progress'
+    # 2026-10-29 regression fix: the base step() subtracts self.time_penalty in
+    # progress mode, but this task never declared one (the hover penalty was
+    # introduced for the rendezvous PPO recipe) -> AttributeError on every
+    # docking step for ANY controller, including the registered default. 0.
+    # keeps the docking reward identical to the pre-regression benchmark.
+    time_penalty=0.
     # conventional controller: CWH-LQR terminal approach with range shield and
     # capture net (baselines.py; exact symplectic discretization of the plant)
     conventional_controller=DockingCWHLQRBaseline
 
 
 class SpaceRendezvousEnv(_CWHBase):
-    """SpaceGym rendezvous: medium-range approach with keep-out zone
-    (Table 1, Section 3.2); the reward normalizer is the per-episode
-    initial separation d0. Uses the telescoping progress reward (see
-    module docstring): the paper's dense shaping structurally rewards
-    early termination over a 1000-step horizon and never trains."""
+    """SpaceGym rendezvous: medium-range approach with keep-out zone.
+
+    Spawn 1000-1500 m from target orbit and close to < 10 m and < 0.5 m/s
+    within 1000 steps while staying outside a 5 m keep-out sphere. Fuel
+    budget 4 kg is binding. Uses telescoping progress reward with a 0.02
+    per-step time penalty so hovering is strictly worse than approaching.
+    """
     vehicle='rendezvous'
     max_steps=1000
     # 2026-10-24: (800,1200) -> (1000,1500) m (baseline sat at 100% success);
@@ -339,8 +437,8 @@ class SpaceRendezvousEnv(_CWHBase):
     # 0.1 m/s^2 keeps 80% progress credit during acceleration (soft dead-zone)
     # while still penalizing unrecoverable approach speeds near the target.
     brake_ref=.1
-    # 2026-10-28: the 20-point spread (2026-10-22, chosen for monotonic curves
-    # under the retired trunk) stalls the current 2x128-MLP PPO recipe at a
+    # 2026-10-28: the 20-point spread (2026-10-22, chosen for monotonic curves)
+    # stalls the current 2x128-MLP PPO recipe at a
     # ~2% spawn-luck floor across two full 1000-update runs (lr 3e-4 fixed and
     # lr 1e-3 + 400-update decay; greedy eval 0.5%): the terminal event never
     # becomes an attractor. The base-class 100-point spread is restored -- the

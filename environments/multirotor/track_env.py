@@ -64,31 +64,39 @@ References
     - PyFlyt QuadX-Waypoints vehicle/plant defaults (cf2x, Genesis backend).
     - Method documentation: docs/method/env-quadx-track.md.
 """
+
 import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant, TensorRandom
-from environments.common.dynamics import euler, inverse_rotate
+from environments.common.dynamics import inverse_rotate
 from algorithms.baselines.baselines import QuadXTrackKFBaseline
+from environments.common.residual import ResidualActionMixin
+from environments.common.base_env import BaseEnv
+from environments.common.domain_randomization import (
+    apply_static_perturbation,
+    apply_domain_randomization,
+    resolve_domain_randomize,
+)
 
 # ---- camera / geometry -----------------------------------------------------
 FOV_HALF_DEG = 30.0
-SENSOR_RANGE_MIN = 1.5       # m
-SENSOR_RANGE_MAX = 12.0      # m
-POS_NOISE_STD = 0.15         # m, per axis
-ALT_REF = 6.0                # m, commanded camera altitude
-REF_OFFSET_XY = (1.5, 0.0)   # m, fixed horizontal offset of the reference point
-TARGET_Z = 0.15              # m, ground vehicle antenna height
-TARGET_SPAWN_MIN = 0.5       # m, initial horizontal distance from the vehicle
-TARGET_SPAWN_MAX = 2.0       # m
-TARGET_AREA_RADIUS = 15.0    # m, the target reflects off this circle
-BOUNDS_RADIUS = 30.0         # m, vehicle out-of-bounds termination
+SENSOR_RANGE_MIN = 1.5  # m
+SENSOR_RANGE_MAX = 12.0  # m
+POS_NOISE_STD = 0.15  # m, per axis
+ALT_REF = 6.0  # m, commanded camera altitude
+REF_OFFSET_XY = (1.5, 0.0)  # m, fixed horizontal offset of the reference point
+TARGET_Z = 0.15  # m, ground vehicle antenna height
+TARGET_SPAWN_MIN = 0.5  # m, initial horizontal distance from the vehicle
+TARGET_SPAWN_MAX = 2.0  # m
+TARGET_AREA_RADIUS = 15.0  # m, the target reflects off this circle
+BOUNDS_RADIUS = 30.0  # m, vehicle out-of-bounds termination
 
 # ---- target motion schedule ------------------------------------------------
 NUM_SEGMENTS = 12
-SEG_DURATION_MIN, SEG_DURATION_MAX = 2.0, 5.0   # s
-SEG_SPEED_MIN, SEG_SPEED_MAX = 0.4, 1.2         # m/s
-SEG_TURN_MIN, SEG_TURN_MAX = 0.3, 1.0           # rad/s
+SEG_DURATION_MIN, SEG_DURATION_MAX = 2.0, 5.0  # s
+SEG_SPEED_MIN, SEG_SPEED_MAX = 0.4, 1.2  # m/s
+SEG_TURN_MIN, SEG_TURN_MAX = 0.3, 1.0  # rad/s
 MODE_STRAIGHT, MODE_TURN, MODE_STOP = 0, 1, 2
 
 # ---- static line-of-sight occluders: (x, y, radius, height) -----------------
@@ -109,7 +117,7 @@ ALT_GAIN = 0.01
 ACTION_GAIN = 0.002
 CRASH_PENALTY = 10.0
 SUCCESS_VISIBLE_FRACTION = 0.85
-MAX_STEPS = 1200            # 30 s at 40 Hz
+MAX_STEPS = 1200  # 30 s at 40 Hz
 
 
 def _occluded(p_uav, p_tgt):
@@ -119,7 +127,7 @@ def _occluded(p_uav, p_tgt):
     denom = (dx * dx + dy * dy).clamp_min(1e-9)
     blocked = torch.zeros_like(ux, dtype=torch.bool)
     for cx, cy, radius, height in OCCLUDERS:
-        t = (((cx - ux) * dx + (cy - uy) * dy) / denom).clamp(0., 1.)
+        t = (((cx - ux) * dx + (cy - uy) * dy) / denom).clamp(0.0, 1.0)
         qx, qy = ux + t * dx, uy + t * dy
         dist2 = (qx - cx) ** 2 + (qy - cy) ** 2
         z_at = uz + t * dz
@@ -127,7 +135,24 @@ def _occluded(p_uav, p_tgt):
     return blocked
 
 
-class QuadXTrackEnv:
+class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
+    """QuadX multirotor cooperative-ground-target tracking RL environment.
+
+    Task objective: keep a cooperative ground vehicle inside a nadir-stabilized
+    camera's FOV while holding a fixed standoff offset and a fixed altitude.
+    The target drives on a 15 m radius area with straight, turning and stop-
+    and-go segments. Observation is a flat float32 tensor (25 dims) containing
+    body angular velocity (3), quaternion wxyz (4), body-frame velocity (3),
+    world position (3), last physical action (4), per-rotor throttle (4),
+    visible target measurement relative to the vehicle in world axes (3, zero
+    when invisible), and a visibility flag (1). Actions are 4-D: roll, pitch,
+    yaw rate commands [-pi, pi] rad/s and collective throttle [0, 1], mapped
+    affinely from [-1, 1]. Termination on ground contact or |p| > 30 m;
+    truncation at 1200 policy steps (30 s). The vehicle is a 27 g Crazyflie-
+    class quadrotor. Domain randomization covers thrust (0.80, 1.20) and mass
+    (0.85, 1.15).
+    """
+
     # public device-side constants (the classical baseline reads these at
     # construction, like every other baseline in the suite)
     ALT_REF = ALT_REF
@@ -140,31 +165,50 @@ class QuadXTrackEnv:
     TARGET_AREA_RADIUS = TARGET_AREA_RADIUS
     SUCCESS_VISIBLE_FRACTION = SUCCESS_VISIBLE_FRACTION
     conventional_controller = QuadXTrackKFBaseline
+    PERTURBABLE_PARAMS = {"thrust": 1.0, "mass": 1.0}
+    # Same Crazyflie-class airframe as quadx (see multirotor/env.py for the
+    # literature backing the +/-20% thrust / +/-15% mass ranges).
+    DEFAULT_DOMAIN_RANDOMIZE = {"thrust": (0.80, 1.20), "mass": (0.85, 1.15)}
 
     bounds_radius = BOUNDS_RADIUS
 
-    def __init__(self, num_envs=64, backend='cpu', seed=7):
+    def __init__(self, num_envs=64, backend="cpu", seed=7, residual=False,
+                 param_mismatch=None, domain_randomize=None):
+        """Initialize the QuadX tracking environment.
+
+        Construct the Genesis-backed quadrotor plant at 40 Hz agent / 120 Hz
+        control, allocate task buffers (target state, perception metrics,
+        reward, reset, domain-randomization counters), and finalize with a
+        reset().
+        """
         if num_envs < 1:
-            raise ValueError('n must be positive')
+            raise ValueError("n must be positive")
         self.num_envs = num_envs
-        self.task_cfg = {'vehicle': 'quadx', 'task': 'quadx_track', 'num_envs': num_envs,
-                         'backend': backend, 'implementation': 'fully_tensorized',
-                         'task_defaults': 'AerospaceRL quadx-track v1'}
+        self.task_cfg = {
+            "vehicle": "quadx",
+            "task": "quadx_track",
+            "num_envs": num_envs,
+            "backend": backend,
+            "implementation": "fully_tensorized",
+            "task_defaults": "AerospaceRL quadx-track v1",
+        }
         self.clip_actions = 1.0
 
         # same plant, rate-PID and solver guard as QuadX-Waypoints
-        self.plant = TensorPlant('quadx', num_envs, backend, seed, vel_clamp=(15., 30.))
+        self.plant = TensorPlant("quadx", num_envs, backend, seed, vel_clamp=(15.0, 30.0))
         self.device = self.plant.device
         self.agent_hz = 40
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)
         self.max_steps = MAX_STEPS
         self.max_episode_length = self.max_steps + 2
         self.num_actions = 4
-        self.dt = 1. / self.agent_hz
-        self.action_low = torch.tensor([-math.pi, -math.pi, -math.pi, 0.],
-                                       device=self.device, dtype=torch.float64)
-        self.action_high = torch.tensor([math.pi, math.pi, math.pi, .8],
-                                        device=self.device, dtype=torch.float64)
+        self.dt = 1.0 / self.agent_hz
+        self.action_low = torch.tensor(
+            [-math.pi, -math.pi, -math.pi, 0.0], device=self.device, dtype=torch.float64
+        )
+        self.action_high = torch.tensor(
+            [math.pi, math.pi, math.pi, 0.8], device=self.device, dtype=torch.float64
+        )
         # a separate counter stream keeps the camera noise from perturbing the
         # plant's motor-noise sequence
         self.sensor_rng = TensorRandom(num_envs, self.device, seed + 7919)
@@ -172,7 +216,10 @@ class QuadXTrackEnv:
         self.ref_offset = torch.tensor(REF_OFFSET_XY, device=self.device, dtype=torch.float64)
 
         d = self.device
-        zeros = lambda *s: torch.zeros(*s, device=d, dtype=torch.float64)
+
+        def zeros(*s):
+            return torch.zeros(*s, device=d, dtype=torch.float64)
+
         self.action = zeros(num_envs, self.num_actions)
         self.reward = zeros(num_envs)
         self.count = torch.zeros(num_envs, device=d, dtype=torch.long)
@@ -217,21 +264,41 @@ class QuadXTrackEnv:
         self.ep_range_loss = zeros(num_envs)
         self.ep_occlusion = zeros(num_envs)
 
-        keys = ('visible_fraction', 'lost_seconds', 'max_dropout_seconds', 'track_error',
-                'flight_distance', 'collisions', 'out_of_bounds', 'timeouts',
-                'fov_loss_steps', 'range_loss_steps', 'occlusion_steps')
+        keys = (
+            "visible_fraction",
+            "lost_seconds",
+            "max_dropout_seconds",
+            "track_error",
+            "flight_distance",
+            "collisions",
+            "out_of_bounds",
+            "timeouts",
+            "fov_loss_steps",
+            "range_loss_steps",
+            "occlusion_steps",
+        )
         self.completed_metrics = {k: torch.zeros((), device=d, dtype=torch.float64) for k in keys}
 
+        self._seed = seed
         self.extras = dict()
         self.cfg = dict(self.task_cfg)
+        self.controller_design = {}
+        apply_static_perturbation(self, param_mismatch)
+        self._dr_counter = 0
+        self._domain_randomize = resolve_domain_randomize(
+            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        )
+        self.residual = residual
+        self._init_residual()
         self.reset()
 
     # ------------------------------------------------------------------ #
     # action mapping: identical to QuadX-Waypoints
     # ------------------------------------------------------------------ #
     def _scale_actions(self, actions):
+        """Affinely map [-1, 1] policy actions onto the physical action bounds."""
         raw = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
-        return self.action_low + (raw + 1) * .5 * (self.action_high - self.action_low)
+        return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     # ------------------------------------------------------------------ #
     # cooperative ground target
@@ -257,14 +324,14 @@ class QuadXTrackEnv:
         nx, ny = nx * scale, ny * scale
         dvec = torch.stack((torch.cos(heading), torch.sin(heading)), -1)
         dot = (dvec * normal).sum(-1)
-        dvec = torch.where(outside[:, None], dvec - 2. * dot[:, None] * normal, dvec)
+        dvec = torch.where(outside[:, None], dvec - 2.0 * dot[:, None] * normal, dvec)
         heading = torch.where(outside, torch.atan2(dvec[:, 1], dvec[:, 0]), heading)
         self.target_pos.copy_(torch.stack((nx, ny, nz), -1))
         self.target_heading.copy_(heading)
 
         # segment timer / schedule switch (at most one boundary per 25 ms step)
         timer = torch.where(mask, self.target_seg_timer - self.dt, self.target_seg_timer)
-        switch = mask & (timer <= 0.)
+        switch = mask & (timer <= 0.0)
         nxt = (self.target_seg_index + switch.to(torch.long)).clamp_max(NUM_SEGMENTS - 1)
         idx = nxt[:, None]
         mode = self.seg_mode.gather(1, idx).squeeze(1)
@@ -288,11 +355,13 @@ class QuadXTrackEnv:
         dh = rel[:, :2].norm(dim=-1)
         d3 = rel.norm(dim=-1)
         dz = p[:, 2] - tp[:, 2]
-        in_fov = (dz > 0.) & (dh <= dz * self.tan_fov)
+        in_fov = (dz > 0.0) & (dh <= dz * self.tan_fov)
         in_range = (d3 >= SENSOR_RANGE_MIN) & (d3 <= SENSOR_RANGE_MAX)
         occ = _occluded(p, tp)
         vis = mask & in_fov & in_range & ~occ
-        noise = torch.stack([self.sensor_rng.normal(vis, 0.) for _ in range(3)], -1) * POS_NOISE_STD
+        noise = (
+            torch.stack([self.sensor_rng.normal(vis, 0.0) for _ in range(3)], -1) * POS_NOISE_STD
+        )
         rel_meas = torch.where(vis[:, None], tp + noise - p, torch.zeros_like(rel))
         return vis, in_fov, in_range, occ, rel_meas
 
@@ -300,28 +369,53 @@ class QuadXTrackEnv:
         p, q, v, w = self.plant.state()
         wb = inverse_rotate(q, w)
         vb = inverse_rotate(q, v)
-        observation = torch.cat((wb, q[:, 1:], q[:, :1], vb, p, self.action,
-                                 self.plant.auxiliary(), rel_meas,
-                                 vis.to(torch.float64)[:, None]), -1)
+        observation = torch.cat(
+            (
+                wb,
+                q[:, 1:],
+                q[:, :1],
+                vb,
+                p,
+                self.action,
+                self.plant.auxiliary(),
+                rel_meas,
+                vis.to(torch.float64)[:, None],
+            ),
+            -1,
+        )
         if self._observation is None:
             self._observation = observation.clone()
         else:
             self._observation.copy_(torch.where(mask[:, None], observation, self._observation))
 
     def _update_observation(self):
+        """Copy the float64 internal observation into the float32 obs_buf used downstream."""
         if self.obs_buf is None:
-            self.obs_buf = torch.zeros(self._observation.shape, device=self.device, dtype=torch.float32)
+            self.obs_buf = torch.zeros(
+                self._observation.shape, device=self.device, dtype=torch.float32
+            )
         self.obs_buf.copy_(self._observation)
 
     def get_observations(self):
-        return TensorDict({'policy': self.obs_buf.clone()}, batch_size=[self.num_envs])
+        """Return the current observation packed in a TensorDict under 'policy'."""
+        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
 
     # ------------------------------------------------------------------ #
     # step
     # ------------------------------------------------------------------ #
     def step(self, actions):
+        """Advance one policy step through inner control steps.
+
+        Scale actions, advance the cooperative target, run the plant controller
+        and physics substeps, evaluate camera perception (FOV, range, occlusion),
+        accumulate reward and per-episode tracking metrics, and return
+        (observations, reward, terminated, truncated, extras).
+        """
         if actions.device != torch.device(self.device):
-            raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
+            raise ValueError(
+                "Actions must already be on env.device; implicit host/device copies are disabled"
+            )
+        actions = self._residual_input(actions)
         physical = self._scale_actions(actions)
         self.action.copy_(physical)
         active0 = ~(self.terminated | self.truncated)
@@ -356,25 +450,39 @@ class QuadXTrackEnv:
         p, _, v, _ = self.plant.state()
         ref_err = ((self.target_pos[:, :2] + self.ref_offset) - p[:, :2]).norm(dim=-1)
         alt_err = p[:, 2] - ALT_REF
-        self.reward.copy_(torch.where(active0,
-                                      VIS_BONUS * vis.to(torch.float64)
-                                      - LOST_PENALTY * (~vis).to(torch.float64)
-                                      - TRACK_GAIN * ref_err * vis.to(torch.float64)
-                                      - ALT_GAIN * alt_err * alt_err
-                                      - ACTION_GAIN * physical.square().sum(-1)
-                                      - CRASH_PENALTY * crash.to(torch.float64),
-                                      torch.zeros_like(self.reward)))
+        self.reward.copy_(
+            torch.where(
+                active0,
+                VIS_BONUS * vis.to(torch.float64)
+                - LOST_PENALTY * (~vis).to(torch.float64)
+                - TRACK_GAIN * ref_err * vis.to(torch.float64)
+                - ALT_GAIN * alt_err * alt_err
+                - ACTION_GAIN * physical.square().sum(-1)
+                - CRASH_PENALTY * crash.to(torch.float64),
+                torch.zeros_like(self.reward),
+            )
+        )
 
         # per-episode metric accumulation
         self.ep_visible += vis.to(torch.float64)
         self.ep_invisible += (active0 & ~vis).to(torch.float64)
-        self.ep_dropout.copy_(torch.where(active0, torch.where(vis, torch.zeros_like(self.ep_dropout),
-                                                                self.ep_dropout + self.dt), self.ep_dropout))
-        self.ep_max_dropout.copy_(torch.where(active0, torch.maximum(self.ep_max_dropout, self.ep_dropout),
-                                              self.ep_max_dropout))
+        self.ep_dropout.copy_(
+            torch.where(
+                active0,
+                torch.where(vis, torch.zeros_like(self.ep_dropout), self.ep_dropout + self.dt),
+                self.ep_dropout,
+            )
+        )
+        self.ep_max_dropout.copy_(
+            torch.where(
+                active0, torch.maximum(self.ep_max_dropout, self.ep_dropout), self.ep_max_dropout
+            )
+        )
         self.ep_ref_err += torch.where(vis, ref_err, torch.zeros_like(ref_err))
         self.ep_visible_steps += vis.to(torch.float64)
-        self.ep_path += torch.where(active0, v.norm(dim=-1) * self.dt, torch.zeros_like(self.ep_path))
+        self.ep_path += torch.where(
+            active0, v.norm(dim=-1) * self.dt, torch.zeros_like(self.ep_path)
+        )
         self.ep_fov_loss += (active0 & ~in_fov).to(torch.float64)
         self.ep_range_loss += (active0 & in_fov & ~in_range).to(torch.float64)
         self.ep_occlusion += (active0 & in_fov & in_range & occ).to(torch.float64)
@@ -388,42 +496,50 @@ class QuadXTrackEnv:
         self.episode_length_buf += 1
         self.returns += self.reward
         done = self.reset_buf
-        self.completed_returns += torch.where(done, self.returns, 0.)
+        self.completed_returns += torch.where(done, self.returns, 0.0)
         self.completed_episodes += done.to(torch.long)
         self.completed_successes += (done & self.complete).to(torch.long)
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
 
-        self.extras['time_outs'] = self.truncated & ~self.terminated
-        self.extras['terminal_observations'] = TensorDict(
-            {'policy': self._observation.to(torch.float32)}, batch_size=[self.num_envs])
+        self.extras["time_outs"] = self.truncated & ~self.terminated
+        self.extras["terminal_observations"] = TensorDict(
+            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
+        )
 
         done_any = bool(done.any())
         if done_any:
             n = done.sum().clamp_min(1)
             steps = self.count[done].to(torch.float64).clamp_min(1)
-            self.completed_metrics['visible_fraction'] += (self.ep_visible[done] / steps).sum()
-            self.completed_metrics['lost_seconds'] += (self.ep_invisible[done] * self.dt).sum()
-            self.completed_metrics['max_dropout_seconds'] += self.ep_max_dropout[done].sum()
-            self.completed_metrics['track_error'] += (self.ep_ref_err[done]
-                                                     / self.ep_visible_steps[done].clamp_min(1)).sum()
-            self.completed_metrics['flight_distance'] += self.ep_path[done].sum()
-            self.completed_metrics['collisions'] += (done & self.collision).to(torch.float64).sum()
-            self.completed_metrics['out_of_bounds'] += (done & self.out_of_bounds).to(torch.float64).sum()
-            self.completed_metrics['timeouts'] += (done & self.truncated & ~self.complete).to(torch.float64).sum()
-            self.completed_metrics['fov_loss_steps'] += self.ep_fov_loss[done].sum()
-            self.completed_metrics['range_loss_steps'] += self.ep_range_loss[done].sum()
-            self.completed_metrics['occlusion_steps'] += self.ep_occlusion[done].sum()
-            self.extras['episode'] = {
-                'success_rate': (done & self.complete).to(torch.float64).sum() / n,
-                'visible_fraction': (self.ep_visible[done] / steps).mean(),
-                'lost_seconds': (self.ep_invisible[done] * self.dt).mean(),
-                'max_dropout_seconds': self.ep_max_dropout[done].mean(),
-                'track_error': (self.ep_ref_err[done] / self.ep_visible_steps[done].clamp_min(1)).mean(),
-                'flight_distance': self.ep_path[done].mean(),
-                'collision_rate': (done & self.collision).to(torch.float64).sum() / n,
+            self.completed_metrics["visible_fraction"] += (self.ep_visible[done] / steps).sum()
+            self.completed_metrics["lost_seconds"] += (self.ep_invisible[done] * self.dt).sum()
+            self.completed_metrics["max_dropout_seconds"] += self.ep_max_dropout[done].sum()
+            self.completed_metrics["track_error"] += (
+                self.ep_ref_err[done] / self.ep_visible_steps[done].clamp_min(1)
+            ).sum()
+            self.completed_metrics["flight_distance"] += self.ep_path[done].sum()
+            self.completed_metrics["collisions"] += (done & self.collision).to(torch.float64).sum()
+            self.completed_metrics["out_of_bounds"] += (
+                (done & self.out_of_bounds).to(torch.float64).sum()
+            )
+            self.completed_metrics["timeouts"] += (
+                (done & self.truncated & ~self.complete).to(torch.float64).sum()
+            )
+            self.completed_metrics["fov_loss_steps"] += self.ep_fov_loss[done].sum()
+            self.completed_metrics["range_loss_steps"] += self.ep_range_loss[done].sum()
+            self.completed_metrics["occlusion_steps"] += self.ep_occlusion[done].sum()
+            self.extras["episode"] = {
+                "success_rate": (done & self.complete).to(torch.float64).sum() / n,
+                "visible_fraction": (self.ep_visible[done] / steps).mean(),
+                "lost_seconds": (self.ep_invisible[done] * self.dt).mean(),
+                "max_dropout_seconds": self.ep_max_dropout[done].mean(),
+                "track_error": (
+                    self.ep_ref_err[done] / self.ep_visible_steps[done].clamp_min(1)
+                ).mean(),
+                "flight_distance": self.ep_path[done].mean(),
+                "collision_rate": (done & self.collision).to(torch.float64).sum() / n,
             }
         else:
-            self.extras.pop('episode', None)
+            self.extras.pop("episode", None)
 
         if done_any:
             self.reset_idx(self.reset_buf)
@@ -433,25 +549,41 @@ class QuadXTrackEnv:
     # ------------------------------------------------------------------ #
     # reset
     # ------------------------------------------------------------------ #
+    def _apply_perturbation(self, name, scale):
+        """Scale a live plant parameter; called by the DR helper."""
+        if name == "thrust":
+            self.plant.perturb_thrust(scale)
+        elif name == "mass":
+            self.plant.perturb_mass(scale)
+        else:
+            raise KeyError(name)
+
     def reset_idx(self, envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
         mask = envs_idx
+        if self._domain_randomize:
+            self._dr_counter += 1
+            apply_domain_randomization(
+                self, self._domain_randomize, self._seed, self._dr_counter, mask
+            )
         p, q, v, w = self.plant.state()
         spawn = torch.zeros_like(p)
         spawn[:, 2] = ALT_REF
         rotation = torch.zeros_like(q)
-        rotation[:, 0] = 1.
-        self.plant.set_state(torch.where(mask[:, None], spawn, p),
-                             torch.where(mask[:, None], rotation, q),
-                             torch.where(mask[:, None], torch.zeros_like(v), v),
-                             torch.where(mask[:, None], torch.zeros_like(w), w))
+        rotation[:, 0] = 1.0
+        self.plant.set_state(
+            torch.where(mask[:, None], spawn, p),
+            torch.where(mask[:, None], rotation, q),
+            torch.where(mask[:, None], torch.zeros_like(v), v),
+            torch.where(mask[:, None], torch.zeros_like(w), w),
+        )
         self.count.masked_fill_(mask, 0)
         self.terminated.masked_fill_(mask, False)
         self.truncated.masked_fill_(mask, False)
         self.collision.masked_fill_(mask, False)
         self.out_of_bounds.masked_fill_(mask, False)
         self.complete.masked_fill_(mask, False)
-        self.action.masked_fill_(mask[:, None], 0.)
+        self.action.masked_fill_(mask[:, None], 0.0)
         self.plant.zero(mask)
 
         # target spawn inside the camera footprint + a full segment schedule;
@@ -460,14 +592,14 @@ class QuadXTrackEnv:
         width = 3 + 5 * NUM_SEGMENTS
         u = self.plant.rng.uniform(width, mask)
         radius = TARGET_SPAWN_MIN + u[:, 0] * (TARGET_SPAWN_MAX - TARGET_SPAWN_MIN)
-        angle = u[:, 1] * 2. * math.pi
-        heading = u[:, 2] * 2. * math.pi
+        angle = u[:, 1] * 2.0 * math.pi
+        heading = u[:, 2] * 2.0 * math.pi
         seg = u[:, 3:].unflatten(-1, (NUM_SEGMENTS, 5))
-        mode = (seg[..., 0] * 3.).clamp(0., 2.).to(torch.long)
+        mode = (seg[..., 0] * 3.0).clamp(0.0, 2.0).to(torch.long)
         dur = SEG_DURATION_MIN + seg[..., 1] * (SEG_DURATION_MAX - SEG_DURATION_MIN)
         speed = SEG_SPEED_MIN + seg[..., 2] * (SEG_SPEED_MAX - SEG_SPEED_MIN)
         turn = SEG_TURN_MIN + seg[..., 3] * (SEG_TURN_MAX - SEG_TURN_MIN)
-        turn = torch.where(seg[..., 4] > .5, turn, -turn)
+        turn = torch.where(seg[..., 4] > 0.5, turn, -turn)
         speed = torch.where(mode == MODE_STOP, torch.zeros_like(speed), speed)
         turn = torch.where(mode == MODE_TURN, turn, torch.zeros_like(turn))
         self.seg_mode.copy_(torch.where(mask[:, None], mode, self.seg_mode))
@@ -475,8 +607,14 @@ class QuadXTrackEnv:
         self.seg_speed.copy_(torch.where(mask[:, None], speed, self.seg_speed))
         self.seg_yaw.copy_(torch.where(mask[:, None], turn, self.seg_yaw))
 
-        target = torch.stack((radius * torch.cos(angle), radius * torch.sin(angle),
-                              torch.full_like(radius, TARGET_Z)), -1)
+        target = torch.stack(
+            (
+                radius * torch.cos(angle),
+                radius * torch.sin(angle),
+                torch.full_like(radius, TARGET_Z),
+            ),
+            -1,
+        )
         self.target_pos.copy_(torch.where(mask[:, None], target, self.target_pos))
         self.target_heading.copy_(torch.where(mask, heading, self.target_heading))
         self.target_mode.copy_(torch.where(mask, mode[:, 0], self.target_mode))
@@ -485,16 +623,16 @@ class QuadXTrackEnv:
         self.target_seg_index.masked_fill_(mask, 0)
         self.target_seg_timer.copy_(torch.where(mask, dur[:, 0], self.target_seg_timer))
 
-        self.ep_visible.masked_fill_(mask, 0.)
-        self.ep_invisible.masked_fill_(mask, 0.)
-        self.ep_dropout.masked_fill_(mask, 0.)
-        self.ep_max_dropout.masked_fill_(mask, 0.)
-        self.ep_ref_err.masked_fill_(mask, 0.)
-        self.ep_visible_steps.masked_fill_(mask, 0.)
-        self.ep_path.masked_fill_(mask, 0.)
-        self.ep_fov_loss.masked_fill_(mask, 0.)
-        self.ep_range_loss.masked_fill_(mask, 0.)
-        self.ep_occlusion.masked_fill_(mask, 0.)
+        self.ep_visible.masked_fill_(mask, 0.0)
+        self.ep_invisible.masked_fill_(mask, 0.0)
+        self.ep_dropout.masked_fill_(mask, 0.0)
+        self.ep_max_dropout.masked_fill_(mask, 0.0)
+        self.ep_ref_err.masked_fill_(mask, 0.0)
+        self.ep_visible_steps.masked_fill_(mask, 0.0)
+        self.ep_path.masked_fill_(mask, 0.0)
+        self.ep_fov_loss.masked_fill_(mask, 0.0)
+        self.ep_range_loss.masked_fill_(mask, 0.0)
+        self.ep_occlusion.masked_fill_(mask, 0.0)
 
         # settle the vehicle, then seed the observation with the first
         # (guaranteed in-footprint) measurement
@@ -504,8 +642,10 @@ class QuadXTrackEnv:
         self._build_observation(mask, rel_meas, vis)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)
+        self._residual_reset(mask)
 
     def reset(self):
+        """Reset every replica by delegating to reset_idx on an all-True mask."""
         mask = torch.ones((self.num_envs,), device=self.device, dtype=torch.bool)
         self.reset_idx(mask)
         self.reset_buf = mask.clone()
@@ -513,4 +653,5 @@ class QuadXTrackEnv:
         return self.get_observations()
 
     def close(self):
+        """Release the underlying Genesis plant and any other resources."""
         self.plant.close()

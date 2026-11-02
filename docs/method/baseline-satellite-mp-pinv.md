@@ -130,7 +130,7 @@ Source: `results/satellite/steering_compare.{json,md}`, produced by
 
 ```bash
 python scripts/satellite_steering_compare.py --backend cpu --num-envs 64 \
-    --arms damped,mp_pinv,flash_sac --cmgs 4,6
+    --arms damped,mp_pinv,ppo --cmgs 4,6
 ```
 
 64 replicas per arm, seed 7, one episode per replica, 1200-step cap (30 s at
@@ -147,13 +147,10 @@ peak authority ($3hN$). Failures are `runaway/timeout`.
 |---|---|---|---|---|---|---|---|---|---|---|
 | random_target | damped | 1.000 | 246.6 / 298.2 | 6.16 | 0.0195 | 0.344 | 0.244 | 86.02 | 39.5% | 0/0 |
 | random_target | mp_pinv | 1.000 | 255.2 / 317.7 | 6.38 | 0.0198 | 0.370 | 0.295 | 99.49 | 46.3% | 0/0 |
-| random_target | flash_sac | 0.000 | — | — | 2.2693 | 0.000 | 0.000 | 569.9 | 237.5% | 0/64 |
 | near_singular | damped | 1.000 | 249.6 / 295.4 | 6.24 | 0.0199 | 0.346 | 0.267 | 88.46 | 40.4% | 0/0 |
 | near_singular | mp_pinv | 1.000 | 262.9 / 321.4 | 6.57 | 0.0199 | 0.385 | 0.314 | 112.8 | 52.0% | 0/0 |
-| near_singular | flash_sac | 0.000 | — | — | 2.2448 | 0.000 | 0.000 | 547.3 | 228.0% | 0/64 |
 | singular_180 | damped | 0.000 | — | — | 3.1416 | 0.000 | 0.000 | 706.9 | 294.5% | 0/64 |
 | singular_180 | mp_pinv | 0.000 | — | — | 3.1416 | 0.000 | 0.000 | 706.9 | 294.5% | 0/64 |
-| singular_180 | flash_sac | 0.000 | — | — | 0.8152 | 0.000 | 0.000 | 491.5 | 204.8% | 0/64 |
 
 Peak pre-clamp rate request: damped 115 rad/s, ordinary 3 597 rad/s
 (`random_target`) and 5 049 rad/s (`near_singular`). The ±3 rad/s clamp is
@@ -171,7 +168,7 @@ what bounds the delivered rate in both arms.
 | singular_180 | mp_pinv | 1.000 | 284.0 / 284.0 | 7.10 | 0.0197 | 0.398 | 0.312 | 0.0972 | 43.2% | 0/0 |
 
 The torque-error percentage is normalised by the instantaneous peak authority,
-not by the command, so values above 100% (FlashSAC) mean the shared PD
+not by the command, so values above 100% mean the shared PD
 reference itself asks for more than the cluster could ever deliver at that
 state; the classical arms stay at 26–52%. Absolute torque is **not**
 comparable across the two clusters — the 6-CMG plant is a much smaller
@@ -186,8 +183,7 @@ because the 6-CMG configuration is full rank
 
 **PPO arm:** no checkpoint exists (`results/satellite_ppo` was removed after
 an aborted run under GPU contention), so PPO is reported as unavailable, not
-as a number. FlashSAC uses `results/satellite_flashsac/checkpoint.pt`
-(1000 vectorized env updates) and was only trained for 4-CMG.
+as a number.
 
 **Rank diagnostics.** The fraction of env-steps below the `pinv` rank
 threshold is 0.0 everywhere except the exact 4-CMG roof singularity (1.0,
@@ -204,9 +200,7 @@ scenarios. Replacing damping by the ordinary inverse costs
 larger pre-clamp rate request and slightly higher saturation, while success is
 unchanged. The exact 4-CMG roof singularity is a genuine failure for both
 classical arms (the PD command about the missing axes is not in the Jacobian
-range), recorded without any escape mechanism. FlashSAC fails all 4-CMG
-scenarios (terminal attitude error 2.24–2.27 rad on random/near-singular,
-0.82 rad at the 180° start), all by timeout.
+range), recorded without any escape mechanism.
 
 ## 7. Interpretation and failure cases
 
@@ -227,11 +221,6 @@ scenarios (terminal attitude error 2.24–2.27 rad on random/near-singular,
   180°-about-x target at the 4-CMG roof), both classical laws command zero
   torque about the missing axes and time out after 1200 steps. This is
   recorded as a normal failure; no escape/recovery mechanism is added.
-- The shipped FlashSAC schedule (1000 vectorized env steps, 4-CMG only)
-  completes no episode within the 1200-step horizon; its failures are
-  reported in the comparison, not patched. Its terminal attitude error is
-  2.24–2.27 rad from a random start and 0.82 rad from the 180° start, i.e. it
-  moves the satellite but does not reach the tolerance.
 
 ## 8. Implementation and registration
 
@@ -241,12 +230,10 @@ scenarios (terminal attitude error 2.24–2.27 rad on random/near-singular,
   `quat_pd_mp_pinv_cmg`, registered in `BASELINE_VARIANTS['satellite']`.
 - CLI: `scripts/baseline_eval.py` (`--baseline quat_pd_mp_pinv_cmg`,
   `--num-cmgs 4|6`) and `scripts/satellite_steering_compare.py`.
-- Reused RL arms: `results/satellite_flashsac/checkpoint.pt` (FlashSAC,
-  4-CMG) is loaded through the existing `FlashSACRunner`; the PPO slot
-  (`results/satellite_ppo/checkpoint.pt`) is currently empty, so the harness
-  reports PPO as unavailable instead of a number. Both are optional: the
-  harness auto-skips an arm whose checkpoint is missing or was trained for a
-  different CMG count.
+- Reused RL arms: the PPO slot (`results/satellite_ppo/checkpoint.pt`) is
+  currently empty, so the harness reports PPO as unavailable instead of a
+  number. The RL arm is optional: the harness auto-skips it when its
+  checkpoint is missing or was trained for a different CMG count.
 
 ## 9. Run instructions
 
@@ -255,13 +242,13 @@ scenarios (terminal attitude error 2.24–2.27 rad on random/near-singular,
 python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg
 python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg --num-cmgs 6
 
-# full steering-law comparison (damped / ordinary / PPO / FlashSAC);
+# full steering-law comparison (damped / ordinary / PPO);
 # the CPU variant is what produced section 6 (GPU was busy with 6 trainings)
 python scripts/satellite_steering_compare.py
 python scripts/satellite_steering_compare.py --backend cpu --num-envs 64 \
-    --arms damped,mp_pinv,flash_sac --cmgs 4,6
+    --arms damped,mp_pinv,ppo --cmgs 4,6
 
-# original PPO and FlashSAC into separate result directories
+# original PPO into a separate result directory
 python - <<'PY'
 from algorithms.train_utils import run_training
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
@@ -272,12 +259,10 @@ common = dict(num_envs=1024, updates=1000, seed=7, backend='gpu', clean=True,
               clip_param=0.2)
 run_training('satellite_ppo', SatelliteAttitudeEnv,
              out_dir='results/satellite_ppo', **common)
-run_training('satellite_flashsac', SatelliteAttitudeEnv, algo='flash_sac',
-             out_dir='results/satellite_flashsac', **common)
 PY
 ```
 
-The two training calls do not touch `results/satellite/`, so the frozen
+The training call does not touch `results/satellite/`, so the frozen
 baseline/audit artifacts are preserved. `satellite_steering_compare.py`
 auto-skips an RL arm when its checkpoint is missing or was trained for a
 different CMG count.

@@ -6,3 +6,7 @@ rate. No explicit mode switch in the plant or env; the physics of constant-
 authority prop thrust vs v^2-proportional lifting-surface forces lets the
 agent discover the transition regime naturally.
 """
+
+from .env import QuadplaneWaypointsEnv
+
+__all__ = ["QuadplaneWaypointsEnv"]

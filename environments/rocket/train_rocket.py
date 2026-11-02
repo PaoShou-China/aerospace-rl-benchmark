@@ -11,16 +11,17 @@ comparison; shared PPO machinery lives in algorithms/train_utils.py.
 WIND configures the wind disturbance passed to the env ctor (steady_wind,
 dryden, severity); None = calm air (bit-for-bit benchmark behavior).
 """
+
 import sys
 from pathlib import Path
 
 import torch
 
 _ROOT = Path(__file__).resolve().parents[2]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.rocket import RocketLandingEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.rocket import RocketLandingEnv  # noqa: E402
 
 # Zero-init the last linear layer of every MLPModel (actor mean head and critic
 # head) so the initial policy is exactly do-nothing: ignition cmd 0.5 (raw 0 ->
@@ -31,10 +32,11 @@ from environments.rocket import RocketLandingEnv
 # booster; zero-init is the standard do-nothing policy start. With the
 # upstream [0,1] ignition box, exploration still fires on ~50% of sampled
 # steps (raw > 0), exactly like upstream's own exploration regime.
-import torch.nn as nn
-from rsl_rl.models import MLPModel as _MLPModel
+import torch.nn as nn  # noqa: E402
+from rsl_rl.models import MLPModel as _MLPModel  # noqa: E402
 
 _mlp_init_orig = _MLPModel.__init__
+
 
 def _mlp_init_zero_last(self, *args, **kwargs):
     _mlp_init_orig(self, *args, **kwargs)
@@ -46,38 +48,33 @@ def _mlp_init_zero_last(self, *args, **kwargs):
         nn.init.zeros_(last.weight)
         nn.init.zeros_(last.bias)
 
+
 _MLPModel.__init__ = _mlp_init_zero_last
 
-TASK = 'rocket'
+TASK = "rocket"
 NUM_ENVS = 1024
-UPDATES = 2000           # flash_sac needs the longer run: sweep sizing
-                         # (scripts/sweep_tune.py FS_UPDATES) puts rocket at
-                         # 2000 its (~4 episodes/env); a 1000-it probe ended
-                         # at 0 successes with the policy still unconsolidated
+UPDATES = 2000
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-OUT_DIR = 'results/rocket_flashsac'   # separate from results/rocket, which
-                                 # holds the classical-baseline eval records
-                                 # (baseline.json / baseline_pd_landing.json);
-                                 # the ppo arm reuses this entry with
-                                 # ALGORITHM='ppo' and
-                                 # OUT_DIR='results/rocket_ppo'
-RESUME = False           # upstream-aligned task rewrite (2026-10-20): old
-                         # checkpoints belong to the dropped staged task, and
-                         # the action box changed (ignition/throttle in [0,1]),
-                         # so training restarts from scratch
-CLEAN = True             # wipe OUT_DIR before this fresh run
-ALGORITHM = 'flash_sac'  # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+OUT_DIR = "results/rocket_ppo"  # separate from results/rocket, which holds
+# the classical-baseline eval records (baseline.json /
+# baseline_pd_landing.json)
+RESUME = False  # upstream-aligned task rewrite (2026-10-20): old
+# checkpoints belong to the dropped staged task, and
+# the action box changed (ignition/throttle in [0,1]),
+# so training restarts from scratch
+CLEAN = True  # wipe OUT_DIR before this fresh run
+ALGORITHM = "ppo"
 # Wind disturbance (environments/common/disturbances.py): calm air for the
 # four-arm comparison (the classical-baseline records in results/rocket were
 # evaluated with env_kwargs={} calm air -- same caliber required; the dryden
 # robustness arm is a separate study, not this benchmark).
-WIND = dict(steady_wind=None, dryden=0., severity='moderate')
+WIND = dict(steady_wind=None, dryden=0.0, severity="moderate")
 # Rocket benchmark version:
-#   'v2' (default, current Falcon9): 7-dim finlet mixer (finlet x/y/yaw, ignition, throttle, 2 gimbals),
+#   'v2' (default, current Falcon9): 7-dim finlet mixer (finlet x/y/yaw, ignition, throttle, 2 gimbals),  # noqa: E501
 #     40 Hz, rocket_v2.urdf with 6 spherical footpads, ever_stable_2s primary metric
-#   'v1' (external benchmark): 7-dim finlet mixer, 60 Hz default, rocket.urdf (no footpads), ever_success primary metric
-BENCHMARK_VERSION = 'v2'  # 'v2' (Falcon9 current) | 'v1' (external benchmark)
+#   'v1' (external benchmark): 7-dim finlet mixer, 60 Hz default, rocket.urdf (no footpads), ever_success primary metric  # noqa: E501
+BENCHMARK_VERSION = "v2"  # 'v2' (Falcon9 current) | 'v1' (external benchmark)
 # reward (2026-10-22): the redesigned shaping (impact-speed potential, off-axis
 # cost, first-touch bonus, success +100) is now the env's ONLY implementation --
 # the verbatim-upstream arm was deleted from rocket/env.py after the
@@ -98,9 +95,12 @@ class _JsonStd(list):
     END of a full 1000-iter run 2026-10-20 -- the training itself completed).
     This list subclass converts on multiply, satisfying both.
     """
+
     def __mul__(self, other):
         return torch.as_tensor(self, dtype=other.dtype, device=other.device) * other
+
     __rmul__ = __mul__
+
 
 # Per-dim init_std for the unified 7-dim finlet convention:
 #   [finlet_x, finlet_y, finlet_yaw, ignition, throttle, gimbal_x, gimbal_y]
@@ -123,9 +123,9 @@ INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = None
+BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # num_steps_per_env=64 (documented deviation from the shared 32 default,
     # user-sanctioned fallback knob, 2026-10-20): at 32 the batch holds only
     # ~8 episodes, and the advantage signal that separates a 4 m/s touch from
@@ -140,11 +140,28 @@ if __name__ == '__main__':
     # 655k gradient samples/update, close to the paper's ~600k (10 epochs is
     # the equivalent of its 30 gradient steps at this batch size).
     env_kwargs = dict(WIND, benchmark_version=BENCHMARK_VERSION)
-    run_training(TASK, RocketLandingEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN, out_dir=OUT_DIR,
-                 algo=ALGORITHM, init_std=INIT_STD, num_steps_per_env=64,
-                 lr_schedule='fixed', learning_rate=3e-4,
-                 gamma=0.995, lam=0.97, entropy_coef=0.007,
-                 num_learning_epochs=10,
-                 clip_param=0.2, value_loss_coef=1.0, desired_kl=0.01,
-                 env_kwargs=env_kwargs, bc_warmstart=BC_WARMSTART)
+    run_training(
+        TASK,
+        RocketLandingEnv,
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        out_dir=OUT_DIR,
+        algo=ALGORITHM,
+        init_std=INIT_STD,
+        num_steps_per_env=64,
+        lr_schedule="fixed",
+        learning_rate=3e-4,
+        gamma=0.995,
+        lam=0.97,
+        entropy_coef=0.007,
+        num_learning_epochs=10,
+        clip_param=0.2,
+        value_loss_coef=1.0,
+        desired_kl=0.01,
+        env_kwargs=env_kwargs,
+        bc_warmstart=BC_WARMSTART,
+    )

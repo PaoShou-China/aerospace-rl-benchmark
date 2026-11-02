@@ -29,26 +29,27 @@ Reported per maneuver type: success rate (proximity-fuse kill, miss < 15 m),
 median miss distance over kills and over all episodes.  Results are written
 to results/missile/scenarios.json.
 """
+
 import json
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-import torch
+import torch  # noqa: E402
 
-from algorithms.baselines.baselines import MissileAPNBaseline
-from environments.missile.env import MissileInterceptEnv
+from algorithms.baselines.baselines import MissileAPNBaseline  # noqa: E402
+from environments.missile.env import MissileInterceptEnv  # noqa: E402
 
 # ---- defaults (hard-coded; edit here, no CLI) ----
-BACKEND = 'gpu'
+BACKEND = "gpu"
 SEED = 7
 NUM_ENVS = 256
-MAX_EPISODES = 256            # episodes collected (~one per replica)
-MAX_STEPS = 4000              # safety cap on env steps (episodes <= 900)
-TYPE_NAMES = ('straight', 'weave', 'barrel')   # env.t_type 0 / 1 / 2
-OUT = Path(__file__).resolve().parents[2] / 'results' / 'missile' / 'scenarios.json'
+MAX_EPISODES = 256  # episodes collected (~one per replica)
+MAX_STEPS = 4000  # safety cap on env steps (episodes <= 900)
+TYPE_NAMES = ("straight", "weave", "barrel")  # env.t_type 0 / 1 / 2
+OUT = Path(__file__).resolve().parents[2] / "results" / "missile" / "scenarios.json"
 
 
 def run_cell():
@@ -90,36 +91,43 @@ def run_cell():
             m = m[k]
         return round(float(m.to(torch.float64).median()), 1) if m.numel() else None
 
-    cell = {'episodes': int(types.numel()),
-            'success_rate': round(float(kills.to(torch.float64).mean()), 4),
-            'median_miss_kills_m': med(only_kills=True),
-            'median_miss_all_m': med(),
-            'by_type': {}}
+    cell = {
+        "episodes": int(types.numel()),
+        "success_rate": round(float(kills.to(torch.float64).mean()), 4),
+        "median_miss_kills_m": med(only_kills=True),
+        "median_miss_all_m": med(),
+        "by_type": {},
+    }
     for t, name in enumerate(TYPE_NAMES):
         sel = types == t
         n = int(sel.sum())
-        cell['by_type'][name] = {
-            'episodes': n,
-            'success_rate': round(float(kills[sel].to(torch.float64).mean()), 4) if n else None,
-            'median_miss_kills_m': med(sel, only_kills=True),
-            'median_miss_all_m': med(sel),
+        cell["by_type"][name] = {
+            "episodes": n,
+            "success_rate": round(float(kills[sel].to(torch.float64).mean()), 4) if n else None,
+            "median_miss_kills_m": med(sel, only_kills=True),
+            "median_miss_all_m": med(sel),
         }
     return cell
 
 
 def main():
     cell = run_cell()
-    report = {'task': 'missile', 'baseline': MissileAPNBaseline.name,
-              'protocol': 'single fixed medium operating point; the planned '
-                          'aspect-angle x range grid is not injectable (spawn '
-                          'geometry internal to reset_idx, 5-8 km outside the '
-                          'spawn support) -- see docstring',
-              'num_envs': NUM_ENVS, 'max_episodes': MAX_EPISODES,
-              'seed': SEED, 'cell': cell}
+    report = {
+        "task": "missile",
+        "baseline": MissileAPNBaseline.name,
+        "protocol": "single fixed medium operating point; the planned "
+        "aspect-angle x range grid is not injectable (spawn "
+        "geometry internal to reset_idx, 5-8 km outside the "
+        "spawn support) -- see docstring",
+        "num_envs": NUM_ENVS,
+        "max_episodes": MAX_EPISODES,
+        "seed": SEED,
+        "cell": cell,
+    }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2), flush=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -73,4 +73,4 @@ References
     - Method documentation: docs/method/env-orbit-transfer.md.
 """
 
-from .env import LowThrustTransferEnv
+from .env import LowThrustTransferEnv as LowThrustTransferEnv

@@ -120,9 +120,8 @@ policy step afterwards:
 
 If a failure and the final capture coincide in one substep, both flags latch and the episode is treated as
 terminated. `extras['time_outs']` is `truncated & ~terminated & ~complete`: pure timeouts only. The
-benchmark trainers bootstrap the value function exactly where `time_outs` is set — FlashSAC cuts the
-bootstrap on `done & ~time_outs` (using the pre-reset `extras['terminal_observations']` as bootstrap
-state), rsl-rl PPO via its standard `time_outs` GAE handling — so crashes, out-of-bounds, and *completed*
+benchmark trainers bootstrap the value function exactly where `time_outs` is set — rsl-rl PPO via
+its standard `time_outs` GAE handling — so crashes, out-of-bounds, and *completed*
 episodes all cut the bootstrap, and only genuine timeouts are bootstrapped.
 
 ## 8. Initial state distribution

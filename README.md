@@ -81,7 +81,6 @@ environments/             # ── everything that defines a task ──
 algorithms/               # ── everything that produces actions (learned or not) ──
 ├── train_utils.py        # shared run_training() for the per-task entries
 ├── ppo/                  # PPO config builder hook (rsl-rl MLPModel actors/critics)
-├── flashsac/flash_sac.py # FlashSAC (arXiv:2604.04539) on the batched protocol
 ├── warmstart/bc_warmstart.py  # behavior-cloning warm start from baselines
 └── baselines/            # classical (non-learned) GNC baselines, one per task
     ├── baselines.py        #   PN/PDG/LQR/autopilot/... controllers
@@ -109,30 +108,15 @@ integrators with no engine at all. All nine share the identical
 
 ## Algorithms
 
-Training entries support two algorithms through `algorithms/train_utils.py`.
-PPO can opt into the same warmup-cosine formula that FlashSAC always uses
-(`run_training(lr_cosine=True)`; floor 1.5e-4, warmup 1e-6 × total updates)
-so cross-algorithm comparisons are not schedule artifacts. Otherwise PPO
-uses each entry's fixed learning rate (the library default is 1e-3; the
-shipped entries pin 3e-4, transfer 2.5e-4) and FlashSAC uses its paper
-defaults (peak 3e-4).
+Training entries use PPO through `algorithms/train_utils.py`. PPO can opt
+into a warmup-cosine learning-rate schedule
+(`run_training(lr_cosine=True)`; floor 1.5e-4, warmup 1e-6 × total updates).
+Otherwise PPO uses each entry's fixed learning rate (the library default is
+1e-3; the shipped entries pin 3e-4, transfer 2.5e-4).
 
-- **PPO** ([rsl-rl](https://github.com/leggedrobotics/rsl_rl)): the default
+- **PPO** ([rsl-rl](https://github.com/leggedrobotics/rsl_rl)): the
   on-policy arm, a state-independent Gaussian policy over a 2x128 tanh MLP
-  with rsl-rl `EmpiricalNormalization`, trained with clipped PPO. The
-  FlashSAC-trunk variant (`algorithms/ppo/ppo_flashnet.py`,
-  `arch='flash_residual'`: residual unit-norm blocks + `UnitRMSNorm` with
-  weight renormalization, BatchNorm deliberately disabled because batch
-  statistics break PPO's importance ratio) was removed on 2026-10-28: its
-  docking arm scored 0.0% on the held-out evaluation where the MLP arm
-  reached 85.0%, and its rocket arm 0.0%.
-- **FlashSAC** (`algorithms/flashsac/flash_sac.py`): a faithful port of FlashSAC
-  (Kim et al., 2026, arXiv:2604.04539) to the batched GPU environment
-  protocol — off-policy SAC with unit-norm weights, sqrt(d)-bounded BatchNorm
-  / RMSNorm affines and reward normalization, sharply reduced gradient
-  updates compensated by larger models. Gradient control is implicit in those
-  weight/feature bounds; no gradient clipping is applied. fp16 AMP is wired
-  behind `use_amp` and is off by default.
+  with rsl-rl `EmpiricalNormalization`, trained with clipped PPO.
 
 Every run records task configuration, real transition counts, physical-step
 counts and device-side completion metrics in `results/<task>/run.json`.
@@ -237,7 +221,6 @@ no CLI arguments):
 ```bash
 python environments/multirotor/train_quadx.py
 python environments/multirotor/train_quadx_track.py   # QuadX-Track, PPO arm
-python environments/multirotor/train_quadx_track_flashsac.py  # QuadX-Track, FlashSAC arm
 python environments/fixedwing/train_fixedwing.py
 python environments/vtol/train_quadplane.py
 python environments/rocket/train_rocket.py
@@ -265,7 +248,7 @@ python scripts/baseline_eval.py quadx            # classical baseline, any regis
 python scripts/baseline_eval.py quadx --baseline cascaded_pid   # QuadX A/B: cascade PID arm
 python scripts/baseline_eval.py quadx_track
 python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg  # steering A/B
-python scripts/satellite_steering_compare.py    # damped vs ordinary pinv vs PPO/FlashSAC
+python scripts/satellite_steering_compare.py    # damped vs ordinary pinv vs PPO
 # per-task deep-dive harnesses live in their category directories
 # (see the per-category READMEs):
 python environments/multirotor/eval_quadx_track_kf.py   # KF/PID tuning on seed 101
@@ -281,8 +264,7 @@ python environments/missile/eval_missile_scenarios.py
 Results land in `results/<task>/` (`run.json` for training runs,
 `baseline.json` / per-harness reports for baselines). QuadX-Track keeps its
 three comparison arms separate: `results/quadx_track/baseline.json` and
-`kf_tuning.json` for the classical method, and `results/quadx_track/ppo/` /
-`results/quadx_track/flash_sac/` for the two learned arms.
+`kf_tuning.json` for the classical method, and `results/quadx_track/ppo/` for the learned arm.
 
 ## References
 
@@ -337,9 +319,6 @@ environment docstring lists the specific source of its defaults.
     tasks.
 11. Legged Robotics group, ETH Zürich. *rsl_rl*.
     github.com/leggedrobotics/rsl_rl — PPO training backend.
-12. Kim et al. (2026). *FlashSAC* (arXiv:2604.04539, RSS'26) — the
-    norm-controlled off-policy algorithm ported in `algorithms/flashsac/flash_sac.py`
-    and mirrored by the PPO trunk arm.
 
 ## Roadmap: planned control tasks
 

@@ -22,8 +22,8 @@
    rendezvous），6 个是 Genesis 刚体实现（quadx / quadx_track / fixedwing /
    quadplane / rocket / missile）；后者另有一条“原版 NumPy 任务代码不改一行”
    的共享场景批处理桥，可做实现级交叉校验。
-3. **算法对照基础设施**：FlashSAC 完整移植、PPO 架构匹配臂、跨算法同一 LR 调度、
-   确定性评测，以及把“失败配置为什么失败”写进代码的负结果记录。
+3. **训练基础设施**：warmup-cosine LR 调度、
+   确定性评测，以及跨任务共享的受控超参旋钮（lr_sigma_coupling、sigma_pin、freeze_obs_norm）。
 4. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
    并显式声明数值不等价边界。
 5. **经典（非学习）基线库**：10 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
@@ -163,73 +163,28 @@ Missile-Intercept）共享同一套风扰接入路径——气动力统一用**�
 
 - 阵风滤波每控制步推进一次，物理子步间冻结（Dryden 带宽远低于控制频率，
   误差可忽略）；
-- `WindDisturbance` 的 RNG 在 CPU 上，每步产生一次 CPU→GPU 传输
-  （无 device 同步）；静风路径零开销。
+- `WindDisturbance` 的 RNG 是逐副本计数器流（种子 `mix32(seed ^ i*GOLDEN)` +
+  每副本计数器，全部留在 device 上，无 CPU→GPU 传输）；带 `env_ids` 的
+  `step` 只推进被选副本的计数器，不会改变其它副本的噪声序列；
+  静风路径零开销。
 
 ---
 
-## 亮点四：算法对照基础设施——把“为什么失败”也写进代码
+## 亮点四：训练基础设施——可复用的 LR 调度与受控旋钮
 
-**断言**：仓库不只提供环境，还提供可复用的算法对照装置与负结果记录。
+**断言**：仓库提供可复用的训练调度与受控超参旋钮，保证跨任务的公平对照。
 
 **机制与证据**
 
-- **FlashSAC 完整移植**（Kim et al., 2026）：UnitLinear/BN/RMSNorm 的权重、
-  特征、梯度范数控制；101-bin 分布式 ensemble critic；tanh-Gaussian actor；
-  温度自调；zeta 噪声重复；return-RMS 奖励归一化；低 UTD 快训；EMA target。
-  与官方实现的偏差被逐条列出，且声明“none algorithmic”
-  （[flash_sac.py:1-38](../algorithms/flashsac/flash_sac.py#L1-L38)）。
-  回放缓冲是设备常驻环形缓冲，循环内无 gym、无 CPU 往返
-  （[flash_sac.py:348](../algorithms/flashsac/flash_sac.py#L348)）。
-- **PPO + FlashSAC trunk 架构匹配臂**：让 PPO 使用与 FlashSAC 相同的残差 trunk，
-  并把三处**算法性**偏差写在模块文档里（状态无关高斯、标量 critic、
-  每个优化步后首前向才重归一化）
-  （[ppo_flashnet.py:1-28](../algorithms/ppo/ppo_flashnet.py#L1-L28)）。
-- **负结果记录**：该文件明确记录了“BatchNorm + GAE 自举”的失败机制——
-  批统计让 critic 输入归一化非平稳，而 GAE 目标又要通过 critic 自举，
-  形成反馈回路压平价值面；同一 trunk 在**离线平稳数据**上反而比 MLP 好 3 倍，
-  因此问题在耦合而非架构，故 critic 在 on-policy 任务上关闭 BN
-  （[ppo_flashnet.py:80-101](../algorithms/ppo/ppo_flashnet.py#L80-L101)）。
-  这类“已排除的解释”对审稿人比调参日志有用。
-- **跨算法同一 LR 调度**：PPO 侧复用 FlashSAC 的 `_warmup_cosine_decay` 公式、
-  同一 warmup 比例与 peak→end 跨度；由于 rsl-rl 在 `schedule='fixed'` 下
-  永不重设 lr，代码直接写 `optimizer.param_groups`
+- **warmup-cosine LR 调度**：PPO 侧内置 `_warmup_cosine_decay` 公式（
+  warmup 比例 1e-6 × total updates，peak→end 跨度）；由于 rsl-rl 在
+  `schedule='fixed'` 下永不重设 lr，代码直接写 `optimizer.param_groups`
   （[train_utils.py:216-230](../algorithms/train_utils.py#L216-L230)）。
 - **其他受控旋钮**：指数衰减、`lr_sigma_coupling`（令 lr ∝ σ，保持每步策略漂移率恒定）、
   `sigma_pin`（重钉探索方差）、`freeze_obs_norm`（冻结 warm start 的观测归一化），
   均为 opt-in 且互斥关系显式检查
   （[train_utils.py:96-150](../algorithms/train_utils.py#L96-L150)、
   [train_utils.py:246-270](../algorithms/train_utils.py#L246-L270)）。
-- **docking 双因子定位（lr 迁移失败 × 架构负结果）与输出层零初始化**：
-  一次"trunk 0% vs MLP 94%"的表面对照被排查出两层混淆，最终用
-  2×2 配置矩阵把责任拆干净（全部 1024 envs / seed 7 / 其余配置逐项一致，
-  数字来自 `results/diag_docking_*`）：
-
-  | lr | envs | MLP | trunk（+零初始化头） |
-  |---|---|---|---|
-  | 5e-5（arXiv:2410.12703 对齐值） | 64 | 0.0% | — |
-  | 5e-5 | 1024 | 2.3% | 0%（零初始化 2.9%） |
-  | 3e-4（对齐前原值） | 64 | 79.4% | — |
-  | 3e-4 | 1024 | **77.9%** | **0.0%** |
-
-  ① **lr 5e-5 是全局毒药**：10-21 的 web 对齐把该 lr 写入入口后，docking
-  在任何架构/envs 下都不再成功——论文超参不跨 batch/任务尺度迁移，
-  这条负结果已写回入口注释
-  （[train_docking.py:71-82](../satellite/rendezvous_docking/train_docking.py#L71-L82)）。
-  ② **架构效应在有效 lr 下依然为真**：同配置（1024 envs, 3e-4）MLP 77.9%
-  vs trunk 0.0%。tensorboard 证据链：trunk 默认初始化的初始策略严重非中性
-  （iter-0 return −342.7，MLP +22.6）；`Policy/mean_std` 与熵两臂几乎重合
-  （排除探索问题）；决定性差异在 critic——MLP 发现捕获瞬间 value loss
-  尖峰至 127 并重塑价值面，trunk 平坦收敛于 ~0.9，归一化栈
-  （RMSNorm/权重重归一化）把 1 m 捕获悬崖平滑掉，形成"无捕获数据 →
-  critic 学不到悬崖 → 无指向捕获的梯度"的自锁。③ **输出层零初始化**
-  （[train_docking.py:26-47](../satellite/rendezvous_docking/train_docking.py#L26-L47)，先例
-  [train_rocket.py:49-65](../rocket/train_rocket.py#L49-L65)）把初始策略修成
-  零推力中性悬停（iter-0 return +59.8），捕获行为被短暂发现
-  （iter ~835 success 0.25）但守不住——它修的是起点问题，不是架构问题；
-  trunk 在 docking 上保持为记录在案的负结果，MLP 是该任务的可用臂。
-  该入口以 `ARMS` 常量同跑双臂（trunk → `results/docking`，mlp →
-  `results/docking_mlp`），配置除 arch 外逐项一致。
 
 **边界**
 
@@ -337,12 +292,10 @@ Missile-Intercept）共享同一套风扰接入路径——气动力统一用**�
    引擎数值不同（[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
 2. **不声称 NumPy 随机位流一致**。`TensorRandom` 与上游分布兼容，
    但位流不同（[plant.py:23-30](../environments/common/plant.py#L23-L30)）。
-3. **不声称基线与 RL 可比性之外的最优性**。基线是手工设计，不代表性能上界（见第 7 条）。
+3. **不声称基线与 RL 可比性之外的最优性**。基线是手工设计，不代表性能上界（见第 6 条）。
 4. **不声称原版代码桥接是高性能路径**。它是正确性优先的 host 端桥接。
-5. **不声称算法等价**。PPO+FlashNet 与 FlashSAC 的偏差已在模块文档中列明；
-   FlashSAC 移植与官方仓库的偏差也已列明。
-6. **示例数字不构成统计结论**。单 seed 结果只作记录与量级参考。
-7. **不声称经典基线最优**。基线是解析式手工设计（无优化器、无调参循环）；
+5. **示例数字不构成统计结论**。单 seed 结果只作记录与量级参考。
+6. **不声称经典基线最优**。基线是解析式手工设计（无优化器、无调参循环）；
    它们的价值是同一判据下的非学习参照与已归因的失败模式，不是性能上界。
 
 ---
@@ -397,8 +350,6 @@ python scripts/baseline_eval.py quadx
 | 纯张量 plant、逐副本随机流 | [environments/common/plant.py](../environments/common/plant.py) |
 | Genesis 兼容后端（BulletClient API） | [environments/common/original_backend.py](../environments/common/original_backend.py) |
 | 原版任务共享场景批处理 | [environments/common/original_batch.py](../environments/common/original_batch.py) |
-| FlashSAC 移植 | [algorithms/flashsac/flash_sac.py](../algorithms/flashsac/flash_sac.py) |
-| PPO 架构匹配臂与负结果记录 | [algorithms/ppo/ppo_flashnet.py](../algorithms/ppo/ppo_flashnet.py) |
 | 训练/记录管线、LR 调度对齐 | [algorithms/train_utils.py](../algorithms/train_utils.py) |
 | 8 任务经典基线库 | [algorithms/baselines/baselines.py](../algorithms/baselines/baselines.py) |
 | 基线统一评测入口 | [baseline_eval.py](../scripts/baseline_eval.py) |

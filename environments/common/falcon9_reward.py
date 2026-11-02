@@ -32,8 +32,8 @@ The reward function is called ONCE per POLICY step (50 Hz), using state
 snapshots at the START and END of the 10 physics substeps. Contact info
 is accumulated inside the substep loop.
 """
+
 from __future__ import annotations
-from typing import Optional
 import torch
 from torch import Tensor
 
@@ -84,25 +84,24 @@ CONTACT_VEL_COEF = 1.0
 # One-shot success bonus. 5000 >> 600 (hover cost over 40s). Dominance OK.
 SUCCESS_BONUS = 5000.0
 
-REWARD_KEYS = ('hover', 'hold', 'lateral', 'descent', 'decel', 'attitude',
-               'contact', 'success')
+REWARD_KEYS = ("hover", "hold", "lateral", "descent", "decel", "attitude", "contact", "success")
 
 # ---------------------------------------------------------------------------
 # Thresholds (real-scale)
 # ---------------------------------------------------------------------------
 # Success thresholds — Falcon 9 lands at ~2-4 m/s.
-SUCCESS_VZ_MAX = 2.0         # m/s world descent speed at success
-SUCCESS_SPIN_MAX = 0.1       # rad/s body angular rate magnitude
-SUCCESS_TILT_MAX = 0.15      # rad (8.6°) roll/pitch magnitude
+SUCCESS_VZ_MAX = 2.0  # m/s world descent speed at success
+SUCCESS_SPIN_MAX = 0.1  # rad/s body angular rate magnitude
+SUCCESS_TILT_MAX = 0.15  # rad (8.6°) roll/pitch magnitude
 
 # Fatal on-pad thresholds — anything faster than ~30 km/h touchdown = crash.
-FATAL_PAD_SPEED = 8.0        # m/s speed at first pad contact
-FATAL_PAD_SPIN = 0.5         # rad/s
+FATAL_PAD_SPEED = 8.0  # m/s speed at first pad contact
+FATAL_PAD_SPIN = 0.5  # rad/s
 
 # Bounds
-BOUNDS_XY = 200.0            # m half-range
-BOUNDS_Z = 15000.0           # m altitude upper bound
-BOUNDS_Z_LOW = 0.0           # below ground = fatal
+BOUNDS_XY = 200.0  # m half-range
+BOUNDS_Z = 15000.0  # m altitude upper bound
+BOUNDS_Z_LOW = 0.0  # below ground = fatal
 
 # Maximum simulation time
 EPISODE_SECONDS = 40
@@ -131,9 +130,12 @@ def _body_tilt_from_quat(q_wxyz: Tensor) -> Tensor:
 # ---------------------------------------------------------------------------
 def falcon9_shaping(
     cfg: dict,
-    pos_prev: Tensor, pos_now: Tensor,
-    vel_z_now: Tensor, vel_z_prev: Tensor,
-    quat_now: Tensor, body_omega_now: Tensor,
+    pos_prev: Tensor,
+    pos_now: Tensor,
+    vel_z_now: Tensor,
+    vel_z_prev: Tensor,
+    quat_now: Tensor,
+    body_omega_now: Tensor,
     contact_pad: Tensor,
     contact_vz: Tensor,
     newly_complete: Tensor,
@@ -156,11 +158,9 @@ def falcon9_shaping(
     Returns:
         total reward (N,), component dict with per-key (N,) tensors
     """
-    N = pos_prev.shape[0]
-    dev = pos_prev.device
     dxy_prev = pos_prev[:, :2].norm(dim=-1)
-    dxy_now  = pos_now[:, :2].norm(dim=-1)
-    dz = pos_prev[:, 2] - pos_now[:, 2]     # positive = descending
+    dxy_now = pos_now[:, :2].norm(dim=-1)
+    dz = pos_prev[:, 2] - pos_now[:, 2]  # positive = descending
     dvz = vel_z_now - vel_z_prev
 
     z_clamped = pos_now[:, 2].clamp_min(0.0)
@@ -174,17 +174,18 @@ def falcon9_shaping(
     # Falcon 9 uses body z up (vehicle axis), so yaw = ω_z
 
     comps = {
-        'hover':   torch.full_like(dxy_now, -cfg['hover']),
-        'hold':    cfg['hold'] / (dxy_now + 0.1),
-        'lateral': cfg['lateral'] * (dxy_prev - dxy_now),
-        'descent': cfg['descent'] * dz,
-        'decel':   cfg['decel'] * decel,
-        'attitude': (-cfg['yaw'] * yaw_abs
-                     - cfg['tilt'] * tilt),
-        'contact': torch.where(contact_pad,
-                               cfg['contact_base'] - cfg['contact_vel'] * contact_vz.abs(),
-                               torch.zeros_like(dxy_now)),
-        'success': newly_complete.to(dxy_now.dtype) * cfg['success'],
+        "hover": torch.full_like(dxy_now, -cfg["hover"]),
+        "hold": cfg["hold"] / (dxy_now + 0.1),
+        "lateral": cfg["lateral"] * (dxy_prev - dxy_now),
+        "descent": cfg["descent"] * dz,
+        "decel": cfg["decel"] * decel,
+        "attitude": (-cfg["yaw"] * yaw_abs - cfg["tilt"] * tilt),
+        "contact": torch.where(
+            contact_pad,
+            cfg["contact_base"] - cfg["contact_vel"] * contact_vz.abs(),
+            torch.zeros_like(dxy_now),
+        ),
+        "success": newly_complete.to(dxy_now.dtype) * cfg["success"],
     }
     total = sum(comps.values())
     return total, comps
@@ -195,10 +196,15 @@ def falcon9_shaping(
 # ---------------------------------------------------------------------------
 def default_reward_cfg() -> dict:
     return dict(
-        hover=HOVER_COST, hold=HOLD_COEF, lateral=LATERAL_COEF,
-        descent=DESCENT_COEF, decel=DECEL_COEF,
-        yaw=YAW_COEF, tilt=TILT_COEF,
-        contact_base=CONTACT_BASE, contact_vel=CONTACT_VEL_COEF,
+        hover=HOVER_COST,
+        hold=HOLD_COEF,
+        lateral=LATERAL_COEF,
+        descent=DESCENT_COEF,
+        decel=DECEL_COEF,
+        yaw=YAW_COEF,
+        tilt=TILT_COEF,
+        contact_base=CONTACT_BASE,
+        contact_vel=CONTACT_VEL_COEF,
         success=SUCCESS_BONUS,
     )
 

@@ -132,7 +132,7 @@ Float32 vector of dimension 25 under the `policy` key of a TensorDict:
 
 The observation contains **no target truth**: no target position, velocity, mode, schedule, or time since
 last seen. An invisible step is indistinguishable from "no measurement at this instant" apart from the
-flag. The PPO and FlashSAC entries consume exactly this vector with their original memoryless networks.
+flag. The PPO entry consumes exactly this vector with its original memoryless network.
 The classical baseline consumes the same vector; its Kalman filter is part of that method, not extra
 sensor information.
 
@@ -194,7 +194,7 @@ completed episodes and report them under `task_metrics`.
   from `environments/multirotor/__init__.py`. Plant in `environments/common/plant.py`.
 - Conventional controller: `QuadXTrackKFBaseline`, exposed as the class attribute
   `conventional_controller`.
-- Training entry: `environments/multirotor/train_quadx_track.py` (PPO / FlashSAC).
+- Training entry: `environments/multirotor/train_quadx_track.py` (PPO).
 - Tuning and test harnesses: `eval_quadx_track_kf.py`, `test_quadx_track.py`.
 
 | Constant | Value |
@@ -210,52 +210,41 @@ completed episodes and report them under `task_metrics`.
 | reward weights | +0.10 visible, −0.10 lost, −0.05/m track, −0.01/m² altitude, −0.002 action², −10 crash |
 | `vel_clamp` | 15 m/s, 30 rad/s |
 
-## 13. RL comparison protocol (original PPO vs original FlashSAC)
+## 13. RL training protocol (PPO)
 
-Both learned arms are the **unmodified repository implementations**:
+The learned arm is the **unmodified repository PPO implementation**:
 
-- PPO: `rsl_rl` `OnPolicyRunner` with the task's shipped `FlashResTrunk` actor-critic (no recurrent
-  layer), 100 vectorized steps per update, 5 epochs, 4 minibatches, lr $3\times10^{-4}$, entropy
+- PPO: `rsl_rl` `OnPolicyRunner` with the rsl-rl `MLPModel` actor-critic (2x128 tanh,
+  no recurrent layer), 100 vectorized steps per update, 5 epochs, 4 minibatches, lr $3\times10^{-4}$, entropy
   $0.01$, initial action std 1.0.
-- FlashSAC: `algorithms/flashsac/flash_sac.py` (norm-controlled actor/critic, tanh-Gaussian policy,
-  automatic temperature, one vectorized step per iteration), using its original `flash_sac_cfg`
-  defaults. No filter, predictor, GRU/LSTM, safety layer, reward shaping or observation augmentation is
-  added by the entry.
 
-Both consume the 25-D observation of Section 7 (current own state, current measurement, visibility
+It consumes the 25-D observation of Section 7 (current own state, current measurement, visibility
 flag; zero measurement when invisible), the same 4-D action interface, the same reward (Section 8), the
-same reset distribution and the same evaluation scenarios.
+same reset distribution and the same evaluation scenarios as the classical baseline.
 
-**Shared interaction budget.** `TRAIN_ENV_STEPS = 6,000` vectorized policy steps at 1024 replicas
-(6.14 M transitions) for both arms:
+**Interaction budget.** `TRAIN_ENV_STEPS = 6,000` vectorized policy steps at 1024 replicas
+(6.14 M transitions):
 
 | Arm | Iterations | Env steps per iteration | Transitions |
 |---|---|---|---|
 | PPO | 60 updates | 100 | 6.14 M |
-| FlashSAC | 6,000 iterations | 1 | 6.14 M |
 
-The algorithms' own gradient-update counts and wall-clock differ by construction; this table equalizes
-the data budget, which is the quantity that matters for the comparison. The seed is 7 for training and
-for evaluation, so the learned arms and the classical baseline see the same scenario population. The
-budget is deliberately small: it is the largest equal budget that completes inside a bounded wall-clock
-on the shared, saturated GPU this benchmark is developed on. PPO therefore gets 60 updates and FlashSAC
-6,000 gradient updates (its replay buffer needs 10,000 transitions before the first update, i.e. ~10
-iterations at 1024 replicas).
+The seed is 7 for training and for evaluation, so the learned arm and the classical baseline see the
+same scenario population. The budget is deliberately small: it is the largest budget that completes
+inside a bounded wall-clock on the shared, saturated GPU this benchmark is developed on.
 
 **Commands.**
 
 ```bash
 python environments/multirotor/train_quadx_track.py            # PPO arm
-python environments/multirotor/train_quadx_track_flashsac.py   # FlashSAC arm
 python scripts/eval.py quadx_track --out results/quadx_track/ppo
-python scripts/eval.py quadx_track --out results/quadx_track/flash_sac
 python scripts/baseline_eval.py quadx_track
 ```
 
 Evaluation is deterministic (Gaussian mean action), 1024 replicas, seed 7, until every replica has
 completed at least one episode; `scripts/eval.py` restores the training `env_kwargs` from
-`results/quadx_track/<algo>/config.json`. Artifacts: `results/quadx_track/ppo/eval.json`,
-`results/quadx_track/flash_sac/eval.json`, `results/quadx_track/baseline.json`.
+`results/quadx_track/ppo/config.json`. Artifacts: `results/quadx_track/ppo/eval.json`,
+`results/quadx_track/baseline.json`.
 
 ## 14. References
 

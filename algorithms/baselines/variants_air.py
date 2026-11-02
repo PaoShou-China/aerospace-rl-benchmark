@@ -26,10 +26,16 @@ stateful parts clearable through reset_idx.  All constants are hard-coded
 class attributes selected a priori: as A/B arms these are expected to sit at
 or below the tuned defaults, and that gap is the measurement being taken.
 """
+
 import torch
 
-from algorithms.baselines.baselines import (Baseline, QuadXSE3Baseline,
-                                            _cross_cols, _quat_to_matrix, _vec)
+from algorithms.baselines.baselines import (
+    Baseline,
+    QuadXSE3Baseline,
+    _cross_cols,
+    _quat_to_matrix,
+    _vec,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -50,81 +56,110 @@ class _MissileRateBaseline(Baseline):
     accordingly, then normalizing per axis into [-1, 1].
     """
 
-    LOS_FILTER = 0.8   # first-order LOS-rate low-pass coefficient (APN family)
+    LOS_FILTER = 0.8  # first-order LOS-rate low-pass coefficient (APN family)
 
-    def __init__(self, env):
-        super().__init__(env)
+    def __init__(self, env, design=None):
+        super().__init__(env, design)
         d = self.device
         from environments.missile.env import OMEGA_MAX, OMEGA_LAT
-        self.omega_scale = torch.tensor((OMEGA_MAX, OMEGA_LAT, OMEGA_LAT),
-                                        device=d, dtype=torch.float64)
+
+        self.omega_scale = torch.tensor(
+            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=d, dtype=torch.float64
+        )
         self.lam_filt = torch.zeros((env.num_envs, 3), device=d, dtype=torch.float64)
 
     def reset_idx(self, mask):
-        self.lam_filt.masked_fill_(mask[:, None], 0.)
+        self.lam_filt.masked_fill_(mask[:, None], 0.0)
 
     def _filter_los(self, lam, vc):
         """First-order LOS-rate low-pass, frozen below Vc < 50 m/s."""
-        alpha = torch.where(vc < 50., torch.zeros_like(vc),
-                            torch.full_like(vc, self.LOS_FILTER))
+        alpha = torch.where(
+            vc < 50.0,
+            torch.zeros_like(vc),
+            torch.as_tensor(self.LOS_FILTER, device=vc.device, dtype=vc.dtype),
+        )
         self.lam_filt += alpha[:, None] * (lam - self.lam_filt)
         return self.lam_filt
 
     def _rate_command(self, a_cmd_w, R, V):
         """World specific-acceleration command -> normalized rate action."""
-        a_lat_b = torch.einsum('nji,nj->ni', R, a_cmd_w)
+        a_lat_b = torch.einsum("nji,nj->ni", R, a_cmd_w)
         a_lat_b = a_lat_b - a_lat_b[:, 0:1] * torch.tensor(
-            (1., 0., 0.), device=self.device, dtype=torch.float64)
-        b_x = torch.tensor((1., 0., 0.), device=self.device,
-                           dtype=torch.float64).expand_as(a_lat_b)
+            (1.0, 0.0, 0.0), device=self.device, dtype=torch.float64
+        )
+        b_x = torch.tensor((1.0, 0.0, 0.0), device=self.device, dtype=torch.float64).expand_as(
+            a_lat_b
+        )
         w_cmd = _cross_cols(b_x, a_lat_b) / V[:, None]
-        return (w_cmd / self.omega_scale).clamp(-1., 1.).to(torch.float32)
+        return (w_cmd / self.omega_scale).clamp(-1.0, 1.0).to(torch.float32)
 
 
 class MissilePPNBaseline(_MissileRateBaseline):
-    """Pure-pursuit guidance on the env's body-rate command interface.
+    """Pure-pursuit guidance (velocity-frame) on the env's body-rate interface.
 
     Method
-        Pure pursuit commands a lateral acceleration along the INSTANTANEOUS
-        LOS direction r_hat -- the classic no-lead "chase the bearing" law
-        that aligns the thrust axis with the target direction:
-            a_pp = K_PURSUIT * V_m * r_hat_w ,
-        so the implied turn rate a/V collapses to K_PURSUIT * sin(heading
-        error).  A point-mass gravity compensation toward -g is added so the
-        specific acceleration the airframe must realize is a_pp - g; the
-        axial component is then removed by the b_x projection in the shared
+        Pure pursuit (Zarchan's pursuit guidance) commands a lateral
+        acceleration that rotates the missile's VELOCITY (heading) vector
+        onto the instantaneous LOS direction r_hat -- the classic no-lead
+        "chase the bearing" law.  With e = v_hat x r_hat (the pursuit-error
+        rotation axis, magnitude sin(heading error)):
+            a_pp = K_PURSUIT * V_m * (e x v_hat)
+        a pull perpendicular to the velocity at turn rate K_PURSUIT *
+        sin(gamma).  A point-mass gravity compensation toward -g is added so
+        the specific acceleration the airframe must realize is a_pp - g; the
+        axial component is removed by the b_x projection in the shared
         skid-to-turn inverse, exactly as in the APN default.
 
-        The LOS-rate low-pass filter is maintained with the identical form,
-        terminal freeze (alpha = 0 for Vc < 50 m/s) and reset_idx clearing as
-        the APN/TPN family for interface parity; the pure-pursuit law itself
-        is LOS-direction-only and does not consume the filtered rate.
+        Formulation note (documented negative results, seed 7).  Three
+        families were measured at 0% SR before fixing this form: the
+        body-axis law (align b_x with the LOS; K in {1.2, 3, 6}) whose
+        equilibrium aligns the body while the velocity keeps a persistent
+        perpendicular drift from the deliberately imperfect TGO_SCALE=0.8
+        launch lead; the velocity-frame P-only law at low/mid gain (K in
+        {1.5, 4}), which nulls the drift mid-course but whose tracking lag
+        (miss ~ v_perp_rel / K) grows unbounded as the LOS rate builds; and
+        a PD variant with a finite-difference damping term (K_DAMP in
+        {0.4, 0.6, 1.0}), which measurably WORSENED every run (one-step
+        delayed feedback of the command's own response).  The structural
+        ceiling is theoretical, not a tuning failure: pure pursuit has no
+        lead, so the first-pass miss is v_perp_rel (up to ~150 m/s of target
+        motion perpendicular to the LOS inside the +-37.5 deg heading cone)
+        times the achievable pursuit-loop time constant, and the plant's
+        steering bandwidth floors that at ~40-100 m -- well above the 15 m
+        kill radius.  K_PURSUIT = 16 is the best measured operating point
+        (mean closest approach ~91 m on forced-straight episodes vs 109 m at
+        K=8, 149 m at K=4 and 167 m at K=1.5; K=32 gains little more at
+        higher chatter risk); the arm is kept as the measured lower bound of
+        the guidance family.
 
-    Known limitation (why this is an A/B arm, not the default): pure pursuit
-    carries no lead, so it lags the 7.5 g weaving target and formally needs
-    unbounded lateral acceleration for a perfect terminal intercept against
-    any crossing geometry; expect a lower success rate than APN with larger
-    miss distances.
+        Internal state: the shared LOS-rate low-pass filter, cleared by
+        reset_idx.  It is kept for family interface parity (terminal
+        Vc < 50 m/s freeze) and is not consumed by the pursuit law.
     """
 
-    name = 'ppn'
-    K_PURSUIT = 1.2   # commanded turn-rate scale [1/s]: a_pp = K * V * r_hat
-    GRAV_COMP = 1.0   # point-mass gravity compensation fraction of -g
+    name = "ppn"
+    K_PURSUIT = 16.0  # pursuit gain [1/s]: turn rate = K * sin(gamma)
+    GRAV_COMP = 1.0  # point-mass gravity compensation fraction of -g
 
     @torch.no_grad()
     def actions(self, obs):
         o = _vec(obs).to(torch.float64)
         q, vb = o[:, 3:7], o[:, 7:10]
-        r_b, lam, vc = o[:, 23:26], o[:, 29:32], o[:, 32].clamp_min(0.)
+        r_b, lam, vc = o[:, 23:26], o[:, 29:32], o[:, 32].clamp_min(0.0)
         R = _quat_to_matrix(q)
-        self._filter_los(lam, vc)            # parity state; unused by the PP law
+        self._filter_los(lam, vc)  # parity state; unused by the PP law
         rng = r_b.norm(dim=-1).clamp_min(1e-3)
-        r_hat_w = torch.einsum('nij,nj->ni', R, r_b / rng[:, None])
-        V = vb.norm(dim=-1).clamp_min(50.)
-        a_pp = self.K_PURSUIT * V[:, None] * r_hat_w
-        g = torch.tensor((0., 0., -9.81), device=self.device,
-                         dtype=torch.float64).expand_as(r_hat_w)
-        a_cmd = a_pp - self.GRAV_COMP * g    # point-mass compensation toward -g
+        r_hat_w = torch.einsum("nij,nj->ni", R, r_b / rng[:, None])
+        v_w = torch.einsum("nij,nj->ni", R, vb)
+        v_hat_w = v_w / v_w.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        V = vb.norm(dim=-1).clamp_min(50.0)
+        # velocity-frame pure pursuit: rotate the heading onto the LOS
+        e = _cross_cols(v_hat_w, r_hat_w)
+        a_pp = self.K_PURSUIT * V[:, None] * _cross_cols(e, v_hat_w)
+        g = torch.tensor((0.0, 0.0, -9.81), device=self.device, dtype=torch.float64).expand_as(
+            r_hat_w
+        )
+        a_cmd = a_pp - self.GRAV_COMP * g  # point-mass compensation toward -g
         return self._rate_command(a_cmd, R, V)
 
 
@@ -150,25 +185,40 @@ class MissileTPNBaseline(_MissileRateBaseline):
     the maneuvering target is expected to exceed the APN default's.
     """
 
-    name = 'tpn'
-    N_PRIME = 15.0    # navigation constant (same family as the APN default)
-    GRAV_BIAS = 1.0   # standalone gravity-bias feedforward, fraction of g_perp
+    name = "tpn"
+    N_PRIME = 15.0  # navigation constant (same family as the APN default)
+    GRAV_BIAS = 1.0  # standalone gravity-bias feedforward, fraction of g_perp
+
+    # tunable gain space for online gain scheduling
+    TUNABLE_PARAMS = {
+        "N_PRIME": dict(low=8.0, high=25.0, default=15.0),
+        "GRAV_BIAS": dict(low=0.0, high=3.0, default=1.0),
+        "LOS_FILTER": dict(low=0.5, high=0.95, default=0.8),
+    }
+
+    def __init__(self, env, design=None):
+        super().__init__(env, design)
+        for _k in self.TUNABLE_PARAMS:
+            setattr(self, _k, self._param(_k))
 
     @torch.no_grad()
     def actions(self, obs):
         o = _vec(obs).to(torch.float64)
         q, vb = o[:, 3:7], o[:, 7:10]
-        r_b, lam, vc = o[:, 23:26], o[:, 29:32], o[:, 32].clamp_min(0.)
+        r_b, lam, vc = o[:, 23:26], o[:, 29:32], o[:, 32].clamp_min(0.0)
         R = _quat_to_matrix(q)
-        lam_w = torch.einsum('nij,nj->ni', R, self._filter_los(lam, vc))
+        lam_w = torch.einsum("nij,nj->ni", R, self._filter_los(lam, vc))
         rng = r_b.norm(dim=-1).clamp_min(1e-3)
-        r_hat_w = torch.einsum('nij,nj->ni', R, r_b / rng[:, None])
-        g = torch.tensor((0., 0., -9.81), device=self.device,
-                         dtype=torch.float64).expand_as(r_hat_w)
+        r_hat_w = torch.einsum("nij,nj->ni", R, r_b / rng[:, None])
+        g = torch.tensor((0.0, 0.0, -9.81), device=self.device, dtype=torch.float64).expand_as(
+            r_hat_w
+        )
         g_perp = g - (g * r_hat_w).sum(-1, keepdim=True) * r_hat_w
-        a_cmd = self.N_PRIME * vc[:, None] * _cross_cols(lam_w, r_hat_w) \
-            + self.GRAV_BIAS * g_perp
-        V = vb.norm(dim=-1).clamp_min(50.)
+        a_cmd = (
+            self._gain("N_PRIME")[:, None] * vc[:, None] * _cross_cols(lam_w, r_hat_w)
+            + self._gain("GRAV_BIAS")[:, None] * g_perp
+        )
+        V = vb.norm(dim=-1).clamp_min(50.0)
         return self._rate_command(a_cmd, R, V)
 
 
@@ -200,16 +250,25 @@ class QuadXTrackPursuitBaseline(QuadXSE3Baseline):
     All constants are hard-coded class attributes (no constructor knobs).
     """
 
-    name = 'pursuit'
-    HOLD_TIMEOUT = 3.0       # s without detection before the fixed hold
-    V_MAX = 3.0              # m/s, tracking cruise cap
-    KX, KV = 4.0, 2.0        # position PD (same cascade gains as the KF arm)
+    name = "pursuit"
+    HOLD_TIMEOUT = 3.0  # s without detection before the fixed hold
+    V_MAX = 3.0  # m/s, tracking cruise cap
+    KX, KV = 4.0, 2.0  # position PD (same cascade gains as the KF arm)
+
+    # tunable space inherited from QuadXSE3, except the two gains this arm
+    # re-tunes (KV, V_MAX): their scheduling nominal must be this arm's
+    # hand-tuned value, not the multirotor-waypoint default.
+    TUNABLE_PARAMS = dict(
+        QuadXSE3Baseline.TUNABLE_PARAMS,
+        KV=dict(low=0.5, high=5.0, default=2.0),
+        V_MAX=dict(low=1.0, high=6.0, default=3.0),
+    )
 
     def __init__(self, env):
         super().__init__(env)
         d = self.device
         self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=torch.float64)
-        self.home = torch.tensor((0., 0., env.ALT_REF), device=d, dtype=torch.float64)
+        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=torch.float64)
         self.alt = torch.tensor(env.ALT_REF, device=d, dtype=torch.float64)
         n = env.num_envs
         self.seen = torch.zeros(n, device=d, dtype=torch.bool)
@@ -219,26 +278,26 @@ class QuadXTrackPursuitBaseline(QuadXSE3Baseline):
     def reset_idx(self, mask):
         super().reset_idx(mask)
         self.seen.masked_fill_(mask, False)
-        self.since_seen.masked_fill_(mask, 0.)
-        self.ref_hold.copy_(torch.where(mask[:, None],
-                                        self.home.expand_as(self.ref_hold),
-                                        self.ref_hold))
+        self.since_seen.masked_fill_(mask, 0.0)
+        self.ref_hold.copy_(
+            torch.where(mask[:, None], self.home.expand_as(self.ref_hold), self.ref_hold)
+        )
 
     def actions(self, obs):
         o = _vec(obs).to(torch.float64)
-        p, rel, vis = o[:, 10:13], o[:, 21:24], o[:, 24] > .5
+        p, rel, vis = o[:, 10:13], o[:, 21:24], o[:, 24] > 0.5
         # raw reference: own position + relative measurement (world axes)
-        meas_ref = torch.cat(((p[:, :2] + rel[:, :2]) + self.offset,
-                              self.alt.expand(p.shape[0], 1)), -1)
-        self.since_seen = torch.where(vis, torch.zeros_like(self.since_seen),
-                                      self.since_seen + self.dt)
+        meas_ref = torch.cat(
+            ((p[:, :2] + rel[:, :2]) + self.offset, self.alt.expand(p.shape[0], 1)), -1
+        )
+        self.since_seen = torch.where(
+            vis, torch.zeros_like(self.since_seen), self.since_seen + self.dt
+        )
         timed_out = self.seen & (self.since_seen > self.HOLD_TIMEOUT)
         # detections refresh the held reference; once timed out it stays put
-        self.ref_hold = torch.where((vis & ~timed_out)[:, None], meas_ref,
-                                    self.ref_hold)
+        self.ref_hold = torch.where((vis & ~timed_out)[:, None], meas_ref, self.ref_hold)
         self.seen |= vis
-        ref = torch.where(self.seen[:, None], self.ref_hold,
-                          self.home.expand(p.shape[0], 3))
+        ref = torch.where(self.seen[:, None], self.ref_hold, self.home.expand(p.shape[0], 3))
         # no target-velocity feedforward: v_ff = 0 (no estimator)
         return self._track(ref, obs)
 
@@ -272,18 +331,26 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
     scalar alpha per channel versus the KF's process/measurement model.
     """
 
-    name = 'pid_ema'
-    POS_ALPHA = 0.15         # EMA coefficient on the target position estimate
-    VEL_ALPHA = 0.10         # EMA coefficient on the velocity finite difference
-    HOLD_TIMEOUT = 3.0       # s without detection before the fixed hold
-    V_MAX = 3.0              # m/s, tracking cruise cap
-    KX, KV = 4.0, 2.0        # position PD (same cascade gains as the KF arm)
+    name = "pid_ema"
+    POS_ALPHA = 0.15  # EMA coefficient on the target position estimate
+    VEL_ALPHA = 0.10  # EMA coefficient on the velocity finite difference
+    HOLD_TIMEOUT = 3.0  # s without detection before the fixed hold
+    V_MAX = 3.0  # m/s, tracking cruise cap
+    KX, KV = 4.0, 2.0  # position PD (same cascade gains as the KF arm)
+
+    # same rationale as QuadXTrackPursuitBaseline: the scheduling nominal of
+    # the re-tuned gains must match this arm's hand-tuned constants.
+    TUNABLE_PARAMS = dict(
+        QuadXSE3Baseline.TUNABLE_PARAMS,
+        KV=dict(low=0.5, high=5.0, default=2.0),
+        V_MAX=dict(low=1.0, high=6.0, default=3.0),
+    )
 
     def __init__(self, env):
         super().__init__(env)
         d = self.device
         self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=torch.float64)
-        self.home = torch.tensor((0., 0., env.ALT_REF), device=d, dtype=torch.float64)
+        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=torch.float64)
         self.alt = torch.tensor(env.ALT_REF, device=d, dtype=torch.float64)
         n = env.num_envs
         self.est = torch.zeros((n, 3), device=d, dtype=torch.float64)
@@ -295,19 +362,18 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
 
     def reset_idx(self, mask):
         super().reset_idx(mask)
-        self.est.masked_fill_(mask[:, None], 0.)
-        self.v_est.masked_fill_(mask[:, None], 0.)
+        self.est.masked_fill_(mask[:, None], 0.0)
+        self.v_est.masked_fill_(mask[:, None], 0.0)
         self.initialized.masked_fill_(mask, False)
-        self.since_seen.masked_fill_(mask, 0.)
+        self.since_seen.masked_fill_(mask, 0.0)
         self.frozen.masked_fill_(mask, False)
-        self.hold.copy_(torch.where(mask[:, None],
-                                    self.home.expand_as(self.hold), self.hold))
+        self.hold.copy_(torch.where(mask[:, None], self.home.expand_as(self.hold), self.hold))
 
     def actions(self, obs):
         o = _vec(obs).to(torch.float64)
-        p, rel, vis = o[:, 10:13], o[:, 21:24], o[:, 24] > .5
+        p, rel, vis = o[:, 10:13], o[:, 21:24], o[:, 24] > 0.5
         dt = self.dt
-        y = p + rel                                    # world-axes measurement
+        y = p + rel  # world-axes measurement
 
         # ---- EMA position filter (detections only, no blind prediction) ---
         fresh = vis & ~self.initialized
@@ -321,21 +387,23 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
         self.initialized |= vis
 
         # ---- fixed timeout hold (KF baseline semantics) --------------------
-        self.since_seen = torch.where(vis, torch.zeros_like(self.since_seen),
-                                      self.since_seen + dt)
+        self.since_seen = torch.where(vis, torch.zeros_like(self.since_seen), self.since_seen + dt)
         timed_out = self.initialized & (self.since_seen > self.HOLD_TIMEOUT)
         freeze_now = timed_out & ~self.frozen
-        ref_est = torch.cat((self.est[:, :2] + self.offset,
-                             self.alt.expand(self.est.shape[0], 1)), -1)
+        ref_est = torch.cat(
+            (self.est[:, :2] + self.offset, self.alt.expand(self.est.shape[0], 1)), -1
+        )
         self.hold = torch.where(freeze_now[:, None], ref_est, self.hold)
         self.frozen = timed_out
 
         ref = torch.where(self.frozen[:, None], self.hold, ref_est)
-        ref = torch.where(self.initialized[:, None], ref,
-                          self.home.expand(p.shape[0], 3))
-        v_ff = torch.cat((self.v_est[:, :2],
-                          torch.zeros((self.est.shape[0], 1), device=o.device,
-                                      dtype=torch.float64)), -1)
-        v_ff = torch.where((self.initialized & ~self.frozen)[:, None], v_ff,
-                           torch.zeros_like(v_ff))
+        ref = torch.where(self.initialized[:, None], ref, self.home.expand(p.shape[0], 3))
+        v_ff = torch.cat(
+            (
+                self.v_est[:, :2],
+                torch.zeros((self.est.shape[0], 1), device=o.device, dtype=torch.float64),
+            ),
+            -1,
+        )
+        v_ff = torch.where((self.initialized & ~self.frozen)[:, None], v_ff, torch.zeros_like(v_ff))
         return self._track(ref, obs, v_ff)

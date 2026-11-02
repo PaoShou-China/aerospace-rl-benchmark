@@ -67,4 +67,4 @@ References
     - Method documentation: docs/method/env-fixedwing-waypoints.md.
 """
 
-from .env import FixedwingWaypointsEnv
+from .env import FixedwingWaypointsEnv as FixedwingWaypointsEnv

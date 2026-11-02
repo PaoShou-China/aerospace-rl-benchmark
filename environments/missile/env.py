@@ -55,252 +55,397 @@ EmpiricalNormalization owns scaling):
   [29:32] LOS rate (body) [rad/s]  [32:33] closing speed Vc [m/s]
   [33:34] target speed [m/s]
 """
+
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
-from environments.common.dynamics import euler, inverse_rotate
+from environments.common.dynamics import inverse_rotate
 from algorithms.baselines.baselines import MissileAPNBaseline
+from environments.common.residual import ResidualActionMixin
+from environments.common.base_env import BaseEnv
+from environments.common.domain_randomization import (
+    apply_static_perturbation,
+    apply_domain_randomization,
+    resolve_domain_randomize,
+)
 
 
-def _aim_quat(aim,roll):
+def _aim_quat(aim, roll):
     """Batched xyzw quaternion taking body +x to `aim` plus a small extra roll
     about body x.  Local on purpose: the shared dynamics.quat_from_euler is
     the repo's (scaled, near-identity) rocket/fixedwing convention and must
     not be retargeted."""
-    x_hat=torch.tensor([1.,0.,0.],device=aim.device,dtype=aim.dtype).expand_as(aim)
-    axis=torch.linalg.cross(x_hat,aim)
-    ang=torch.atan2(axis.norm(dim=-1),aim[...,0].clamp(-1,1))
-    axis=axis/axis.norm(dim=-1).clamp_min(1e-9)[:,None]
-    half=.5*ang
-    qa=torch.cat((half.cos()[:,None],axis*half.sin()[:,None]),-1)      # wxyz
-    hr=.5*roll
-    qr=torch.stack((hr.cos(),hr.sin(),torch.zeros_like(hr),torch.zeros_like(hr)),-1)
-    w1,x1,y1,z1=qa.unbind(-1);w2,x2,y2,z2=qr.unbind(-1)
-    return torch.stack((w1*w2-x1*x2-y1*y2-z1*z2, w1*x2+x1*w2+y1*z2-z1*y2,
-                        w1*y2-x1*z2+y1*w2+z1*x2, w1*z2+x1*y2-y1*x2+z1*w2),-1)
+    x_hat = torch.tensor([1.0, 0.0, 0.0], device=aim.device, dtype=aim.dtype).expand_as(aim)
+    axis = torch.linalg.cross(x_hat, aim)
+    ang = torch.atan2(axis.norm(dim=-1), aim[..., 0].clamp(-1, 1))
+    axis = axis / axis.norm(dim=-1).clamp_min(1e-9)[:, None]
+    half = 0.5 * ang
+    qa = torch.cat((half.cos()[:, None], axis * half.sin()[:, None]), -1)  # wxyz
+    hr = 0.5 * roll
+    qr = torch.stack((hr.cos(), hr.sin(), torch.zeros_like(hr), torch.zeros_like(hr)), -1)
+    w1, x1, y1, z1 = qa.unbind(-1)
+    w2, x2, y2, z2 = qr.unbind(-1)
+    return torch.stack(
+        (
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ),
+        -1,
+    )
 
 
-def _zem(r,v_rel):
+def _zem(r, v_rel):
     """Zero-effort miss: the closest-approach range if thrust stopped now.
 
     Magnitude of the component of the relative position perpendicular to the
     relative velocity. Its terminal value is the actual miss distance, so it
     shares the kill objective's units and direction.
     """
-    v2=v_rel.square().sum(-1).clamp_min(1.)
-    along=(r*v_rel).sum(-1,keepdim=True)/v2[:,None]
-    return (r-along*v_rel).norm(dim=-1)
+    v2 = v_rel.square().sum(-1).clamp_min(1.0)
+    along = (r * v_rel).sum(-1, keepdim=True) / v2[:, None]
+    return (r - along * v_rel).norm(dim=-1)
 
 
-OMEGA_MAX=6.0     # roll-rate command limit [rad/s]
-OMEGA_LAT=1.0     # pitch/yaw rate command limit [rad/s]. Raised 0.5 -> 1.0 on
-                  # 2026-10-24 for vanilla-PPO learnability: the steady
-                  # coordinated-turn rate is a/V (0.2-0.5 rad/s), but terminal
-                  # guidance needs TRANSIENT authority above it -- the rate PID
-                  # simply saturates the fins, so a 1.0 rad/s command cap lets
-                  # the policy pull harder during the endgame correction.
-KILL_RADIUS=15.0  # proximity-fuse kill radius [m]; FIXED.
-                  # Raised 8 -> 15 on 2026-10-24: at 8 m the BC warm start's median
-                  # miss (9.8 m at d=0) sat ON the fuse boundary, so any ~1e-3
-                  # weight drift from a PPO update wiped out all kills (measured
-                  # blocker); 15 m puts the warm start comfortably inside the gate.
-R_SPAWN=2500.     # initial range [m] (fixed medium operating point)
-CONE=37.5         # target-heading cone half-width [deg]
-A_LAT=7.5         # target lateral accel [g]
-F_WEAVE=.75       # weave angular rate [Hz]
-V_T=250.          # target speed [m/s]
-V_M0=250.         # missile launch speed [m/s]
-Z_MID=4000.       # engagement altitude [m]
-K_PROG=.01        # closing-progress gain per metre
-K_ALIGN=.01       # velocity/LOS alignment gain (dense PN-shaped guidance signal).
-                  # Halved 0.02 -> 0.01 on 2026-10-28 (run 1 diagnosis): the
-                  # lead-aim ballistic policy already maxes this term (~8.7/ep,
-                  # constant across all training phases), so at 0.02 it inflated
-                  # the do-nothing return and diluted the kill differential.
-K_ZEM=10.         # zero-effort-miss shaping gain (2026-10-29, 'zem' variant).
-                  # NOT the default: measured against APN vs the zero policy the
-                  # instantaneous ZEM barely moves along a ballistic trajectory
-                  # (it is nearly conserved) and is sensitive to the missile's
-                  # own velocity direction, so the term gave a 0.41/ep
-                  # discriminative gap at 2.40/ep std -- 3x worse SNR than the
-                  # alignment term it was meant to replace. Kept for reference.
-ZEM_REF=500.      # ZEM normalizer [m]; full-scale miss reduction per episode.
-ZEM_GATE=800.     # guide-term range gate [m] for 'zem' and 'align_gated'.
-                  # Outside it the guidance signal is dominated by geometry the
-                  # policy cannot yet act on: measured, ZEM grows from ~45 m at
-                  # spawn to ~580 m of real miss on a weave target. 800 m
-                  # ~= 1.6 s time-to-go, where terminal corrections pay off.
-                  # 'align_gated' keeps the alignment gap (0.205 vs 0.184/ep)
-                  # while cutting the policy-insensitive plateau 4.36 -> 1.18.
-KILL_BONUS=100.   # kill bonus. Doubled 50 -> 100 on 2026-10-28 (run 1): the
-                  # discounted terminal bonus (~0.995^150-300) was worth only
-                  # ~11-23 vs the ~24/ep shaping plateau, too weak to select
-                  # terminal correction; kills decayed 11% -> 1%.
-MISS_PENALTY=10.
-MISS_REF=500.     # miss distance paying the full penalty [m]. 2026-10-29: the
-                  # binary miss penalty gave near-misses and far-misses identical
-                  # terminal advantage. Linear grading supplies a smooth signal
-                  # across the fuse boundary without changing success criteria.
-TGO_SCALE=0.8     # fire-control t_go factor for the launch-aim lead
-                  # (1.0 = nominal closed-form; 0.8 measured best on the fixed
-                  # medium point: shorter lead trims overshoot misses, +0.8pp
-                  # SR on two disjoint 1024-ep seed populations)
+OMEGA_MAX = 6.0  # roll-rate command limit [rad/s]
+OMEGA_LAT = 1.0  # pitch/yaw rate command limit [rad/s]. Raised 0.5 -> 1.0 on
+# 2026-10-24 for vanilla-PPO learnability: the steady
+# coordinated-turn rate is a/V (0.2-0.5 rad/s), but terminal
+# guidance needs TRANSIENT authority above it -- the rate PID
+# simply saturates the fins, so a 1.0 rad/s command cap lets
+# the policy pull harder during the endgame correction.
+KILL_RADIUS = 15.0  # proximity-fuse kill radius [m]; FIXED.
+# Raised 8 -> 15 on 2026-10-24: at 8 m the BC warm start's median
+# miss (9.8 m at d=0) sat ON the fuse boundary, so any ~1e-3
+# weight drift from a PPO update wiped out all kills (measured
+# blocker); 15 m puts the warm start comfortably inside the gate.
+R_SPAWN = 2500.0  # initial range [m] (fixed medium operating point)
+CONE = 37.5  # target-heading cone half-width [deg]
+A_LAT = 7.5  # target lateral accel [g]
+F_WEAVE = 0.75  # weave angular rate [Hz]
+V_T = 250.0  # target speed [m/s]
+V_M0 = 250.0  # missile launch speed [m/s]
+Z_MID = 4000.0  # engagement altitude [m]
+K_PROG = 0.01  # closing-progress gain per metre
+K_ALIGN = 0.01  # velocity/LOS alignment gain (dense PN-shaped guidance signal).
+# Halved 0.02 -> 0.01 on 2026-10-28 (run 1 diagnosis): the
+# lead-aim ballistic policy already maxes this term (~8.7/ep,
+# constant across all training phases), so at 0.02 it inflated
+# the do-nothing return and diluted the kill differential.
+K_ZEM = 10.0  # zero-effort-miss shaping gain (2026-10-29, 'zem' variant).
+# NOT the default: measured against APN vs the zero policy the
+# instantaneous ZEM barely moves along a ballistic trajectory
+# (it is nearly conserved) and is sensitive to the missile's
+# own velocity direction, so the term gave a 0.41/ep
+# discriminative gap at 2.40/ep std -- 3x worse SNR than the
+# alignment term it was meant to replace. Kept for reference.
+ZEM_REF = 500.0  # ZEM normalizer [m]; full-scale miss reduction per episode.
+ZEM_GATE = 800.0  # guide-term range gate [m] for 'zem' and 'align_gated'.
+# Outside it the guidance signal is dominated by geometry the
+# policy cannot yet act on: measured, ZEM grows from ~45 m at
+# spawn to ~580 m of real miss on a weave target. 800 m
+# ~= 1.6 s time-to-go, where terminal corrections pay off.
+# 'align_gated' keeps the alignment gap (0.205 vs 0.184/ep)
+# while cutting the policy-insensitive plateau 4.36 -> 1.18.
+KILL_BONUS = 100.0  # kill bonus. Doubled 50 -> 100 on 2026-10-28 (run 1): the
+# discounted terminal bonus (~0.995^150-300) was worth only
+# ~11-23 vs the ~24/ep shaping plateau, too weak to select
+# terminal correction; kills decayed 11% -> 1%.
+MISS_PENALTY = 10.0
+MISS_REF = 500.0  # miss distance paying the full penalty [m]. 2026-10-29: the
+# binary miss penalty gave near-misses and far-misses identical
+# terminal advantage. Linear grading supplies a smooth signal
+# across the fuse boundary without changing success criteria.
+TGO_SCALE = 0.8  # fire-control t_go factor for the launch-aim lead
+# (1.0 = nominal closed-form; 0.8 measured best on the fixed
+# medium point: shorter lead trims overshoot misses, +0.8pp
+# SR on two disjoint 1024-ep seed populations)
 
 
-class MissileInterceptEnv:
-    conventional_controller=MissileAPNBaseline
-    OMEGA_MAX=OMEGA_MAX
+class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
+    """6-DOF tail-controlled missile intercept task against a kinematic target.
 
-    def __init__(self,num_envs=64,backend='cpu',seed=7,
-                 steady_wind=None,dryden=0.,severity='moderate',
-                 reward_variant='graded_terminal'):
-        if num_envs<1:raise ValueError('n must be positive')
-        if reward_variant not in ('graded_terminal','align_gated','terminal_gauss','zem'):
+    Task objective: bring a tail-controlled missile within KILL_RADIUS (15 m)
+    proximity of a kinematic 3-DOF aircraft (straight/weave/barrel maneuver,
+    250 m/s around 4 km altitude). The agent observes an unnormalized 34-dim
+    float32 tensor: body angular velocity (3), quaternion wxyz (4), body-
+    frame velocity (3), world position (3), previous rate commands (3), fin
+    actuation (4), ignition/burning flags (2), burn-time-left fraction (1),
+    target relative position/velocity in body frame (6), LOS rate (3), closing
+    speed (1), and target speed (1). Actions are 3-D body-rate commands in
+    [-OMEGA_MAX, OMEGA_MAX] rad/s (roll +-6, pitch/yaw +-1), mapped affinely
+    from raw [-1, 1]. Termination on kill (dist < 15 m at any substep, +100
+    bonus), unrecoverable miss (range rate positive after 2 s), |p| > 15 km,
+    or z < 0; truncation at 900 policy steps (15 s, 60 Hz agent rate).
+    Boost-coast engine fires for the first 4 s. Domain randomization covers
+    thrust (0.97, 1.03) and mass (0.97, 1.03).
+    """
+    conventional_controller = MissileAPNBaseline
+    OMEGA_MAX = OMEGA_MAX
+    PERTURBABLE_PARAMS = {"thrust": 1.0, "mass": 1.0}
+    # Literature: interceptor-class solid rocket motors (e.g. THAAD booster
+    # studies) have tightly characterized propulsion.  Rocket Monte Carlo
+    # dispersion analyses use thrust +/-3% (3 sigma) and Isp +/-1%.  Missile
+    # structural mass is well-known from manufacturing, so mass uncertainty is
+    # small (+/-3%, dominated by propellant grain tolerance).
+    DEFAULT_DOMAIN_RANDOMIZE = {"thrust": (0.97, 1.03), "mass": (0.97, 1.03)}
+
+    def __init__(
+        self,
+        num_envs=64,
+        backend="cpu",
+        seed=7,
+        steady_wind=None,
+        dryden=0.0,
+        severity="moderate",
+        reward_variant="graded_terminal",
+        residual=False,
+        param_mismatch=None,
+        domain_randomize=None,
+    ):
+        """Initialize the MissileIntercept environment.
+
+        Construct the Genesis-backed 6-DOF missile plant at 60 Hz agent /
+        120 Hz control, allocate task buffers (engagement state, kinematic
+        target state, reward components, domain-randomization counters),
+        and finalize with a reset().
+        """
+        if num_envs < 1:
+            raise ValueError("n must be positive")
+        if reward_variant not in ("graded_terminal", "align_gated", "terminal_gauss", "zem"):
             raise ValueError(f"unknown reward_variant {reward_variant!r}")
-        self.num_envs=num_envs
-        self.reward_variant=reward_variant
-        self.task_cfg={'vehicle':'missile','num_envs':num_envs,'backend':backend,
-                       'implementation':'fully_tensorized_dynamics',
-                       'task_defaults':'project-authored 6-DOF intercept',
-                       'reward_variant':reward_variant}
-        self.clip_actions=1.0
-        self.plant=TensorPlant('missile',num_envs,backend,seed,vel_clamp=(1200.,40.))
-        self.device=self.plant.device
-        self.agent_hz=60;self.inner_steps=int(self.plant.control_hz//self.agent_hz);self.max_steps=900  # 15 s
-        self.max_episode_length=self.max_steps+2
-        self.num_actions=3
+        self.num_envs = num_envs
+        self.reward_variant = reward_variant
+        self.task_cfg = {
+            "vehicle": "missile",
+            "num_envs": num_envs,
+            "backend": backend,
+            "implementation": "fully_tensorized_dynamics",
+            "task_defaults": "project-authored 6-DOF intercept",
+            "reward_variant": reward_variant,
+        }
+        self.clip_actions = 1.0
+        self.plant = TensorPlant("missile", num_envs, backend, seed, vel_clamp=(1200.0, 40.0))
+        self.device = self.plant.device
+        self.agent_hz = 60
+        self.inner_steps = int(self.plant.control_hz // self.agent_hz)
+        self.max_steps = 900  # 15 s
+        self.max_episode_length = self.max_steps + 2
+        self.num_actions = 3
         # Per-axis rate-command limits: roll spins fast, pitch/yaw are limited
         # by the coordinated-turn relation a/V (see OMEGA_LAT above).
-        omega_scale=torch.tensor((OMEGA_MAX,OMEGA_LAT,OMEGA_LAT),device=self.device,dtype=torch.float64)
-        self.action_low=-omega_scale
-        self.action_high=omega_scale
+        omega_scale = torch.tensor(
+            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=self.device, dtype=torch.float64
+        )
+        self.action_low = -omega_scale
+        self.action_high = omega_scale
 
-        d=self.device
-        zeros=lambda *s:torch.zeros(*s,device=d,dtype=torch.float64)
-        self.action=zeros(num_envs,self.num_actions)
-        self.reward=zeros(num_envs)
-        self.count=torch.zeros(num_envs,device=d,dtype=torch.long)
-        self.sim_time=zeros(num_envs)
-        self.terminated=torch.zeros(num_envs,device=d,dtype=torch.bool)
-        self.truncated=self.terminated.clone()
-        self.out_of_bounds=self.terminated.clone()
-        self.complete=self.terminated.clone()
-        self.miss_flag=self.terminated.clone()
-        self._observation=None;self.obs_buf=None
-        self.rew_buf=torch.zeros(num_envs,device=d,dtype=torch.float32)
-        self.reset_buf=torch.zeros(num_envs,device=d,dtype=torch.bool)
-        self.episode_length_buf=torch.zeros(num_envs,device=d,dtype=torch.long)
-        self.returns=zeros(num_envs);self.completed_returns=self.returns.clone()
-        self.completed_episodes=torch.zeros_like(self.episode_length_buf)
-        self.completed_successes=torch.zeros_like(self.episode_length_buf)
+        d = self.device
+
+        def zeros(*s):
+            """Allocate a zeros tensor on the environment device."""
+            return torch.zeros(*s, device=d, dtype=torch.float64)
+
+        self.action = zeros(num_envs, self.num_actions)
+        self.reward = zeros(num_envs)
+        self.count = torch.zeros(num_envs, device=d, dtype=torch.long)
+        self.sim_time = zeros(num_envs)
+        self.terminated = torch.zeros(num_envs, device=d, dtype=torch.bool)
+        self.truncated = self.terminated.clone()
+        self.out_of_bounds = self.terminated.clone()
+        self.complete = self.terminated.clone()
+        self.miss_flag = self.terminated.clone()
+        self._observation = None
+        self.obs_buf = None
+        self.rew_buf = torch.zeros(num_envs, device=d, dtype=torch.float32)
+        self.reset_buf = torch.zeros(num_envs, device=d, dtype=torch.bool)
+        self.episode_length_buf = torch.zeros(num_envs, device=d, dtype=torch.long)
+        self.returns = zeros(num_envs)
+        self.completed_returns = self.returns.clone()
+        self.completed_episodes = torch.zeros_like(self.episode_length_buf)
+        self.completed_successes = torch.zeros_like(self.episode_length_buf)
         # engagement state
-        self.min_distance=zeros(num_envs)
-        self.dist=zeros(num_envs)          # current missile-target range
-        self.dist_prev=zeros(num_envs)     # range at the previous inner-step boundary
-        self.zem_prev=zeros(num_envs)      # zero-effort miss at the previous boundary
-        self.target_pos=zeros(num_envs,3)
-        self.target_vel=zeros(num_envs,3)
+        self.min_distance = zeros(num_envs)
+        self.dist = zeros(num_envs)  # current missile-target range
+        self.dist_prev = zeros(num_envs)  # range at the previous inner-step boundary
+        self.zem_prev = zeros(num_envs)  # zero-effort miss at the previous boundary
+        self.target_pos = zeros(num_envs, 3)
+        self.target_vel = zeros(num_envs, 3)
         # kinematic target parameters (reset_idx-owned)
-        self.t_p0=zeros(num_envs,3)        # target position at t=0
-        self.t_head=zeros(num_envs,3)      # unit heading (straight/weave)
-        self.t_perp=zeros(num_envs,3)      # horizontal left-normal of the heading
-        self.t_omega=zeros(num_envs)       # weave angular rate [rad/s]
-        self.t_phase=zeros(num_envs)       # maneuver phase [rad]
-        self.t_a=zeros(num_envs)           # lateral accel [m/s^2]
-        self.t_type=torch.zeros(num_envs,device=d,dtype=torch.long)  # 0 straight 1 weave 2 barrel
-        self.t_center=zeros(num_envs,3)    # barrel circle center
-        self.t_omega_b=zeros(num_envs)     # barrel angular rate (signed) [rad/s]
-        self.t_radius=zeros(num_envs)      # barrel radius [m]
-        keys=('progress','zem','kill','miss') if reward_variant=='zem' else ('progress','align','kill','miss')
-        self.reward_components={k:zeros(num_envs) for k in keys}
-        self.completed_metrics={'miss_distance':zeros(num_envs),
-                                'kill_rate':zeros(num_envs),'miss_rate':zeros(num_envs),
-                                'timeout_rate':zeros(num_envs)}
-        for k in keys:self.completed_metrics[f'rew_{k}']=zeros(num_envs)
-        self.extras=dict();self.cfg=dict(self.task_cfg)
-        self._init_wind(num_envs,seed,steady_wind,dryden,severity)
+        self.t_p0 = zeros(num_envs, 3)  # target position at t=0
+        self.t_head = zeros(num_envs, 3)  # unit heading (straight/weave)
+        self.t_perp = zeros(num_envs, 3)  # horizontal left-normal of the heading
+        self.t_omega = zeros(num_envs)  # weave angular rate [rad/s]
+        self.t_phase = zeros(num_envs)  # maneuver phase [rad]
+        self.t_a = zeros(num_envs)  # lateral accel [m/s^2]
+        self.t_type = torch.zeros(
+            num_envs, device=d, dtype=torch.long
+        )  # 0 straight 1 weave 2 barrel
+        self.t_center = zeros(num_envs, 3)  # barrel circle center
+        self.t_omega_b = zeros(num_envs)  # barrel angular rate (signed) [rad/s]
+        self.t_radius = zeros(num_envs)  # barrel radius [m]
+        keys = (
+            ("progress", "zem", "kill", "miss")
+            if reward_variant == "zem"
+            else ("progress", "align", "kill", "miss")
+        )
+        self.reward_components = {k: zeros(num_envs) for k in keys}
+        self.completed_metrics = {
+            "miss_distance": zeros(num_envs),
+            "kill_rate": zeros(num_envs),
+            "miss_rate": zeros(num_envs),
+            "timeout_rate": zeros(num_envs),
+        }
+        for k in keys:
+            self.completed_metrics[f"rew_{k}"] = zeros(num_envs)
+        self._seed = seed
+        self.extras = dict()
+        self.cfg = dict(self.task_cfg)
+        self._init_wind(num_envs, seed, steady_wind, dryden, severity)
+        self.controller_design = {}
+        apply_static_perturbation(self, param_mismatch)
+        self._dr_counter = 0
+        self._domain_randomize = resolve_domain_randomize(
+            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        )
+        self.residual = residual
+        self._init_residual()
         self.reset()
 
-    def _init_wind(self,n,seed,steady_wind,dryden,severity):
-        self._wind=None
-        if steady_wind is not None or dryden>0.:
+    def _init_wind(self, n, seed, steady_wind, dryden, severity):
+        """Optionally wire in a steady/dryden wind disturbance; calm air by default."""
+        self._wind = None
+        if steady_wind is not None or dryden > 0.0:
             from environments.common.disturbances import WindDisturbance
-            self._wind=WindDisturbance(n,self.device,seed,steady_wind=steady_wind,
-                                       dryden=dryden,severity=severity,dt=1./self.agent_hz)
-            self.plant.wind=torch.zeros((n,3),device=self.device,dtype=torch.float64)
-            self.cfg['wind']=dict(steady_wind=list(steady_wind) if steady_wind is not None else None,
-                                  dryden=dryden,severity=severity)
 
-    def _scale_actions(self,actions):
-        raw=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)
-        return self.action_low+(raw+1)*.5*(self.action_high-self.action_low)
+            self._wind = WindDisturbance(
+                n,
+                self.device,
+                seed,
+                steady_wind=steady_wind,
+                dryden=dryden,
+                severity=severity,
+                dt=1.0 / self.agent_hz,
+            )
+            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=torch.float64)
+            self.cfg["wind"] = dict(
+                steady_wind=list(steady_wind) if steady_wind is not None else None,
+                dryden=dryden,
+                severity=severity,
+            )
+
+    def _scale_actions(self, actions):
+        """Affinely map [-1, 1] policy actions onto the physical rate-command bounds."""
+        raw = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
+        return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     # ------------------------------------------------------------------ #
     # kinematic target: closed-form state at the current per-replica time
     # ------------------------------------------------------------------ #
     def _target_state(self):
-        t=self.sim_time                      # (n,)
-        m0=self.t_type==0;m1=self.t_type==1;m2=self.t_type==2
-        p_straight=self.t_p0+V_T*self.t_head*t[:,None]
-        v_straight=(V_T*self.t_head).expand_as(p_straight)
-        ph=self.t_omega*t+self.t_phase       # (n,)
-        s=(self.t_a/(self.t_omega*self.t_omega))*torch.sin(ph)
-        vp=(self.t_a/self.t_omega)*torch.cos(ph)
-        p_weave=p_straight+self.t_perp*s[:,None]
-        v_weave=v_straight+self.t_perp*vp[:,None]
-        th=self.t_omega_b*t+self.t_phase     # (n,)
-        p_barrel=self.t_center+self.t_radius[:,None]*torch.stack((torch.cos(th),torch.sin(th),torch.zeros_like(th)),-1)
-        v_barrel=V_T*torch.stack((-torch.sin(th),torch.cos(th),torch.zeros_like(th)),-1)
-        p=torch.where(m0[:,None],p_straight,torch.where(m1[:,None],p_weave,p_barrel))
-        v=torch.where(m0[:,None],v_straight,torch.where(m1[:,None],v_weave,v_barrel))
-        return p,v
+        """Return the kinematic target's current (p, v) for its maneuver type."""
+        t = self.sim_time  # (n,)
+        m0 = self.t_type == 0
+        m1 = self.t_type == 1
+        p_straight = self.t_p0 + V_T * self.t_head * t[:, None]
+        v_straight = (V_T * self.t_head).expand_as(p_straight)
+        ph = self.t_omega * t + self.t_phase  # (n,)
+        s = (self.t_a / (self.t_omega * self.t_omega)) * torch.sin(ph)
+        vp = (self.t_a / self.t_omega) * torch.cos(ph)
+        p_weave = p_straight + self.t_perp * s[:, None]
+        v_weave = v_straight + self.t_perp * vp[:, None]
+        th = self.t_omega_b * t + self.t_phase  # (n,)
+        p_barrel = self.t_center + self.t_radius[:, None] * torch.stack(
+            (torch.cos(th), torch.sin(th), torch.zeros_like(th)), -1
+        )
+        v_barrel = V_T * torch.stack((-torch.sin(th), torch.cos(th), torch.zeros_like(th)), -1)
+        p = torch.where(m0[:, None], p_straight, torch.where(m1[:, None], p_weave, p_barrel))
+        v = torch.where(m0[:, None], v_straight, torch.where(m1[:, None], v_weave, v_barrel))
+        return p, v
 
-    def step(self,actions):
-        if actions.device!=torch.device(self.device):
-            raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        command=self._scale_actions(actions)
+    def step(self, actions):
+        """Advance one policy step through inner control steps.
+
+        Scale actions, run the plant controller and physics substeps while
+        advancing the kinematic target analytically, detect kills/misses/
+        bounds violations, accumulate progress + guidance shaping reward,
+        and return (observations, reward, terminated, truncated, extras).
+        """
+        if actions.device != torch.device(self.device):
+            raise ValueError(
+                "Actions must already be on env.device; implicit host/device copies are disabled"
+            )
+        actions = self._residual_input(actions)
+        command = self._scale_actions(actions)
         self.action.copy_(command)
-        if self._wind is not None:self.plant.wind.copy_(self._wind.step())
-        self.reward.fill_(0.)
-        self.count+=1
+        if self._wind is not None:
+            self.plant.wind.copy_(self._wind.step())
+        self.reward.fill_(0.0)
+        self.count += 1
         for _ in range(self.inner_steps):
-            active=~(self.terminated|self.truncated)
-            self.dist_prev.copy_(torch.where(active,self.dist,self.dist_prev))
+            active = ~(self.terminated | self.truncated)
+            self.dist_prev.copy_(torch.where(active, self.dist, self.dist_prev))
             self.plant.clear_contacts()
-            self.plant.controller(command,active)
-            kill_ev=torch.zeros_like(active);miss_ev=torch.zeros_like(active)
+            self.plant.controller(command, active)
+            kill_ev = torch.zeros_like(active)
+            miss_ev = torch.zeros_like(active)
             for _ in range(self.plant.physics_per_control):
-                sub=~(self.terminated|self.truncated)
-                tp,tv=self._target_state()
-                self.target_pos.copy_(torch.where(sub[:,None],tp,self.target_pos))
-                self.target_vel.copy_(torch.where(sub[:,None],tv,self.target_vel))
-                tq=_aim_quat(tv/tv.norm(dim=-1,keepdim=True).clamp_min(1e-6),torch.zeros_like(tv[:,0]))
-                self.plant.physics_step(command,sub,target_state=(tp,tq,tv,torch.zeros_like(tv)))
-                self.sim_time.copy_(torch.where(sub,self.sim_time+self.plant.physics_dt,self.sim_time))
-                pm=self.plant.drone.get_pos().to(torch.float64)
-                vm=self.plant.drone.get_vel().to(torch.float64)
-                r=tp-pm;dist=r.norm(dim=-1)
-                self.dist.copy_(torch.where(sub,dist,self.dist))
-                self.min_distance.copy_(torch.where(sub&(dist<self.min_distance),dist,self.min_distance))
-                closing=(r*(tv-vm)).sum(-1)
-                kill_ev|=(dist<KILL_RADIUS)&sub
+                sub = ~(self.terminated | self.truncated)
+                tp, tv = self._target_state()
+                self.target_pos.copy_(torch.where(sub[:, None], tp, self.target_pos))
+                self.target_vel.copy_(torch.where(sub[:, None], tv, self.target_vel))
+                tq = _aim_quat(
+                    tv / tv.norm(dim=-1, keepdim=True).clamp_min(1e-6), torch.zeros_like(tv[:, 0])
+                )
+                self.plant.physics_step(
+                    command, sub, target_state=(tp, tq, tv, torch.zeros_like(tv))
+                )
+                self.sim_time.copy_(
+                    torch.where(sub, self.sim_time + self.plant.physics_dt, self.sim_time)
+                )
+                pm = self.plant.drone.get_pos().to(torch.float64)
+                vm = self.plant.drone.get_vel().to(torch.float64)
+                r = tp - pm
+                dist = r.norm(dim=-1)
+                self.dist.copy_(torch.where(sub, dist, self.dist))
+                self.min_distance.copy_(
+                    torch.where(sub & (dist < self.min_distance), dist, self.min_distance)
+                )
+                closing = (r * (tv - vm)).sum(-1)
+                kill_ev |= (dist < KILL_RADIUS) & sub
                 # closest approach passed while the shot is still on: unrecoverable
-                miss_ev|=(closing>0)&(self.sim_time>2.)&sub&~kill_ev
+                miss_ev |= (closing > 0) & (self.sim_time > 2.0) & sub & ~kill_ev
             # kill preempts miss inside the same inner step
-            miss_ev&=~kill_ev
-            p,q,v,w=self.plant.state()
-            rpy=euler(q);wb=inverse_rotate(q,w);vb=inverse_rotate(q,v)
-            r_w=self.target_pos-p
-            v_rel=self.target_vel-v
-            r2=r_w.square().sum(-1).clamp_min(1e-6)
-            lam_w=torch.linalg.cross(r_w,v_rel)/r2[:,None]
-            lam_b=inverse_rotate(q,lam_w)
-            vc=-(r_w*v_rel).sum(-1)/r2.clamp_min(1e-6).sqrt()
-            rel=torch.cat((inverse_rotate(q,r_w),inverse_rotate(q,v_rel),lam_b,
-                           vc[:,None],self.target_vel.norm(dim=-1)[:,None]),-1)
-            observation=torch.cat((wb,q[:,1:],q[:,:1],vb,p,self.action,self.plant.auxiliary(),rel),-1)
-            if self._observation is None:self._observation=observation.clone()
-            else:self._observation.copy_(torch.where(active[:,None],observation,self._observation))
+            miss_ev &= ~kill_ev
+            p, q, v, w = self.plant.state()
+            wb = inverse_rotate(q, w)
+            vb = inverse_rotate(q, v)
+            r_w = self.target_pos - p
+            v_rel = self.target_vel - v
+            r2 = r_w.square().sum(-1).clamp_min(1e-6)
+            lam_w = torch.linalg.cross(r_w, v_rel) / r2[:, None]
+            lam_b = inverse_rotate(q, lam_w)
+            vc = -(r_w * v_rel).sum(-1) / r2.clamp_min(1e-6).sqrt()
+            rel = torch.cat(
+                (
+                    inverse_rotate(q, r_w),
+                    inverse_rotate(q, v_rel),
+                    lam_b,
+                    vc[:, None],
+                    self.target_vel.norm(dim=-1)[:, None],
+                ),
+                -1,
+            )
+            observation = torch.cat(
+                (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary(), rel), -1
+            )
+            if self._observation is None:
+                self._observation = observation.clone()
+            else:
+                self._observation.copy_(
+                    torch.where(active[:, None], observation, self._observation)
+                )
             # reward: telescoping closing progress plus one dense guidance term.
             # No effort term: it drove commands to zero and opposed the terminal
             # corrections that produce kills. The terminal miss cost grades
@@ -308,130 +453,159 @@ class MissileInterceptEnv:
             # 'graded_terminal' shapes on velocity/LOS alignment, which the lead
             # aim already maxes out; 'zem' shapes on the zero-effort miss, whose
             # stepwise decrease telescopes to the miss-distance improvement.
-            progress=K_PROG*(self.dist_prev-self.dist)
-            if self.reward_variant=='zem':
-                zem=_zem(r_w,v_rel)
-                inside=(self.dist<ZEM_GATE).to(zem.dtype)
-                guide=K_ZEM*inside*(self.zem_prev-zem)/ZEM_REF
-                self.zem_prev.copy_(torch.where(active,zem,self.zem_prev))
+            progress = K_PROG * (self.dist_prev - self.dist)
+            if self.reward_variant == "zem":
+                zem = _zem(r_w, v_rel)
+                inside = (self.dist < ZEM_GATE).to(zem.dtype)
+                guide = K_ZEM * inside * (self.zem_prev - zem) / ZEM_REF
+                self.zem_prev.copy_(torch.where(active, zem, self.zem_prev))
             else:
-                v_hat=v/v.norm(dim=-1,keepdim=True).clamp_min(1.)
-                r_hat=r_w/r2.clamp_min(1e-6).sqrt()[:,None]
-                guide=K_ALIGN*(v_hat*r_hat).sum(-1)
-                if self.reward_variant=='align_gated':
-                    guide=guide*(self.dist<ZEM_GATE).to(guide.dtype)
+                v_hat = v / v.norm(dim=-1, keepdim=True).clamp_min(1.0)
+                r_hat = r_w / r2.clamp_min(1e-6).sqrt()[:, None]
+                guide = K_ALIGN * (v_hat * r_hat).sum(-1)
+                if self.reward_variant == "align_gated":
+                    guide = guide * (self.dist < ZEM_GATE).to(guide.dtype)
             # terminal events pay once per episode: `complete`/`miss_flag` are
             # sticky within the episode, while `active` is recomputed per inner
             # step (an episode that killed on inner step 1 is still "active" on
             # inner step 2, which used to pay the terminal term twice).
-            kpay=kill_ev&active&~self.complete
-            mpay=miss_ev&active&~self.miss_flag
-            if self.reward_variant=='terminal_gauss':
+            kpay = kill_ev & active & ~self.complete
+            mpay = miss_ev & active & ~self.miss_flag
+            if self.reward_variant == "terminal_gauss":
                 # paid once after the inner loop, against the episode's final
                 # closest approach (see the block after this loop)
-                kill_r=torch.zeros_like(progress)
+                kill_r = torch.zeros_like(progress)
             else:
-                kill_r=torch.where(kpay,torch.full_like(progress,KILL_BONUS),torch.zeros_like(progress))
-            miss_cost=MISS_PENALTY*(self.min_distance/MISS_REF).clamp(max=1.)
-            miss_r=torch.where(mpay,-miss_cost,torch.zeros_like(progress))
-            shaping=progress+guide+kill_r+miss_r
-            self.reward.copy_(torch.where(active,self.reward+shaping,self.reward))
-            comps=(progress,guide,kill_r,miss_r)
-            for k,c in zip(self.reward_components,comps):
-                self.reward_components[k]+=torch.where(active,c,0.)
-            self.complete|=kill_ev&active
-            self.miss_flag|=miss_ev&active
-            self.terminated|=(miss_ev|((p[:,2]<0)|(p.norm(dim=-1)>15000)))&active
+                kill_r = torch.where(
+                    kpay, torch.full_like(progress, KILL_BONUS), torch.zeros_like(progress)
+                )
+            miss_cost = MISS_PENALTY * (self.min_distance / MISS_REF).clamp(max=1.0)
+            miss_r = torch.where(mpay, -miss_cost, torch.zeros_like(progress))
+            shaping = progress + guide + kill_r + miss_r
+            self.reward.copy_(torch.where(active, self.reward + shaping, self.reward))
+            comps = (progress, guide, kill_r, miss_r)
+            for k, c in zip(self.reward_components, comps):
+                self.reward_components[k] += torch.where(active, c, 0.0)
+            self.complete |= kill_ev & active
+            self.miss_flag |= miss_ev & active
+            self.terminated |= (miss_ev | ((p[:, 2] < 0) | (p.norm(dim=-1) > 15000))) & active
         # time limit applies after the full control step (rocket semantics)
-        if self.reward_variant=='terminal_gauss':
+        if self.reward_variant == "terminal_gauss":
             # Soft fuse: the same 100 at zero miss, decaying over the fuse radius
             # instead of stepping at 15 m, so every episode carries a monotone
             # terminal signal. Measured on the APN endgame-ablation family
             # (88% vs 33% kill rate): span/sd 1.40 vs 1.19 for the hard bonus and
             # std 51.6 -> 25.9, with both asymptotes preserved (0 m -> 100,
             # 500 m -> the -10 miss floor).
-            fuse=KILL_BONUS*torch.exp(-(self.min_distance/KILL_RADIUS).square())
-            fuse=torch.where(self.terminated|self.complete,fuse,torch.zeros_like(fuse))
-            self.reward.copy_(self.reward+fuse)
-            self.reward_components['kill'].add_(fuse)
-        active=~(self.terminated|self.truncated)
-        self.truncated|=((self.count>=self.max_steps)|self.complete)&active
+            fuse = KILL_BONUS * torch.exp(-(self.min_distance / KILL_RADIUS).square())
+            fuse = torch.where(self.terminated | self.complete, fuse, torch.zeros_like(fuse))
+            self.reward.copy_(self.reward + fuse)
+            self.reward_components["kill"].add_(fuse)
+        active = ~(self.terminated | self.truncated)
+        self.truncated |= ((self.count >= self.max_steps) | self.complete) & active
 
-        self.reset_buf=self.terminated|self.truncated
+        self.reset_buf = self.terminated | self.truncated
         self.rew_buf.copy_(self.reward)
-        self.episode_length_buf+=1
-        self.returns+=self.reward
-        self.completed_returns+=torch.where(self.reset_buf,self.returns,0.)
-        self.completed_episodes+=self.reset_buf.to(torch.long)
-        self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
-        done=self.reset_buf
+        self.episode_length_buf += 1
+        self.returns += self.reward
+        self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
+        self.completed_episodes += self.reset_buf.to(torch.long)
+        self.completed_successes += (self.reset_buf & self.complete).to(torch.long)
+        done = self.reset_buf
         # snapshot for the step return: reset_idx below clears terminated/truncated
-        term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
-        self.completed_metrics['miss_distance']+=torch.where(done,self.min_distance,0.)
-        self.completed_metrics['kill_rate']+=(done&self.complete).to(torch.float64)
-        self.completed_metrics['miss_rate']+=(done&self.miss_flag).to(torch.float64)
-        self.completed_metrics['timeout_rate']+=(done&~self.complete&~self.miss_flag&~self.out_of_bounds).to(torch.float64)
+        term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
+        self.completed_metrics["miss_distance"] += torch.where(done, self.min_distance, 0.0)
+        self.completed_metrics["kill_rate"] += (done & self.complete).to(torch.float64)
+        self.completed_metrics["miss_rate"] += (done & self.miss_flag).to(torch.float64)
+        self.completed_metrics["timeout_rate"] += (
+            done & ~self.complete & ~self.miss_flag & ~self.out_of_bounds
+        ).to(torch.float64)
 
-        self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
-        self.extras['terminal_observations']=TensorDict(
-            {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
-        done_any=bool(done.any())
+        self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
+        self.extras["terminal_observations"] = TensorDict(
+            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
+        )
+        done_any = bool(done.any())
         if done_any:
-            episode={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1),
-                     'miss_distance':(self.min_distance*done).sum()/done.sum().clamp_min(1)}
-            for k,buf in self.reward_components.items():
-                episode[f'rew_{k}']=(buf*done).sum()/done.sum().clamp_min(1)
-            self.extras['episode']=episode
+            episode = {
+                "success_rate": (done & self.complete).to(torch.float64).sum()
+                / done.sum().clamp_min(1),
+                "miss_distance": (self.min_distance * done).sum() / done.sum().clamp_min(1),
+            }
+            for k, buf in self.reward_components.items():
+                episode[f"rew_{k}"] = (buf * done).sum() / done.sum().clamp_min(1)
+            self.extras["episode"] = episode
         else:
-            self.extras.pop('episode',None)
-        if done_any:self.reset_idx(self.reset_buf)
+            self.extras.pop("episode", None)
+        if done_any:
+            self.reset_idx(self.reset_buf)
         self._update_observation()
-        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
+        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
 
     def get_observations(self):
-        return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
+        """Return the current observation packed in a TensorDict under 'policy'."""
+        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
 
     def _update_observation(self):
+        """Copy the float64 internal observation into the float32 obs_buf used downstream."""
         if self.obs_buf is None:
-            self.obs_buf=torch.zeros(self._observation.shape,device=self.device,dtype=torch.float32)
+            self.obs_buf = torch.zeros(
+                self._observation.shape, device=self.device, dtype=torch.float32
+            )
         self.obs_buf.copy_(self._observation)
 
-    def reset_idx(self,envs_idx):
+    def _apply_perturbation(self, name, scale):
+        """Scale a live plant parameter; called by the DR helper."""
+        if name == "thrust":
+            self.plant.perturb_thrust(scale)
+        elif name == "mass":
+            self.plant.perturb_mass(scale)
+        else:
+            raise KeyError(name)
+
+    def reset_idx(self, envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask.
 
         One uniform(9) draw covers ALL random quantities. Spawn geometry is a
         single fixed medium operating point (R_SPAWN / CONE / A_LAT / F_WEAVE).
         """
-        mask=envs_idx
-        p,q,v,w=self.plant.state()
-        u=self.plant.rng.uniform(9,mask)
+        mask = envs_idx
+        if self._domain_randomize:
+            self._dr_counter += 1
+            apply_domain_randomization(
+                self, self._domain_randomize, self._seed, self._dr_counter, mask
+            )
+        p, q, v, w = self.plant.state()
+        u = self.plant.rng.uniform(9, mask)
         # target spawn: horizontal bearing around the origin, fixed range
-        R=R_SPAWN
-        bearing=u[:,0]*2.*torch.pi
-        target_p=torch.stack((R*torch.cos(bearing),R*torch.sin(bearing),
-                              Z_MID+(u[:,2]-.5)*400.),-1)
+        R = R_SPAWN
+        bearing = u[:, 0] * 2.0 * torch.pi
+        target_p = torch.stack(
+            (R * torch.cos(bearing), R * torch.sin(bearing), Z_MID + (u[:, 2] - 0.5) * 400.0), -1
+        )
         # target heading: back toward the missile inside a fixed cone
-        base=torch.atan2(-target_p[:,1],-target_p[:,0])
-        cone=CONE*torch.pi/180.
-        heading=base+(u[:,3]*2.-1.)*cone
-        h=torch.stack((torch.cos(heading),torch.sin(heading),torch.zeros_like(heading)),-1)
-        perp=torch.stack((-h[:,1],h[:,0],torch.zeros_like(h[:,0])),-1)
+        base = torch.atan2(-target_p[:, 1], -target_p[:, 0])
+        cone = CONE * torch.pi / 180.0
+        heading = base + (u[:, 3] * 2.0 - 1.0) * cone
+        h = torch.stack((torch.cos(heading), torch.sin(heading), torch.zeros_like(heading)), -1)
+        perp = torch.stack((-h[:, 1], h[:, 0], torch.zeros_like(h[:, 0])), -1)
         # maneuver: lateral accel a, angular rate f, type/phase/sign
-        a=torch.full_like(u[:,0],A_LAT*9.81)
-        omega=torch.full_like(u[:,0],2.*torch.pi*F_WEAVE)
-        mtype=(u[:,4]*3.).clamp(0,2).to(torch.long)
-        m0=mtype==0;m1=mtype==1
-        phase=u[:,5]*2.*torch.pi
+        a = torch.full_like(u[:, 0], A_LAT * 9.81)
+        omega = torch.full_like(u[:, 0], 2.0 * torch.pi * F_WEAVE)
+        mtype = (u[:, 4] * 3.0).clamp(0, 2).to(torch.long)
+        phase = u[:, 5] * 2.0 * torch.pi
         # missile spawn near the origin at engagement altitude. Fire-control
         # lead: aim at the target's PREDICTED position at the nominal flight
         # time t_go = R/(V_M0+V_T), evaluated with the same closed-form motion
         # model the target flies (straight/weave/barrel), so the launch starts
         # on a collision course for every maneuver type and the guidance only
         # has to correct residual errors.
-        t_go=torch.full_like(u[:,0],R)/(V_M0+V_T)
-        missile_p=torch.stack((torch.zeros_like(bearing),torch.zeros_like(bearing),
-                               Z_MID+(u[:,6]-.5)*100.),-1)
-        eul_roll=u[:,7]*.2-.1
+        t_go = torch.full_like(u[:, 0], R) / (V_M0 + V_T)
+        missile_p = torch.stack(
+            (torch.zeros_like(bearing), torch.zeros_like(bearing), Z_MID + (u[:, 6] - 0.5) * 100.0),
+            -1,
+        )
+        eul_roll = u[:, 7] * 0.2 - 0.1
         # barrel geometry: circle through the spawn point whose INITIAL TANGENT
         # matches the cone heading (otherwise the barrel target starts flying
         # in an arbitrary direction and the engagement degenerates into a tail
@@ -439,13 +613,19 @@ class MissileInterceptEnv:
         # h pins the phase to atan2(-h_x, h_y) (+pi when omega_b < 0 flips the
         # traversal direction); the center then sits one radius along the
         # inward normal from the spawn point.
-        Rb=V_T*V_T/a
-        omega_b=torch.where(u[:,8]>.5,torch.ones_like(u[:,8]),-torch.ones_like(u[:,8]))*a/V_T
-        phi_barrel=torch.atan2(-h[:,0],h[:,1])+torch.where(omega_b>0,0.,torch.pi)
-        center=target_p-Rb[:,None]*torch.stack((torch.cos(phi_barrel),torch.sin(phi_barrel),
-                                        torch.zeros_like(phi_barrel)),-1)
+        Rb = V_T * V_T / a
+        omega_b = (
+            torch.where(u[:, 8] > 0.5, torch.ones_like(u[:, 8]), -torch.ones_like(u[:, 8]))
+            * a
+            / V_T
+        )
+        phi_barrel = torch.atan2(-h[:, 0], h[:, 1]) + torch.where(omega_b > 0, 0.0, torch.pi)
+        center = target_p - Rb[:, None] * torch.stack(
+            (torch.cos(phi_barrel), torch.sin(phi_barrel), torch.zeros_like(phi_barrel)), -1
+        )
         # weave keeps its random phase; barrel must start on the aligned tangent
-        phase=torch.where(mtype==2,phi_barrel,phase)
+        phase = torch.where(mtype == 2, phi_barrel, phase)
+
         # fire-control lead: extrapolate the target along its CURRENT heading
         # for the nominal flight time (straight-line shot solution). The
         # perpendicular component of this lead is what nulls the initial LOS
@@ -454,75 +634,112 @@ class MissileInterceptEnv:
         # over the flight is tens of metres, while the straight-line lead
         # correctly cancels the crossing geometry).
         def predict(t):
-            return target_p+V_T*t[:,None]*h
-        t_go=TGO_SCALE*torch.full_like(u[:,0],R)/(V_M0+V_T)
-        pred=predict(t_go)
-        aim=pred-missile_p;aim=aim/aim.norm(dim=-1,keepdim=True)
-        v_m=V_M0*aim
+            """Extrapolate the target straight-line position at time t seconds."""
+            return target_p + V_T * t[:, None] * h
+
+        t_go = TGO_SCALE * torch.full_like(u[:, 0], R) / (V_M0 + V_T)
+        pred = predict(t_go)
+        aim = pred - missile_p
+        aim = aim / aim.norm(dim=-1, keepdim=True)
+        v_m = V_M0 * aim
         # plant state (masked writes keep other replicas frozen)
-        p_new=torch.where(mask[:,None],missile_p,p)
-        q_new=torch.where(mask[:,None],_aim_quat(aim,eul_roll),q)
-        v_new=torch.where(mask[:,None],v_m,v)
-        w_new=torch.where(mask[:,None],torch.zeros_like(w),w)
-        self.plant.set_state(p_new,q_new,v_new,w_new)
+        p_new = torch.where(mask[:, None], missile_p, p)
+        q_new = torch.where(mask[:, None], _aim_quat(aim, eul_roll), q)
+        v_new = torch.where(mask[:, None], v_m, v)
+        w_new = torch.where(mask[:, None], torch.zeros_like(w), w)
+        self.plant.set_state(p_new, q_new, v_new, w_new)
+
         # task buffers (masked)
-        def sel(x,cur):return torch.where(mask[:,None] if x.dim()>1 else mask,x,cur)
-        self.t_p0=sel(target_p,self.t_p0);self.t_head=sel(h,self.t_head);self.t_perp=sel(perp,self.t_perp)
-        self.t_omega=sel(omega,self.t_omega);self.t_phase=sel(phase,self.t_phase);self.t_a=sel(a,self.t_a)
-        self.t_type=torch.where(mask,mtype,self.t_type)
-        self.t_center=sel(center,self.t_center);self.t_omega_b=sel(omega_b,self.t_omega_b)
-        self.t_radius=sel(Rb,self.t_radius)
+        def sel(x, cur):
+            """Select x where mask, keep cur otherwise (handles both 1-D and 2-D tensors)."""
+            return torch.where(mask[:, None] if x.dim() > 1 else mask, x, cur)
+
+        self.t_p0 = sel(target_p, self.t_p0)
+        self.t_head = sel(h, self.t_head)
+        self.t_perp = sel(perp, self.t_perp)
+        self.t_omega = sel(omega, self.t_omega)
+        self.t_phase = sel(phase, self.t_phase)
+        self.t_a = sel(a, self.t_a)
+        self.t_type = torch.where(mask, mtype, self.t_type)
+        self.t_center = sel(center, self.t_center)
+        self.t_omega_b = sel(omega_b, self.t_omega_b)
+        self.t_radius = sel(Rb, self.t_radius)
         # sim_time must be zeroed BEFORE sampling the target: _target_state()
         # is a function of sim_time, so sampling at the finished episode's
         # t~4 s put the target ~1 km off its true spawn point and poisoned the
         # initial dist/dist_prev (spurious first-step progress reward) and the
         # initial observation.
-        self.sim_time=sel(torch.zeros_like(self.sim_time),self.sim_time)
-        tp,tv=self._target_state()
-        self.target_pos=sel(tp,self.target_pos);self.target_vel=sel(tv,self.target_vel)
-        dist=(self.target_pos-p_new).norm(dim=-1)
-        self.dist=sel(dist,self.dist);self.dist_prev=sel(dist,self.dist_prev)
-        if self.reward_variant=='zem':
-            self.zem_prev=sel(_zem(self.target_pos-p_new,self.target_vel-v_new),self.zem_prev)
-        self.min_distance=sel(torch.full_like(dist,1e9),self.min_distance)
-        self.count.masked_fill_(mask,0)
-        self.terminated.masked_fill_(mask,False);self.truncated.masked_fill_(mask,False)
-        self.out_of_bounds.masked_fill_(mask,False)
-        self.complete.masked_fill_(mask,False);self.miss_flag.masked_fill_(mask,False)
-        for buf in self.reward_components.values():buf.masked_fill_(mask,0.)
-        self.action.masked_fill_(mask[:,None],0)
+        self.sim_time = sel(torch.zeros_like(self.sim_time), self.sim_time)
+        tp, tv = self._target_state()
+        self.target_pos = sel(tp, self.target_pos)
+        self.target_vel = sel(tv, self.target_vel)
+        dist = (self.target_pos - p_new).norm(dim=-1)
+        self.dist = sel(dist, self.dist)
+        self.dist_prev = sel(dist, self.dist_prev)
+        if self.reward_variant == "zem":
+            self.zem_prev = sel(
+                _zem(self.target_pos - p_new, self.target_vel - v_new), self.zem_prev
+            )
+        self.min_distance = sel(torch.full_like(dist, 1e9), self.min_distance)
+        self.count.masked_fill_(mask, 0)
+        self.terminated.masked_fill_(mask, False)
+        self.truncated.masked_fill_(mask, False)
+        self.out_of_bounds.masked_fill_(mask, False)
+        self.complete.masked_fill_(mask, False)
+        self.miss_flag.masked_fill_(mask, False)
+        for buf in self.reward_components.values():
+            buf.masked_fill_(mask, 0.0)
+        self.action.masked_fill_(mask[:, None], 0)
         self.plant.zero(mask)
         # No warmup on purpose: the boost engine fires autonomously on the
         # first active physics step, so a rocket-style zero-command warmup
         # would burn thrust (and shift the spawn state) before the first
         # policy step; an air-borne missile has no contacts to settle.
         self._observe(mask)
-        self.episode_length_buf.masked_fill_(mask,0)
-        self.returns.masked_fill_(mask,0)
-        if self._wind is not None:self._wind.reset(mask)
+        self.episode_length_buf.masked_fill_(mask, 0)
+        self.returns.masked_fill_(mask, 0)
+        if self._wind is not None:
+            self._wind.reset(mask)
         self._update_observation()
+        self._residual_reset(mask)
 
-    def _observe(self,mask):
+    def _observe(self, mask):
         """Refresh self._observation on the masked slots (no return value)."""
-        p,q,v,w=self.plant.state()
-        rpy=euler(q);wb=inverse_rotate(q,w);vb=inverse_rotate(q,v)
-        r_w=self.target_pos-p
-        v_rel=self.target_vel-v
-        r2=r_w.square().sum(-1).clamp_min(1e-6)
-        lam_w=torch.linalg.cross(r_w,v_rel)/r2[:,None]
-        lam_b=inverse_rotate(q,lam_w)
-        vc=-(r_w*v_rel).sum(-1)/r2.clamp_min(1e-6).sqrt()
-        rel=torch.cat((inverse_rotate(q,r_w),inverse_rotate(q,v_rel),lam_b,
-                       vc[:,None],self.target_vel.norm(dim=-1)[:,None]),-1)
-        observation=torch.cat((wb,q[:,1:],q[:,:1],vb,p,self.action,self.plant.auxiliary(),rel),-1)
-        if self._observation is None:self._observation=observation.clone()
-        else:self._observation.copy_(torch.where(mask[:,None],observation,self._observation))
+        p, q, v, w = self.plant.state()
+        wb = inverse_rotate(q, w)
+        vb = inverse_rotate(q, v)
+        r_w = self.target_pos - p
+        v_rel = self.target_vel - v
+        r2 = r_w.square().sum(-1).clamp_min(1e-6)
+        lam_w = torch.linalg.cross(r_w, v_rel) / r2[:, None]
+        lam_b = inverse_rotate(q, lam_w)
+        vc = -(r_w * v_rel).sum(-1) / r2.clamp_min(1e-6).sqrt()
+        rel = torch.cat(
+            (
+                inverse_rotate(q, r_w),
+                inverse_rotate(q, v_rel),
+                lam_b,
+                vc[:, None],
+                self.target_vel.norm(dim=-1)[:, None],
+            ),
+            -1,
+        )
+        observation = torch.cat(
+            (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary(), rel), -1
+        )
+        if self._observation is None:
+            self._observation = observation.clone()
+        else:
+            self._observation.copy_(torch.where(mask[:, None], observation, self._observation))
 
     def reset(self):
-        mask=torch.ones((self.num_envs,),device=self.device,dtype=torch.bool)
+        """Reset every replica by delegating to reset_idx on an all-True mask."""
+        mask = torch.ones((self.num_envs,), device=self.device, dtype=torch.bool)
         self.reset_idx(mask)
-        self.reset_buf=mask.clone()
+        self.reset_buf = mask.clone()
         self._update_observation()
         return self.get_observations()
 
-    def close(self):self.plant.close()
+    def close(self):
+        """Release the underlying Genesis plant and any other resources."""
+        self.plant.close()
