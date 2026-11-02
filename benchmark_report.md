@@ -40,7 +40,7 @@ AerospaceRL Benchmark（以下简称 **benchmark**）是一套面向航空航天
 
 ### 1.3 风扰统一钩子
 
-QuadX-Waypoints、Fixedwing-Waypoints、Rocket-Landing 与 Missile-Intercept 共享 `WindDisturbance`（`disturbances.py`）：世界系定常风 + Dryden 阵风。构造参数为 `steady_wind`（m/s）、`dryden ∈ [0,1]` 与 `severity ∈ {light, moderate, severe}`；`dryden=0` 且无定常风时为静风。参考高度 300 ft 的三轴标准差分别为 light `(1.5,1.5,0.7)`、moderate `(3.0,3.0,1.4)`、severe `(6.0,6.0,3.0)` m/s，尺度长度为 `(200,200,50)` m，实际标准差再乘 `dryden`。RNG 由环境种子确定，滤波器状态在 episode 复位时清零。所有气动力统一对**空速** $v_{\text{air}} = v - w$ 评估；静风路径与无风扰基准逐位一致。训练配置可以带风，跨方法主比较使用冻结的静风评测配置，扰动结果单独标注。
+QuadX-Waypoints、Fixedwing-Waypoints、Quadplane-VTOL、Rocket-Landing 与 Missile-Intercept（5 个大气任务）共享 `WindDisturbance`（`disturbances.py`）：世界系定常风 + Dryden 阵风。构造参数为 `steady_wind`（m/s）、`dryden ∈ [0,1]` 与 `severity ∈ {light, moderate, severe}`；`dryden=0` 且无定常风时为静风。参考高度 300 ft 的三轴标准差分别为 light `(1.5,1.5,0.7)`、moderate `(3.0,3.0,1.4)`、severe `(6.0,6.0,3.0)` m/s，尺度长度为 `(200,200,50)` m，实际标准差再乘 `dryden`。RNG 由环境种子确定，滤波器状态在 episode 复位时清零。所有气动力统一对**空速** $v_{\text{air}} = v - w$ 评估；静风路径与无风扰基准逐位一致。QuadX-Track 的构造器不接受风参数，该任务恒为静风。训练入口硬编码的默认风配置为：quadx / fixedwing / quadplane 的 `dryden=0.3`、rocket 的 `dryden=0.0`（与静风基准同口径）、missile 不传风参数；`scripts/eval.py` 在 `results/<task>/config.json` 存在时恢复该次训练的 `env_kwargs`，因此评测沿用训练风配置。跨方法主比较必须显式固定同一风配置（可按任务选用静风或同一 Dryden 档位），并单独标注扰动结果。
 
 ### 1.4 坐标、单位与模型边界
 
@@ -670,7 +670,7 @@ $$u_i\in[-1,1] \;\mapsto\; g_i = \begin{cases} \text{nominal}_i + u_i\cdot \text
 |---|---|---|
 | KL anchor | bc_ppo | PPO 目标 + 线性衰减 $KL(\pi_\theta\|\pi_{BC})$ |
 | terminal weight | bc_only, bc_ppo | 终端阶段加权 BC MSE |
-| optimizer | ppo_scratch, bc_ppo | LR warmup + cosine、sigma anneal、actor freeze |
+| optimizer | ppo_scratch, bc_ppo | LR warmup + cosine、sigma anneal、actor freeze（sigma 项依赖 `log_std_param`，仅在 `distribution='gaussian'` 下生效；默认 Beta 策略忽略 `init_std`） |
 | grad clip | bc_ppo | 更紧梯度裁剪 + 逐 mini-batch advantage 归一化 |
 | rate penalty | bc_ppo | 训练时 $-\text{coef}\|a_t-a_{t-1}\|^2$ 辅助奖励 |
 | delta action | satellite | 有界增量动作参数化 |
@@ -771,24 +771,31 @@ Residual RL 臂额外记录：残差均值/RMS/最大值、标称动作均值、
 
 benchmark 提供 `scripts/visualize.py`，对全部 10 个任务运行其传统基线的单个 episode，录制被控对象的位姿序列后在独立的 Genesis 离屏场景中回放渲染，输出 `results/<task>/vis.mp4`。渲染场景与仿真物理完全解耦（零重力、不步进，仅以 `set_pos/set_quat` 驱动物体），保证可视化忠实于仿真状态而不引入额外物理开销。
 
-画面统一为 **960×540 主视图**加**右下角 384×288 近景子窗**（近景先以 480×360 渲染再缩放，标签 18 px、正文 20 px 并带半透明底板，保证在常规播放尺寸下可读）。**主相机固定为全局视角**，不随被控对象平移或缩放，始终保留航路点、目标、着陆区或轨道；除 Satellite 的全局姿态场景外，近景子窗独立跟随被控对象。所有相机位姿显式给定世界竖直方向 `up=(0,0,1)`，避免相机继承上一帧姿态而产生画面滚转。
+画面统一为 **1440×810（16:9）三区平铺布局**，三块区域在像素层面互不相交，任何一块都不会覆盖另一块：
 
-真实尺度下机体与标记在远景中往往只有几像素，因此按任务做**纯显示放大**并在画面文字中标注倍率（QuadX 6×、QuadX-Track 12×、Fixedwing/Quadplane/Rocket 8×、Missile 100×、Docking 4×、Rendezvous 6×、Transfer 2.4×），位置、距离、判定半径仍为真实米制；大气层任务使用灰色地面 + 浅蓝天空背景，航天器任务保留深色星空背景。QuadX-Track 与 Quadplane 复用 PyFlyt 机体 URDF、相机角度和航路点样式；QuadX-Track 仅额外显示真实目标、LOS 与环境遮挡物。
+- **左侧 960×810 全景主视图**：固定全局相机，完整呈现航路点、目标、着陆区或轨道，其上不叠加任何内容（近景窗与读数面板均不在这一区域内）。
+- **右上 480×430 状态卡片**：不是把读数行直接堆在画面上的纯文本，而是一块带层级的卡片面板（与左侧全景共享深色底、圆角分隔线与强调色）：顶部为任务标题，其下为大号主指标（高度 / 距离 / 姿态残差 / 比例尺），再下是 2–3 行键值对（目标状态、显示倍率、阈值等），随后是带色块的图例、说明注脚、episode 进度条与时间戳；episode 终止后页脚出现 `SUCCESS` / `FAILURE` 圆角徽章。所有文本按列宽做省略号截断，永不越出卡片。
+- **中间 26 px 强调色标签条**：单行标注近景对象（如 `CLOSE-UP: chaser + station`）。
+- **右下 480×354 近景**：独立跟随被控对象，按原生分辨率渲染后直接贴入，不做缩放拉伸。
+
+Genesis 相机的 `fov` 是**垂直视角**，因此画幅比例改变时脚本用 `_hfov_match` 重算垂直 fov 以保持原有的**水平视野**不变：从左 960×540 改为 960×810 时只增加上下天空/地面，原先相机调好的左右构图不被裁切。**主相机固定为全局视角**，不随被控对象平移或缩放；近景相机独立跟随被控对象（Satellite 也提供 `bus + CMG` 近景）。所有相机位姿显式给定世界竖直方向 `up=(0,0,1)`，避免相机继承上一帧姿态而产生画面滚转。
+
+真实尺度下机体与标记在远景中往往只有几像素，因此按任务做**纯显示放大**并在画面文字中标注倍率（QuadX 6×、QuadX-Track 12×、Fixedwing/Quadplane/Rocket 8×、Missile 200×、Docking 4×、Rendezvous 6×；Transfer 的盒体为示意尺寸、不按比例，真实尺度以画面下方 2000 km 比例尺为准）。放大是围绕**机体最低点**做的（`_scale_ground_lift`）：Genesis 按 link 原点缩放几何，若直接放大，8× 的火箭在落地时会有约 17 m 埋进着陆平台/地面，造成明显穿模；以最低点为锚后，放大后的机腹始终与真实机腹重合，落地时正好立在平台上，而卡片读数、判定半径仍是真实值。位置、距离、判定半径仍为真实米制；大气层任务使用灰色地面 + 浅蓝天空背景，航天器任务保留深色星空背景。QuadX-Track 与 Quadplane 复用 PyFlyt 机体 URDF、相机角度和航路点样式；QuadX-Track 仅额外显示真实目标、LOS 与环境遮挡物。
 
 ### 7.1 各任务可视化约定
 
-| 任务 | 可视化要素 |
-|------|-----------|
-| QuadX-Waypoints | cf2x URDF（显示放大 6×）+ 灰色地面 + 绿色活动航点球（放大至 0.18 m 半径）；固定全局主视角（fov 45°，覆盖 5 m 飞行穹顶）+ PyFlyt yaw-30°/pitch-30° 机体近景 |
-| QuadX-Track | 同型 cf2x（放大 12×）+ 红色地面目标球（半径 1 m）+ 6 个灰色 LOS 遮挡柱 + 白色视线点序列 + 蓝/红历史轨迹；固定全局主视角 + 机体近景 |
-| Fixedwing-Waypoints | fixedwing URDF（放大 8×），4 个航点红色球体，历史轨迹；固定全局主视角 + 机体近景 |
-| Quadplane-VTOL | quadplane URDF（放大 8×），4 个航点红色球体，历史轨迹；固定全局主视角（旋翼/固定翼构型由真实姿态呈现，不伪造倾转动画）+ 机体近景 |
-| Rocket-Landing | rocket URDF（放大 8×）+ 着陆平台 + 灰色地面；固定全局主视角覆盖 0–450 m 下降高度 + 火箭近景子窗口 |
-| Missile-Intercept | 导弹 URDF（放大 100×），运动学目标用半径 60 m 红色标记，交战轨迹，4 km 高度下的地面/天空背景；固定全局交战视角 + 导弹近景子窗口 |
-| Satellite Attitude | 卫星总线（灰身 +z/-z 设备舱、+x 传感面、-x 喷管、顶部天线、±y 太阳能板），体轴系三色轴架随动，目标姿态黄色轴架，青色 CMG 框架轴柱由录制的框架角驱动，固定斜视角相机（后移到 3.4/-3.4/2.15 以完整容纳太阳翼，不随翻滚体旋转） |
-| Low-Thrust Transfer | 地球球体 + 卫星（放大 2.4×，1 单位 = 1000 km），绿色虚线初始轨道椭圆、青色点线目标圆轨道、红/黄近/远地点标记、橙色真实状态轨迹、2000 km 比例尺；固定 45° 全局视图（相机距离 36 单位）+ 航天器近景子窗口 |
-| Docking | 灰色目标站（放大 4×）+ ±y 太阳能板，+x 面对接环（绿边 + 中心标记 + 半透明接近轴柱），橙色追踪器（放大 4×）对接面朝向目标，中心连线虚线，真实速度箭头（10 m/m·s⁻¹），接近轨迹，叠加真实距离/速度及成功/失败阈值与终止结果；固定视角对准终端接近段（约 70 m） |
-| Rendezvous | 对接场景（双方放大 6×）+ LVLH 家具：径向/沿迹/迹外轴条、距离环（250/500/1000/2000 m）、绿色目标球（r=10 m）、红色禁入球（r=5 m）、量化速度箭头（100 m/m·s⁻¹）；固定 LVLH 全局主视角（550 m）+ 追踪器近景子窗口 |
+| 任务 | 全景主视图（左 960×810，不被任何元素覆盖） | 右上状态卡片（480×430） | 右下近景（480×354） |
+|------|------|------|------|
+| QuadX-Waypoints | cf2x URDF（显示放大 6×）+ 灰色地面 + 绿色活动航点球（放大至 0.18 m 半径）；固定全局视角（fov 45°，覆盖 5 m 飞行穹顶） | 主指标 Altitude；Waypoints「4 inside the 5 m dome」/ Body「scaled 6x」；绿色航点、灰色地面阴影图例；进度条与 RESULT 徽章 | PyFlyt yaw-30°/pitch-30° 机体 |
+| QuadX-Track | 同型 cf2x（放大 12×）+ 红色地面目标球（半径 1 m）+ 6 个灰色 LOS 遮挡柱 + 白色视线点序列 + 蓝/红历史轨迹 | 主指标 Altitude；Target VISIBLE/LOST / Body「scaled 12x」；红/灰/白图例；RESULT 徽章 | 机体 |
+| Fixedwing-Waypoints | fixedwing URDF（放大 8×），4 个航点红色球体，历史轨迹 | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 8x」；红/蓝图例；RESULT 徽章 | 机体 |
+| Quadplane-VTOL | quadplane URDF（放大 8×），4 个航点红色球体，历史轨迹（旋翼/固定翼构型由真实姿态呈现，不伪造倾转动画） | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 8x」；红/蓝图例；注脚注明真实 VTOL 姿态、无合成倾转动画 | 机体（真实 VTOL 姿态） |
+| Rocket-Landing | rocket URDF（放大 8×，以机腹最低点为锚，落地时立在平台上、不穿模）+ 着陆平台 + 灰色地面，覆盖 0–450 m 下降高度 | 主指标 Altitude；Landing pad「at origin」/ Body「scaled 8x」；灰色地面、蓝色下降轨迹图例；注脚注明固定全局视角与放大锚点 | 火箭（抬高后的完整机体 + 引擎羽流） |
+| Missile-Intercept | 导弹 URDF（放大 200×）+ 黄色定位点，运动学目标用半径 60 m 红色标记，交战轨迹，4 km 高度地面/天空背景；固定全局交战视角 | 主指标 Altitude（km）；Target「red 60 m marker」/ Body「scaled 200x」；黄/红图例；固定全局交战视角注脚 | 导弹 |
+| Satellite Attitude | 卫星总线（灰身 +z/-z 设备舱、+x 传感面、-x 喷管、顶部天线、±y 太阳能板），体轴系三色轴架随动，目标姿态黄色轴架，青色 CMG 框架轴柱，红色目标姿态 ghost；固定斜视角相机（3.4/-3.4/2.15，不随翻滚体旋转） | 主指标 Attitude error（deg）；Gimbal X/Y/Z（rad）键值；红/绿/蓝 = 体轴 X/Y/Z 图例；注脚说明黄/青/ghost 语义 | bus + CMG 轴 |
+| Low-Thrust Transfer | 地球球体 + 航天器盒体（示意尺寸，1 单位 = 1000 km），绿色虚线初始轨道椭圆、青色点线目标圆轨道、红/黄近/远地点标记、橙色真实状态轨迹、2000 km 比例尺；固定 45° 全局视图（相机距离 36 单位） | 主指标 Scale bar「2000 km」；1 unit = 1000 km / Frame = GCRF / Markers 键值；绿/青/橙图例；注脚注明航天器盒体非真实比例 | 航天器 |
+| Docking | 灰色目标站（放大 4×）+ ±y 太阳能板，+x 面对接环（绿边 + 中心标记 + 半透明接近轴柱），橙色追踪器（放大 4×）对接面朝向目标，中心连线虚线，真实速度箭头（10 m/m·s⁻¹），接近轨迹；固定视角对准终端接近段（约 70 m） | 主指标 Range to target；Relative speed / Success「< pos_goal」/ Fail「> range_fail」键值；灰/绿/橙图例 | chaser + station（随距离连续变焦，含太阳翼） |
+| Rendezvous | 对接场景（双方放大 6×）+ LVLH 家具：径向/沿迹/迹外轴条、距离环（250/500/1000/2000 m）、绿色目标球（r=10 m）、红色禁入球（r=5 m）、量化速度箭头（100 m/m·s⁻¹）；固定 LVLH 全局视角（550 m） | 主指标 Range to target；Relative speed / Goal「10 m ball」/ Keep-out「5 m sphere」键值；绿/红/灰（250/500 m 距离环）图例 | 追踪器（随距离连续变焦至 chaser + station） |
 
 ### 7.2 使用方式
 

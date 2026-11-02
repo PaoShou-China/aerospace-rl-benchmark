@@ -135,9 +135,9 @@ timeouts trigger the $\gamma V(s')$ bootstrap. `max_episode_length = 1202`.
 
 - Target attitude: uniform on $\mathrm{SO}(3)$ via Shoemake sampling,
   $q^\star = (\sqrt{1-u_1}\sin 2\pi u_2,\ \sqrt{1-u_1}\cos 2\pi u_2,\ \sqrt{u_1}\sin 2\pi u_3,\ \sqrt{u_1}\cos 2\pi u_3)$, $u \sim U(0,1)^3$.
-- Bus attitude: $q_0 = \operatorname{normalize}\big((1,0,0,0) + 10^{-3}\, \eta\big)$, $\eta \sim U(-1,1)^4$.
-- Body rate: $\omega_0 = 10^{-3}\, \eta$, $\eta \sim U(-1,1)^3$.
-- Gimbals: $\theta_0 = \theta_{\text{home}} + 10^{-3}\, \eta$, with the
+- Bus attitude: $q_0 = \operatorname{normalize}\big((1,0,0,0) + 10^{-2}\, \eta\big)$, $\eta \sim U(-1,1)^4$.
+- Body rate: $\omega_0 = 10^{-2}\, \eta$, $\eta \sim U(-1,1)^3$.
+- Gimbals: $\theta_0 = \theta_{\text{home}} + 10^{-2}\, \eta$, with the
   momentum-neutral home $\theta_{\text{home}} = (\pi, 0, \pi, 0)$ for $N=4$
   and $(\pi, \pi, \pi, 0, 0, 0)$ for $N=6$, chosen so that
   $\sum_i r_i(\theta_{\text{home}}) = 0$ exactly (a quiescent spacecraft

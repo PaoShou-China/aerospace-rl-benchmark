@@ -144,14 +144,51 @@ with saturated axes counted in `stat_sat`.
 
 ## 5. Measured performance
 
-Under the official `baseline_eval` protocol (1024 parallel envs, seed 7),
-the root README's frozen baseline table reports a **100% success rate**
-for the docking task. The frozen controller audit
-(`docs/evaluation_protocol.md`, §2) records the controller as fully
-successful across its scenario grid and frozen as the behavior-cloning
-data source; it also notes the termination-priority fix (violation wins
-over success on the terminal step) is immaterial for this baseline because
-its fuel usage stays far below the budget.
+All shipped records below use the `scripts/baseline_eval.py` accounting
+(first episode per replica, `env_kwargs = {}`). They are the only
+docking numbers that can be re-verified from the checkout; the older
+"1024 envs / seed 7" claim is withdrawn because no 1024-replica artifact
+exists.
+
+**Protocol dataset A** (`results/baseline_protocol/seed{7,13,21,101}/docking/baseline.json`,
+128 replicas per seed, 500-step horizon):
+
+| seed | success | successes / finished | mean episode return | env steps |
+|---|---:|---:|---:|---:|
+| 7 | 100% | 128 / 128 | 189.32 | 264 |
+| 13 | 100% | 128 / 128 | 189.65 | 263 |
+| 21 | 100% | 128 / 128 | 190.27 | 274 |
+| 101 (held-out) | 100% | 128 / 128 | 191.10 | 274 |
+
+Pooled protocol seeds 7/13/21: **100% (384/384)**, mean return 189.75.
+`complete = true` in every file.
+
+**Shipped single record.** `results/docking/baseline.json` is the seed-13
+protocol record: 128 replicas, seed 13, 263 env steps, **100% (128/128)**,
+mean episode return **189.65**, `complete = true`.
+
+**Dataset B** (`results/docking/baselines/*_seed7.json`, 256 replicas, seed 7):
+
+| arm | CLI key | success | mean return | env steps |
+|---|---|---:|---:|---:|
+| `cwh_lqr` (default) | — | 100% (256/256) | 188.62 | 274 |
+| `cwh_pole_placement` | `pole_placement` | 100% (256/256) | 189.30 | 236 |
+| `zem_zev` | `zem_zev` | 100% (256/256) | 190.06 | 313 |
+
+The three arms differ only in the terminal guidance law; all use the same
+`SpaceDockingEnv`, 1 m / 0.1 m/s capture tolerance and 200 m range bound,
+so the step-count spread (236–313) is the expected difference in
+time-to-capture, not a different task.
+
+The frozen controller audit (`docs/evaluation_protocol.md`, §2) records
+the controller as fully successful across its scenario grid and frozen as
+the behavior-cloning data source; it also notes the termination-priority
+fix (violation wins over success on the terminal step) is immaterial for
+this baseline because its fuel usage stays far below the budget. The
+audit's per-scenario artifacts are not shipped, and the shipped JSONs do
+not carry fuel or per-scenario metrics (`metric_counts = {}`), so the
+0.912 kg maximum fuel figure in `docs/evaluation_protocol.md` §1 is a
+2026-10-22 audit record rather than a value reproducible from these files.
 
 ## 6. Known limitations
 

@@ -24,8 +24,9 @@ conventions below are verified against `SatelliteAttitudeEnv`
   rate, $\theta\in\mathbb{R}^{N}$ the gimbal angles ($N\in\{4,6\}$),
   $m$ the normalized cluster manipulability, and $a_{\mathrm{alloc}}$ an
   allocation feature the controller does not use. The implemented
-  observation dimension is $11+4N$ (27 for the 4-CMG cluster, 35 for the
-  6-CMG cluster). The controller consumes $e$ (`o[:, 4:7]`),
+  observation dimension is $14+3N$ (26 for the 4-CMG cluster, 32 for the
+  6-CMG cluster: 4 quaternion + 3 error + 3 rate + $3N$ gimbal features
+  + 1 manipulability + 3 allocation). The controller consumes $e$ (`o[:, 4:7]`),
   $\omega$ (`o[:, 7:10]`), $(\sin\theta,\cos\theta)$
   (`o[:, 10:10+2N]`) and $m$ (`o[:, 10+3N]`).
 - **Environment constants at construction.** `num_gimbals`, the dynamic
@@ -141,13 +142,46 @@ returned as `float32`. Every clipped step is counted in
 
 ## 5. Measured performance
 
-Under the official `baseline_eval` protocol (1024 parallel envs, seed 7,
-unbiased per-replica episode accounting), the root README's frozen
-baseline table reports a **100% success rate over 1024 episodes** for the
-nominal 4-CMG task. The frozen controller audit
-(`docs/evaluation_protocol.md`, §2) additionally records the controller as
-fully successful on the singularity, 180°-slew and 6-CMG audit suites and
-lists it as the frozen behavior-cloning data source for this task.
+All shipped records use the `scripts/baseline_eval.py` accounting (first
+episode per replica, `env_kwargs = {}`, 1200-step horizon). There is no
+1024-replica satellite artifact, so the older "100% over 1024 episodes"
+claim is withdrawn; the verified numbers are:
+
+**Protocol dataset A** (`results/baseline_protocol/seed{7,13,21,101}/satellite/baseline.json`,
+128 replicas per seed):
+
+| seed | success | successes / finished | mean episode return | env steps |
+|---|---:|---:|---:|---:|
+| 7 | 100% | 128 / 128 | 66.09 | 330 |
+| 13 | 100% | 128 / 128 | 64.17 | 326 |
+| 21 | 100% | 128 / 128 | 65.47 | 304 |
+| 101 (held-out) | 100% | 128 / 128 | 63.66 | 340 |
+
+Protocol seeds 7/13/21: **100% (384/384)**, mean return 65.24, mean 320
+env steps, `complete = true` in every file.
+
+**Shipped single record.** `results/satellite/baseline.json` is the
+seed-13 protocol record: 128 replicas, seed 13, 326 env steps,
+**100% (128/128)**, mean episode return **64.17**, `complete = true`.
+
+**Dataset B** (`results/satellite/baselines/*_seed7.json`, 256 replicas,
+seed 7; same quaternion PD path, different steering law):
+
+| arm | registry name | success | mean return | env steps |
+|---|---|---:|---:|---:|
+| damped pseudo-inverse (this) | `quat_pd_damped_cmg` (default) | 100% (256/256) | 64.85 | 330 |
+| ordinary Moore–Penrose | `quat_pd_mp_pinv_cmg` | 100% (256/256) | 64.54 | 366 |
+| weighted damped + null-space | `quat_pd_wpinv_cmg` | 100% (256/256) | 65.03 | 337 |
+
+The frozen controller audit (`docs/evaluation_protocol.md`, §2) records
+the controller as fully successful on the singularity, 180°-slew and
+6-CMG audit suites and lists it as the frozen behavior-cloning data source
+for this task. Those per-scenario audit results were measured by
+`scripts/satellite_steering_compare.py`, whose output files
+`results/satellite/steering_compare.{json,md}` are **not shipped**; the
+scenario-level numbers in
+[baseline-satellite-mp-pinv.md](baseline-satellite-mp-pinv.md) are
+run-time records rather than re-verifiable artifacts.
 
 ## 6. Known limitations
 

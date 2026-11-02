@@ -133,8 +133,12 @@ python scripts/satellite_steering_compare.py --backend cpu --num-envs 64 \
     --arms damped,mp_pinv,ppo --cmgs 4,6
 ```
 
-64 replicas per arm, seed 7, one episode per replica, 1200-step cap (30 s at
-the 0.025 s control period). All arms see the same target stream and the same
+**Neither output file is shipped in the checkout**, so the tables below
+are run-time records from that harness invocation (64 replicas per arm,
+seed 7, one episode per replica, 1200-step cap, 30 s at the 0.025 s
+control period). They cannot be re-verified from repository artifacts;
+the re-verifiable official-protocol records are the dataset-B JSONs
+quoted after the tables. All arms see the same target stream and the same
 shared PD torque reference. `sat envstep` is the fraction of steps with any
 gimbal command saturated, `sat gimbal` the fraction of saturated gimbal
 commands, and the torque error is the mean instantaneous
@@ -181,9 +185,25 @@ only the clamp keeps the command finite. The 4-CMG timeouts do not arise here
 because the 6-CMG configuration is full rank
 ($\sigma_{\min}/\sigma_{\max}\approx6.1\times10^{-5}$).
 
-**PPO arm:** no checkpoint exists (`results/satellite_ppo` was removed after
-an aborted run under GPU contention), so PPO is reported as unavailable, not
-as a number.
+**Shipped official-protocol records (re-verifiable).** The dataset-B
+files `results/satellite/baselines/*_seed7.json` use the same
+`scripts/baseline_eval.py` accounting (256 replicas, seed 7, first
+episode per replica, 1200-step horizon, nominal 4-CMG task) and are the
+numbers a reader can reproduce from the checkout:
+
+| arm | registry name | success | mean return | env steps |
+|---|---|---:|---:|---:|
+| damped pseudo-inverse (frozen baseline) | `quat_pd_damped_cmg` | 100% (256/256) | 64.85 | 330 |
+| ordinary Moore–Penrose (this) | `quat_pd_mp_pinv_cmg` | 100% (256/256) | 64.54 | 366 |
+| weighted damped + null-space | `quat_pd_wpinv_cmg` | 100% (256/256) | 65.03 | 337 |
+
+The ablation's cost is therefore visible in the window each run needs for
+every replica's first episode (330 → 366 env steps, +10.9%); success is
+unchanged at 100%. The torque-error and saturation differences are only
+recorded by the unshipped scenario harness above.
+
+**PPO arm:** no checkpoint exists — `results/satellite_ppo/` is absent
+from the checkout — so PPO is reported as unavailable, not as a number.
 
 **Rank diagnostics.** The fraction of env-steps below the `pinv` rank
 threshold is 0.0 everywhere except the exact 4-CMG roof singularity (1.0,
@@ -248,7 +268,10 @@ python scripts/satellite_steering_compare.py
 python scripts/satellite_steering_compare.py --backend cpu --num-envs 64 \
     --arms damped,mp_pinv,ppo --cmgs 4,6
 
-# original PPO into a separate result directory
+# original PPO into a separate result directory (NOT a shipped run:
+# results/satellite_ppo/checkpoint.pt does not exist in this repository,
+# so the command below is the intended configuration, not a reproduction
+# of a stored artifact)
 python - <<'PY'
 from algorithms.train_utils import run_training
 from environments.satellite.attitude_control import SatelliteAttitudeEnv
@@ -257,6 +280,8 @@ common = dict(num_envs=1024, updates=1000, seed=7, backend='gpu', clean=True,
               num_steps_per_env=150, num_mini_batches=5,
               num_learning_epochs=40, entropy_coef=0.0, init_std=1.0,
               clip_param=0.2)
+# init_std is inert under the default BetaDistribution; it only takes effect
+# with build_cfg(distribution='gaussian').
 run_training('satellite_ppo', SatelliteAttitudeEnv,
              out_dir='results/satellite_ppo', **common)
 PY

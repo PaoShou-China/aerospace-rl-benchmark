@@ -138,35 +138,59 @@ the baseline): `R_SPAWN` = 2500 m, `CONE` = ±37.5°, `A_LAT` = 7.5 g,
 
 ## 5. Measured performance
 
-All numbers are quoted from repository artifacts with their protocols;
-success is a proximity-fuse kill (miss distance < 15 m at any physics
-substep).
+Success is a proximity-fuse kill (miss distance < 15 m at any physics
+substep). All shipped records use the `scripts/baseline_eval.py` accounting
+(first episode per replica, fixed medium operating point, `env_kwargs = {}`).
+The environment's `difficulty` constructor kwarg was removed on 2026-10-24,
+so the earlier difficulty-parameterized tables are no longer reproducible
+and are not quoted here.
 
-**Current configuration (N = 15, fixed medium operating point).**
+**Protocol dataset A**
+(`results/baseline_protocol/seed{7,13,21,101}/missile/baseline.json`,
+128 replicas per seed):
 
-| Source / protocol | Result |
-|---|---|
-| `results/missile/baseline.json` — official `scripts/baseline_eval.py missile`, 1024 envs, seed 7, GPU, 433 env steps (1037 completed episodes) | kill rate **0.8303** (861/1037), mean episode return 90.49 |
-| In-code tuning note (`MissileAPNBaseline` comment), 1024-episode runs, seed 7, fixed medium operating point | N = 15: SR 0.812; N = 10: SR 0.770; N ≥ 18 overshoots and diverges the LOS loop |
-| `environments/missile/test_missile_apn.py` T3 (acceptance gate, not a measurement) | asserts mixed-type SR ≥ 0.45 and straight-target SR ≥ 0.85 at the fixed medium point |
+| seed | kill rate | kills / finished | mean episode return | env steps |
+|---|---:|---:|---:|---:|
+| 7 | 75.0% | 96 / 128 | 100.53 | 591 |
+| 13 | 71.1% | 91 / 128 | 95.62 | 656 |
+| 21 | 85.9% | 110 / 128 | 113.61 | 575 |
+| 101 (held-out) | 70.3% | 90 / 128 | 94.91 | 597 |
 
-**Historical measurements (difficulty-parameterized environment, earlier
-baseline configuration, seed 7).** The following predate the 2026-10-24
-fixed-medium environment and the N = 15 retune; they are quoted with their
-original protocol labels.
+Protocol seeds 7/13/21: **77.3% ± 7.7** (297/384), mean return 103.25,
+`complete = true` in every file. The seed-to-seed spread (70.3–85.9%) is
+large relative to the sample size; a single 128-replica record must not be
+read as a precise capability estimate.
 
-| Source / protocol | Result |
-|---|---|
-| `environments/missile/README.md` table, `test_missile_apn.py` T3, difficulty d = 0, 256 envs | SR 0.551 mixed / 1.000 straight; median miss (kills) 4.7 m |
-| same, T5 sweep, 128 envs/cell | d = 0: SR 0.562 (straight 1.000, $r_0$ 1504 m); d = 0.5: 0.454 (0.775, 2503 m); d = 1.0: 0.062 (0.135, 3502 m) |
-| same, official `baseline_eval.py missile`, benchmark d = 1.0, 1024 envs | SR 0.0576 (59/1025 episodes), mean episode return −75.0 |
-| `results/missile/scenarios.json` — `eval_missile_scenarios.py` difficulty × maneuver-type grid, 256 envs per cell, ≤256 episodes per cell, seed 7 | d = 0: SR 0.7305 (straight 1.000, weave 0.886, barrel 0.423; median miss of kills 10.6 m, of all 12.6 m); d = 0.5: SR 0.6641 (1.000 / 0.977 / 0.116; 9.1 / 12.8 m); d = 1.0: SR 0.1318 (0.205 / 0.191 / 0.000; 10.4 / 84.6 m; barrel all-episode median miss 1036.3 m) |
+**Shipped single record.** `results/missile/baseline.json` is the seed-13
+protocol record: 128 replicas, seed 13, 656 env steps, **kill rate
+0.7109 (91/128)**, mean episode return **95.62**, `complete = true`.
 
-Note: the prose summary of the scenario grid in
-`environments/missile/README.md` (overall SR 0.551 / 0.492 / 0.066 and
-median miss 7.4 / 8.1 / 84.7 m at d = 0 / 0.5 / 1.0) disagrees with the
-on-disk `scenarios.json` artifact quoted above; the JSON artifact is the
-authoritative record of that harness run.
+**Dataset B** (`results/missile/baselines/*_seed7.json`, 256 replicas,
+seed 7, 637 env steps):
+
+| arm | CLI key | kill rate | kills / finished | mean return |
+|---|---|---:|---:|---:|
+| `apn_rate` (this, N = 15) | — (default) | **76.2%** | 195 / 256 | 101.90 |
+| `tpn` | `tpn` | 76.2% | 195 / 256 | 102.13 |
+| `ppn` | `ppn` | 2.0% | 5 / 256 | 27.21 |
+
+`tpn` (true PN without the half-$N$ gravity augmentation) matches APN on
+this fixed snapshot; `ppn` (pure pursuit, no lead) fails almost everywhere.
+Dataset B also reports `timeout_rate = 0.0` for `apn_rate`, i.e. the
+failures are genuine passes of the closest-approach point rather than
+15 s timeouts.
+
+**Tuning record (not shipped).** The `MissileAPNBaseline` code comment
+records 1024-episode seed-7 tuning runs at the fixed operating point in
+which N = 15 gave SR 0.812 versus 0.770 at N = 10, and N ≥ 18 overshot and
+diverged the LOS loop. No JSON artifact for those runs is in the checkout,
+so they are design notes, not benchmark records.
+
+**Acceptance gate (not a measurement).**
+`environments/missile/test_missile_apn.py` T3 drives 256 replicas for up
+to 3000 env steps and asserts only that the mixed-maneuver kill rate is
+≥ 0.45 and the straight-target rate ≥ 0.85. It stores no artifact and is
+not a result.
 
 ## 6. Known limitations
 
@@ -174,10 +198,12 @@ Only limitations documented in the code comments or READMEs are listed.
 
 - **Straight-line shot assumption.** The APN law assumes a non-maneuvering
   target; its residual failures concentrate on the weave and barrel-roll
-  maneuver types at high difficulty (missile README). At d = 1.0 the tight
-  high-severity barrel circle defeats the straight-line shot solution
-  entirely (barrel SR 0.000, median miss 1036 m in the scenario grid). This
-  maneuvering-target residual is the gap RL is expected to attack.
+  maneuver types (the env draws `t_type` uniformly at reset). The
+  per-maneuver breakdown is produced by
+  `environments/missile/eval_missile_scenarios.py`, but its output
+  `results/missile/scenarios.json` is **not shipped**, so no per-type
+  failure split is quoted here. This maneuvering-target residual is the
+  gap RL is expected to attack.
 - **Terminal LOS-rate noise.** The filter freezes below $V_c < 50$ m/s;
   terminal corrections rely on the frozen estimate.
 - **Navigation-constant sensitivity.** N ≥ 18 overshoots and diverges the
@@ -185,10 +211,6 @@ Only limitations documented in the code comments or READMEs are listed.
 - **Rate-command envelope.** Guidance authority is bounded by the
   pitch/yaw rate limit; demands beyond it saturate (5) with no feasibility
   projection.
-- **Stale labels.** The class docstring and both READMEs still describe the
-  law as "N = 4"; the implemented constant is N = 15 (code wins). The
-  missile README's action-space section likewise predates the
-  `OMEGA_LAT` 0.5 → 1.0 change and the removal of the difficulty knob.
 
 ## 7. Implementation
 
@@ -199,11 +221,14 @@ Only limitations documented in the code comments or READMEs are listed.
   `conventional_controller` on
   `environments/missile/env.py::MissileInterceptEnv`.
 - Evaluation: `scripts/baseline_eval.py missile` (official protocol, writes
-  `results/missile/baseline.json`); test suite
+  `results/missile/baseline.json`, which is shipped). Dataset-B arms are
+  produced by `scripts/baseline_suite.py` /
+  `scripts/baseline_eval.py missile --baseline <tpn|ppn>` under
+  `results/missile/baselines/`. Test suite
   `environments/missile/test_missile_apn.py` (T1 fin-sign, T2 rate-loop,
-  T3 closed-loop intercept gates); scenario harness
+  T3 closed-loop intercept gates; default backend `cpu`); scenario harness
   `environments/missile/eval_missile_scenarios.py` (writes
-  `results/missile/scenarios.json`).
+  `results/missile/scenarios.json`, **not shipped**).
 
 ## 8. References
 

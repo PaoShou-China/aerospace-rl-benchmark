@@ -15,6 +15,13 @@ mechanism arm:
 - ``baseline_variant``: named controller A/B arm;
 - ``residual_rho``: residual authority fraction of the full action range;
 - ``bc``: demonstration-collection overrides (coverage / sample count).
+
+``ppo_overrides`` are forwarded to `run_training` unchanged. ``init_std``,
+``sigma_pin``, ``lr_sigma_coupling`` and the ``sigma_end`` improvement are
+Gaussian-policy knobs: the shipped default policy is the bounded
+``BetaDistribution``, which ignores ``init_std`` and has no ``log_std_param``
+for the sigma controls, so those conditions only differ under
+``distribution='gaussian'``.
 """
 
 import copy
@@ -331,11 +338,16 @@ TUNE_BCR = {
     "tune_bcr_rho_005": {**_BCR_SHARED, "residual_rho": 0.05},
     "tune_bcr_rho_01": {**_BCR_SHARED, "residual_rho": 0.1},
     "tune_bcr_rho_02": {**_BCR_SHARED, "residual_rho": 0.2},
-    # exploration std (task default is 0.5 docking/rendezvous, 1.0 satellite)
+    # exploration std (task default is 0.5 docking/rendezvous, 1.0 satellite).
+    # NOTE: `init_std` is a Gaussian-policy knob; the default BetaDistribution
+    # ignores it, so these three arms only differ when the policy is switched
+    # to `distribution='gaussian'`.
     "tune_bcr_sigma_02": {**_BCR_SHARED, "ppo_overrides": {"init_std": 0.2}},
     "tune_bcr_sigma_05": {**_BCR_SHARED, "ppo_overrides": {"init_std": 0.5}},
     "tune_bcr_sigma_10": {**_BCR_SHARED, "ppo_overrides": {"init_std": 1.0}},
-    # pinned sigma + lr-sigma coupling (same drift rate at every update)
+    # pinned sigma + lr-sigma coupling (same drift rate at every update).
+    # NOTE: these read `distribution.log_std_param` and therefore also require
+    # `distribution='gaussian'`.
     "tune_bcr_pin_005": {
         **_BCR_SHARED,
         "ppo_overrides": {"sigma_pin": 0.05, "lr_sigma_coupling": 1.5e-3},

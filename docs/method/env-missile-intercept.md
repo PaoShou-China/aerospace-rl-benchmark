@@ -204,11 +204,12 @@ One uniform(9) draw per replica covers all random quantities:
   \end{equation}
   with attitude taking body $+x$ to $\text{aim}$ plus the roll jitter. The
   perpendicular component of this lead nulls the initial LOS rate;
-  `TGO_SCALE` $= 0.8$ (1.0 = nominal closed-form) trimmed overshoot misses,
-  +0.8 pp success rate on two disjoint 1024-episode seed populations; a full
-  maneuver-model prediction performed worse (the maneuver displacement over the
-  flight is tens of metres, while the straight-line lead correctly cancels the
-  crossing geometry).
+  `TGO_SCALE` $= 0.8$ (1.0 = nominal closed-form) trimmed overshoot misses in
+  the tuning harness (+0.8 pp success rate on two disjoint 1024-episode seed
+  populations; a tuning record only — no artifact for this comparison is
+  shipped). A full maneuver-model prediction performed worse (the maneuver
+  displacement over the flight is tens of metres, while the straight-line lead
+  correctly cancels the crossing geometry).
 - **No warmup.** Unlike the rocket, reset performs no zero-command warmup: the
   boost engine fires autonomously on the first active physics step, so a warmup
   would burn thrust and shift the spawn state before the first policy step; an

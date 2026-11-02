@@ -32,7 +32,7 @@ ALGORITHM = "ppo"
 NUM_ENVS = 1024
 # Shared vectorized-step budget (20.5M transitions at 1024 envs).
 # Sized so the run completes inside a bounded wall-clock on a shared, saturated
-# GPU while still giving PPO ~195 updates.
+# GPU while still giving PPO 200 updates.
 TRAIN_ENV_STEPS = 20_000
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'

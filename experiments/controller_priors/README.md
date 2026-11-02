@@ -216,7 +216,7 @@ otherwise identical, so every entry is an independent ablation.
 |---|---|---|
 | `improve_kl_anchor` | bc_ppo | PPO objective + linearly-decayed `KL(pi_theta || pi_BC)` |
 | `improve_terminal_weight` | bc_only, bc_ppo | terminal-phase-weighted BC MSE (obs-only phase signal) |
-| `improve_optimizer` | ppo_scratch, bc_ppo | lr warmup + cosine, sigma anneal, actor freeze |
+| `improve_optimizer` | ppo_scratch, bc_ppo | lr warmup + cosine, sigma anneal, actor freeze (the sigma term needs `distribution='gaussian'`; the default Beta policy ignores `init_std` and has no `log_std_param`) |
 | `improve_grad_clip` | bc_ppo | tighter grad-norm clip + per-mini-batch advantage norm |
 | `improve_rate_penalty` | bc_ppo | training-only `-coef ||a_t - a_{t-1}||^2` auxiliary reward |
 | `improve_delta_action` | ppo_scratch, bc_ppo (satellite) | bounded increment action parameterization |
@@ -276,7 +276,8 @@ $PY experiments/controller_priors/analysis/plot.py
 
 Each run lives at
 `results/controller_priors/<task>/<method>/<condition>/seed_<seed>__<tag>/`
-and contains `checkpoint.pt`, optional `stage_*.pt`, `config.json`, `run.json`,
+(no run outputs are shipped in this checkout) and contains `checkpoint.pt`,
+optional `stage_*.pt`, `config.json`, `run.json`,
 `arm.json`, `eval_config.json`, `eval/det.json`, `eval/stoch.json`,
 `eval/det_stage_*.json`, `eval/trajectory.npz`. The internal
 `bc_bootstrap/` and `bc_dagger_dataset/` directories are separate; the
@@ -303,7 +304,10 @@ reported BC/BC→PPO arms only use the latter.
 * Rendezvous uses the shared fixed-lr protocol (no sigma pin/lr coupling) so
   all mechanisms face the same optimizer; the task's current best recipe
   includes a task-specific sigma pin that is intentionally treated as a
-  separate optimizer ablation, not part of the mechanism comparison.
+  separate optimizer ablation, not part of the mechanism comparison. (That
+  sigma-pin recipe is Gaussian-era: the default Beta policy exposes no
+  `log_std_param`, so the ablation is only available under
+  `distribution='gaussian'`.)
 * No trustworthy optimal-control reference solution exists, so only absolute
   physical cost and changes relative to the baseline are reported — no
   global-optimality gap is claimed.

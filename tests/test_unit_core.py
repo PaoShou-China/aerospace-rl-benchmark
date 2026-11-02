@@ -80,6 +80,68 @@ class TestTensorRandom:
 
 
 # --------------------------------------------------------------------------- #
+# Euler <-> quaternion helpers
+# --------------------------------------------------------------------------- #
+class TestQuaternionHelpers:
+    """Guard the half-angle convention used by spawn attitude randomization."""
+
+    def test_quat_from_euler_matches_scipy_and_is_unit(self):
+        from scipy.spatial.transform import Rotation
+
+        from environments.common.dynamics import euler, quat_from_euler
+
+        rpy = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.35, 0.0, 0.0],
+                [0.0, 0.0, math.pi],
+                [0.3, -0.2, 2.5],
+                [1.2, 0.7, -2.0],
+            ],
+            dtype=torch.float64,
+        )
+        q = quat_from_euler(rpy)
+        # Unit norm is the property the old ``0.5 * cos(r)`` form broke: even
+        # the identity attitude came out as (0.125, 0, 0, 0).
+        assert torch.allclose(q.norm(dim=-1), torch.ones(len(rpy), dtype=torch.float64))
+        # scipy returns xyzw, the repo helper returns wxyz.
+        ref = Rotation.from_euler("xyz", rpy.numpy()).as_quat()
+        assert torch.allclose(q, torch.from_numpy(ref[:, [3, 0, 1, 2]]), atol=1e-12)
+        # Round-trip through the repo's own inverse (pitch stays inside +-90 deg).
+        assert torch.allclose(euler(q), rpy, atol=1e-6)
+
+    def test_falcon9_rotation_and_tilt_helpers(self):
+        from environments.common.dynamics import euler, inverse_rotate, quat_from_euler
+        from environments.common.falcon9_dynamics import (
+            rotate_body_to_world,
+            rotate_world_to_body,
+        )
+        from environments.common.falcon9_reward import _body_tilt_from_quat
+
+        rpy = torch.tensor(
+            [[0.3, -0.4, 2.2], [0.7, 0.0, 0.0], [0.0, 0.9, 0.0], [1.2, -1.1, -2.0]],
+            dtype=torch.float64,
+        )
+        q = quat_from_euler(rpy)
+        v = torch.tensor(
+            [[1.0, 2.0, 3.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=torch.float64,
+        )
+        # body->world must equal the validated dynamics helper applied with q^-1
+        # (the old implementation silently applied the conjugate rotation).
+        conj = torch.cat((q[:, :1], -q[:, 1:]), -1)
+        fwd = rotate_body_to_world(q, v)
+        assert torch.allclose(fwd, inverse_rotate(conj, v), atol=1e-12)
+        # world->body must be the exact inverse (the old implementation also
+        # scaled the vector magnitude by 1 + 2|q_v|^2).
+        assert torch.allclose(rotate_world_to_body(q, fwd), v, atol=1e-12)
+        # Combined tilt must match |roll|,|pitch| from the validated inverse.
+        tilt = _body_tilt_from_quat(q)
+        expected = euler(q)[:, :2].pow(2).sum(-1).sqrt()
+        assert torch.allclose(tilt, expected, atol=1e-12)
+
+
+# --------------------------------------------------------------------------- #
 # Domain randomization specs
 # --------------------------------------------------------------------------- #
 class TestDomainRandomization:

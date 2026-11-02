@@ -1,0 +1,46 @@
+/* theme: mission-control — 深空任务控制（自定义 token 主题） */
+:root{
+  --bg:#0a0f16;
+  --bg-soft:#0c131c;
+  --surface:rgba(19,29,41,.82);
+  --surface-2:#18232f;
+  --border:rgba(122,164,204,.16);
+  --border-strong:rgba(122,164,204,.34);
+  --text-1:#e9f2fb;
+  --text-2:#a7bcd1;
+  --text-3:#6b8199;
+  --accent:#5fd3ff;
+  --accent-2:#ffb45c;
+  --accent-3:#7dffc4;
+  --good:#5fe6a1;
+  --warn:#ffc15c;
+  --bad:#ff6f7f;
+  --grad:linear-gradient(110deg,#5fd3ff 0%,#7dffc4 52%,#ffb45c 100%);
+  --grad-soft:linear-gradient(135deg,#0c141d 0%,#121e2b 100%);
+  --radius:10px;
+  --radius-sm:6px;
+  --radius-lg:18px;
+  --shadow:0 14px 36px rgba(0,0,0,.34);
+  --shadow-lg:0 30px 74px rgba(0,0,0,.5);
+  --font-sans:'Noto Sans SC','Inter',-apple-system,sans-serif;
+  --font-serif:'Noto Serif SC','Noto Serif SC',Georgia,serif;
+  --font-mono:'JetBrains Mono','IBM Plex Mono',SFMono-Regular,monospace;
+  --font-display:'Noto Serif SC','Noto Sans SC',serif;
+  --bg-texture:
+    radial-gradient(ellipse at 84% 10%, rgba(95,211,255,.10), transparent 56%),
+    radial-gradient(ellipse at 8% 92%, rgba(255,180,92,.065), transparent 58%);
+}
+body{
+  background:var(--bg);
+  background-image:
+    radial-gradient(ellipse at 84% 10%, rgba(95,211,255,.10), transparent 56%),
+    radial-gradient(ellipse at 8% 92%, rgba(255,180,92,.065), transparent 58%);
+  background-attachment:fixed;
+}
+h1.title,.h1,h2.title,.h2,.h3{font-family:var(--font-display);font-weight:700}
+h1.title,.h1{letter-spacing:-.02em}
+.kicker,.eyebrow{font-family:var(--font-mono);letter-spacing:.16em}
+.card{background:var(--surface);border-color:var(--border);backdrop-filter:blur(8px)}
+.pill{font-family:var(--font-mono);letter-spacing:.06em}
+.t th{letter-spacing:.14em}
+.gradient-text{background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}

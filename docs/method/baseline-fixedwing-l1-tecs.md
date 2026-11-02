@@ -20,8 +20,11 @@ out-of-bounds shield, and an overspeed climb trade.
 - **Observations.** The controller reads only the `'policy'` observation group: body rates $\omega_b$
   ($[0{:}3]$), quaternion $(x,y,z,w)$ ($[3{:}7]$), body velocity $v_b$ ($[7{:}10]$), world position $p$
   ($[10{:}13]$), and the body-frame deltas $\Delta_k$ to the four waypoint slots ($[23{:}35]$); the active
-  waypoint is reconstructed as $w = p + R\,\Delta_0$. No wind field exists in the tensorized plant, so
-  airspeed equals ground speed, $V = \lVert v_b\rVert$.
+  waypoint is reconstructed as $w = p + R\,\Delta_0$. The controller has no
+  airspeed sensor and uses $V = \lVert v_b\rVert$ (body-axis ground speed) as
+  its airspeed; in calm air these coincide, while in wind the plant evaluates
+  $v_{\text{air}} = v - w$ but the controller does not. The reported baseline
+  records below use calm air (`env_kwargs = {}`).
 - **Construction-time knowledge.** All gains and limits are loaded from
   `algorithms/baselines/fixedwing_autopilot.json`; the control period is $\Delta t = 1/30$ s (`agent_hz`).
   Angles use the env's euler convention (x fwd, y left, z up): positive roll = right bank, positive pitch =
@@ -152,12 +155,19 @@ All values from `algorithms/baselines/fixedwing_autopilot.json` (config name `l1
 
 | Protocol | Source | Result |
 |---|---|---|
-| Frozen protocol (harness `environments/fixedwing/eval_fixedwing_autopilot.py`: 1024 envs, 3700-step windows > 3600-step horizon; train seed 7, dev seeds 1000–1003, test seeds 2000–2003) | root `README.md` table; `docs/evaluation_protocol.md` (frozen 2026-10-22, after a documented 21.3% → 74.9% tuning iteration) | ≈ 74.6% train / 74.4% dev / 73.1% test |
+| Frozen-protocol tuning snapshot (harness `environments/fixedwing/eval_fixedwing_autopilot.py`: 1024 envs, 3700-step windows > 3600-step horizon; train seed 7, dev seeds 1000–1003, test seeds 2000–2003) | recorded 2026-10-22, after the documented 21.3% → 74.9% tuning iteration; **not a shipped artifact** | ≈ 74.6% train / 74.4% dev / 73.1% test |
 | Tuning record of the shipped config (`pitch_up_max_deg` 10 → 16 in the 2026-10-22 sweep) | comment field of `fixedwing_autopilot.json` | out-of-bounds 23.9% → 1.8% at 0.0 crash rate; 18° measured 94.9% vs 94.7% at 16° (16° kept for stall margin) |
-| `scripts/baseline_eval.py fixedwing` (1024 envs, seed 7, one full episode per replica, no selection bias) | `results/fixedwing/baseline.json` | 994/1025 finished episodes successful (success rate 0.9698), mean episode return 222.36, 1386 env steps, 224.17 s wall |
+| Protocol dataset A (128 replicas × seeds 7/13/21/101, 3600-step window) | `results/baseline_protocol/seed*/fixedwing/baseline.json` | seeds 89.8 / 87.5 / 83.6 / 90.6%; mean 87.0±3.2% over 384 episodes |
+| Dataset B, 256 replicas / seed 7, 1500-step window | `results/fixedwing/baselines/l1_tecs_seed7.json` | 98.6% of 216 **completed first episodes** (not 256), mean return 230.09, `complete = false`; OOB 2.5% |
+| Shipped single record | `results/fixedwing/baseline.json` (128 replicas, seed 13, 1500-step window) | 97.0% of 99 completed first episodes, mean return 228.23, `complete = false` |
 
-These figures belong to different protocols and tuning snapshots and are not mutually reconciled in the
-repo.
+The 1500-step records are **right-censored**: replicas that need more than 1500
+steps to finish their first episode are excluded from the success denominator
+(216/237/179 finished for `l1_tecs` / `nlgl_tecs` / `pid_cascade`), so their
+success rates are not directly comparable with the full-horizon dataset-A
+values. The `complete = false` flag records exactly that. Use dataset A for
+cross-method comparisons and treat the 1500-step rows as short-window
+controller rankings.
 
 ## 6. Known limitations
 
@@ -175,8 +185,11 @@ As documented in the source (config comment, env docstrings, protocol doc):
   were likewise rejected. Parameters were tuned only on training/development initial conditions (train
   seed 7, dev seeds 1000–1003).
 - Channel $a_1$ drives the horizontal and vertical tails with opposite signs (rudder coupling treated as a
-  disturbance); $a_2$ is dead by upstream design and driven with exactly 0. No wind field exists in the
-  tensorized plant; airspeed equals ground speed (calm-air benchmark).
+  disturbance); $a_2$ is dead by upstream design and driven with exactly 0. The
+  plant supports a wind field (`v_air = v - wind`, `steady_wind`/`dryden` ctor
+  kwargs) and the training entry defaults to 30% Dryden, but this controller
+  has no airspeed sensor and uses ground speed as airspeed, so its shipped
+  baseline records are calm-air runs.
 
 ## 7. Implementation
 
@@ -185,8 +198,9 @@ As documented in the source (config comment, env docstrings, protocol doc):
   `build_baseline('fixedwing', env)` and declared as `conventional_controller` in
   `environments/fixedwing/env.py`.
 - Evaluation: `scripts/baseline_eval.py fixedwing` (artifact `results/fixedwing/baseline.json`);
+  dataset-B artifact `results/fixedwing/baselines/l1_tecs_seed7.json`;
   scenario-grid/ablation harness `environments/fixedwing/eval_fixedwing_autopilot.py` (writes
-  `results/fixedwing/autopilot_report.json`).
+  `results/fixedwing/autopilot_report.json`, which is not shipped).
 - Environment reference: `docs/method/env-fixedwing-waypoints.md` (action surface mixing, actuator lags,
   engine model, capture and out-of-bounds geometry).
 

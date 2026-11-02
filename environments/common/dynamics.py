@@ -79,9 +79,12 @@ def euler(q):
 def quat_from_euler(rpy):
     """Roll-pitch-yaw (XYZ intrinsic, PyBullet convention) to quaternion [w,x,y,z]."""
     roll, pitch, yaw = rpy.unbind(-1)
-    cr, sr = 0.5 * roll.cos(), 0.5 * roll.sin()
-    cp, sp = 0.5 * pitch.cos(), 0.5 * pitch.sin()
-    cy, sy = 0.5 * yaw.cos(), 0.5 * yaw.sin()
+    # Half-angle trig: cos(r/2), sin(r/2), etc.  Multiplying cos/sin by 0.5
+    # instead (as this line once did) yields a scaled, non-unit quaternion
+    # whose implied rotation is wrong for anything but small angles.
+    cr, sr = (0.5 * roll).cos(), (0.5 * roll).sin()
+    cp, sp = (0.5 * pitch).cos(), (0.5 * pitch).sin()
+    cy, sy = (0.5 * yaw).cos(), (0.5 * yaw).sin()
     return torch.stack(
         (
             cr * cp * cy + sr * sp * sy,

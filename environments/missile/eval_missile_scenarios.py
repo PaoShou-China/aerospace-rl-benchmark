@@ -1,7 +1,7 @@
 """Scenario evaluation for the missile-intercept APN baseline.
 
 Classical-guidance counterpart for the missile RL arms (MissileAPNBaseline
-in algorithms/baselines/baselines.py): augmented PN (N=4, half-N gravity
+in algorithms/baselines/baselines.py): augmented PN (N=15, half-N gravity
 compensation) mapped to the body-rate command interface, driven at the
 env's single fixed medium operating point.
 

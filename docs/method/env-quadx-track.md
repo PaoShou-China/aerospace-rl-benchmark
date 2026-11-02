@@ -215,23 +215,29 @@ completed episodes and report them under `task_metrics`.
 The learned arm is the **unmodified repository PPO implementation**:
 
 - PPO: `rsl_rl` `OnPolicyRunner` with the rsl-rl `MLPModel` actor-critic (2x128 tanh,
-  no recurrent layer), 100 vectorized steps per update, 5 epochs, 4 minibatches, lr $3\times10^{-4}$, entropy
-  $0.01$, initial action std 1.0.
+  no recurrent layer), a state-independent Beta policy (`BetaDistribution`, bounded and rescaled to
+  $[-1,1]$), 100 vectorized steps per update, 5 epochs, 4 minibatches, fixed lr $3\times10^{-4}$,
+  entropy $0.01$. The behavior-cloning warm start is enabled in the entry
+  (`BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`), and
+  `WIND = None` keeps the arm in calm air.
 
 It consumes the 25-D observation of Section 7 (current own state, current measurement, visibility
 flag; zero measurement when invisible), the same 4-D action interface, the same reward (Section 8), the
 same reset distribution and the same evaluation scenarios as the classical baseline.
 
-**Interaction budget.** `TRAIN_ENV_STEPS = 6,000` vectorized policy steps at 1024 replicas
-(6.14 M transitions):
+**Interaction budget.** `NUM_ENVS = 1024` and `TRAIN_ENV_STEPS = 20,000` vectorized policy steps,
+i.e. `UPDATES = 20,000 / 100 = 200` PPO updates and $20{,}000\times1024 = 20.48$ M transitions:
 
 | Arm | Iterations | Env steps per iteration | Transitions |
 |---|---|---|---|
-| PPO | 60 updates | 100 | 6.14 M |
+| PPO | 200 updates | 100 | 20.48 M |
 
-The seed is 7 for training and for evaluation, so the learned arm and the classical baseline see the
-same scenario population. The budget is deliberately small: it is the largest budget that completes
-inside a bounded wall-clock on the shared, saturated GPU this benchmark is developed on.
+Training uses seed 7. `scripts/eval.py` also defaults to seed 7, but **no PPO run is shipped**:
+`results/quadx_track/ppo/` does not exist, so there is no `checkpoint.pt`, `config.json` or `eval.json`
+to reproduce a learned-arm number. The shipped classical record is `results/quadx_track/baseline.json`
+(128 replicas, seed 21, 1200-step window, 106/128 = 82.8%, mean return 81.73), which is byte-identical
+to the seed-21 row of the 128-replica protocol below; the within-task ablation set is the 256-replica,
+seed-7 dataset B.
 
 **Commands.**
 
@@ -241,10 +247,29 @@ python scripts/eval.py quadx_track --out results/quadx_track/ppo
 python scripts/baseline_eval.py quadx_track
 ```
 
-Evaluation is deterministic (Gaussian mean action), 1024 replicas, seed 7, until every replica has
-completed at least one episode; `scripts/eval.py` restores the training `env_kwargs` from
-`results/quadx_track/ppo/config.json`. Artifacts: `results/quadx_track/ppo/eval.json`,
-`results/quadx_track/baseline.json`.
+`scripts/eval.py` defaults to a deterministic policy (mean action), 1024 replicas and seed 7, and
+stops once every replica has completed at least one episode (safety cap `--max-steps 20000`). It
+restores the training `env_kwargs` from the checkpoint directory it is pointed at — here
+`results/quadx_track/ppo/config.json` under `--out results/quadx_track/ppo` — **not** a shipped file;
+`results/quadx_track/ppo/eval.json` is therefore not published.
+
+**Published records.** Every episode runs the full 1200-step window (success is judged at the time
+limit and does not truncate), so `steps` is the window length in all rows. Dataset A is the
+128-replica first-episode protocol; dataset B is the 256-replica, seed-7 ablation set.
+
+| Record | Replicas / seed | Success | Mean return |
+|---|---|---|---|
+| dataset A, seed 7 (`cv_kf_pid`) | 128 / 7 | 89.1% (114/128) | 89.67 |
+| dataset A, seed 13 | 128 / 13 | 85.9% (110/128) | 88.13 |
+| dataset A, seed 21 | 128 / 21 | 82.8% (106/128) | 81.73 |
+| dataset A, seed 101 (held out) | 128 / 101 | 82.0% (105/128) | 86.47 |
+| shipped `results/quadx_track/baseline.json` | 128 / 21 | 82.8% (106/128) | 81.73 |
+| dataset B `baselines/cv_kf_pid_seed7.json` | 256 / 7 | 85.2% (218/256) | 85.68 |
+| dataset B `baselines/pid_ema_seed7.json` | 256 / 7 | 75.8% (194/256) | 75.98 |
+| dataset B `baselines/pursuit_seed7.json` | 256 / 7 | 75.8% (194/256) | 71.85 |
+
+The protocol seeds 7/13/21 average 85.9% success and mean return 86.51. These numbers are the
+classical CV+KF+PID arm only; no learned-arm artifact accompanies them.
 
 ## 14. References
 

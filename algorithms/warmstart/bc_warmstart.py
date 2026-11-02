@@ -196,7 +196,9 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
 
     obs/acts: (T, N, d) pairs from collect_expert; rews/dones feed the
     critic's return-to-go targets.  The actor loss is MSE between the
-    model's deterministic output (the Gaussian mean) and the expert action;
+    model's deterministic output (the policy mean; Beta mean under the default
+    bounded policy, Gaussian mean under ``distribution='gaussian'``) and the
+    expert action;
     the critic loss is MSE against the discounted returns-to-go.  Both
     normalizers are fitted with update_normalization() per batch, mirroring
     what PPO's own update path does.  The exploration std / distribution is
@@ -280,7 +282,7 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
             td = {'policy': b_obs}  # model.obs_groups select this key
             if normalizer_mode == 'per_batch':
                 actor.update_normalization({'policy': b_obs})
-            pred = actor(td)  # deterministic forward -> Gaussian mean
+            pred = actor(td)  # deterministic forward -> policy mean
             if flat_w is None:
                 a_loss = torch.nn.functional.mse_loss(pred, flat_act[idx])
             else:

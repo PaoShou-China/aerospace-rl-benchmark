@@ -17,12 +17,18 @@ Hyperparameters are identical to the other per-task entries for fair
 comparison (fixed 3e-4 lr, 64 steps/env, 10 epochs, entropy 0, gamma 0.99,
 value loss 0.5), matching train_fixedwing.py / train_quadx.py.
 
-Known limitation (honest reporting): the shipped conventional baseline
-``QuadplaneHybridBaseline`` (cascaded PID + gentle pusher) currently crashes
-in 100% of episodes on the training, dev and test seed sets
-(results/quadplane/cascade_report.json), so there is no validated non-learned
-reference for this task yet. BC warm-starting from it stays disabled until
-that controller is fixed.
+Conventional baselines: the task default is ``QuadplaneSE3PusherBaseline``
+(quadrotor SE(3) throughout + forward-pusher allocation), which reaches
+87.5% on 256 replicas / seed 7 and 89.1% over the 3-seed 128-replica protocol
+(``results/quadplane/baseline.json`` and
+``results/quadplane/baselines/se3_pusher_seed7.json``). The former default
+``QuadplaneHybridBaseline`` (mode-switching cascaded PID) scores 26.6% on the
+same 256-replica set, and ``QuadplaneL1WingBaseline`` scores 49.6%; both are
+retained as structural ablations. The env's ``conventional_controller``
+attribute still names ``QuadplaneHybridBaseline``, so the BC collector
+currently distils that weaker arm even though the default evaluation baseline
+is ``se3_pusher`` -- this mismatch is a known limitation of the warm-start
+recipe, not of the environment.
 
 WIND configures the wind disturbance passed to the env ctor (steady_wind,
 dryden, severity); None = calm air (benchmark behavior).
@@ -56,8 +62,10 @@ VALUE_LOSS_COEF = 0.5
 WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
-# conventional controller (QuadplaneHybridBaseline, driven directly by the BC collector)
-# before PPO. None = off.
+# env's ``conventional_controller``, which for this task is still
+# QuadplaneHybridBaseline (26.6% standalone) rather than the default evaluated
+# baseline se3_pusher (87.5%); driven directly by the BC collector before PPO.
+# None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 if __name__ == "__main__":

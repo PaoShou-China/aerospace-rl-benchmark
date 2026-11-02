@@ -4,11 +4,11 @@
 
 The benchmark optionally warm-starts PPO from the classical baseline controllers instead of a
 random network initialization (`algorithms/warmstart/bc_warmstart.py`). The procedure rolls the
-training env under the task's `conventional_controller`, regresses the actor's Gaussian mean onto
-the collected expert actions, optionally regresses the critic onto the empirical discounted
-returns-to-go of the same rollouts, and then lets PPO refine from there. The warm start is
-PPO-only by design: PPO's state-independent Gaussian mean is the regression
-target, and `run_training` only supports PPO.
+training env under the task's `conventional_controller`, regresses the actor's deterministic
+policy mean (the mean of the default bounded Beta policy) onto the collected expert actions,
+optionally regresses the critic onto the empirical discounted returns-to-go of the same rollouts,
+and then lets PPO refine from there. The warm start is PPO-only by design: PPO's state-independent
+policy mean is the regression target, and `run_training` only supports PPO.
 
 ## 2. Data collection
 
@@ -38,7 +38,8 @@ the env auto-reset at that step). A task whose env declares no `conventional_con
 
 `fit_behavior_cloning` flattens the rollout into $M = T\cdot N$ pairs and runs supervised epochs
 with a fresh per-epoch permutation and mini-batches of size `batch_size`. The actor loss is the MSE
-between the model's deterministic output — the Gaussian mean — and the expert action,
+between the model's deterministic output — the policy mean (the Beta mean under the default
+distribution) — and the expert action,
 \begin{equation}
 L_{\mathrm{actor}} = \frac1{|\mathcal B|}\sum_{i\in\mathcal B}
 \big\lVert \mu_\theta(s_i) - a_i^* \big\rVert_2^2, \tag{2}

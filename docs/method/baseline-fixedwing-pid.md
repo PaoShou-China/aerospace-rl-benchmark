@@ -170,11 +170,27 @@ Small-range sweeps only (all other gains fixed):
 
 ## 6. Measured performance
 
-Held-out comparison, harness `environments/fixedwing/eval_fixedwing_pid.py benchmark`,
+**Shipped records (current checkout).** Dataset B (`results/fixedwing/baselines/*.json`,
+256 replicas / seed 7 / 1500-step window) and dataset A
+(`results/baseline_protocol/seed*/fixedwing/baseline.json`, 128 replicas ×
+seeds 7/13/21/101 / 3600-step window):
+
+| controller | dataset B success (completed first episodes) | dataset B OOB | dataset A mean (4 seeds) |
+|---|---|---|---|
+| L1+TECS (`l1_tecs`) | 98.6% (216 finished / 256) | 2.5% | 87.0±3.2% |
+| PID cascade (`pid_cascade`) | 91.6% (179 / 256) | 10.1% | not in protocol dataset A |
+
+Dataset B's 1500-step window right-censors the episode set, so its denominator
+is the number of completed first episodes, not 256; dataset A uses the full
+3600-step horizon and is the cross-method reference.
+
+**Held-out comparison (tuning-time harness, not shipped).** Harness
+`environments/fixedwing/eval_fixedwing_pid.py benchmark`,
 1024 replicas per run, calm air, deterministic actions, seeds 2000–2003
 (none seen during tuning); every episode completed inside the window counts
 (scripts/eval.py accounting). PID gains were tuned only on the scenario routes +
-seed 7, so this table is out-of-sample for the PID arm.
+seed 7, so the table below is out-of-sample for the PID arm. The harness writes
+`results/fixedwing_pid/comparison.json`, which is **not shipped**.
 
 | controller | success | waypoints/ep | mission time (s) | crash | OOB | timeout |
 |---|---|---|---|---|---|---|
@@ -182,7 +198,7 @@ seed 7, so this table is out-of-sample for the PID arm.
 | **PID cascade (this arm)** | 80.4% [79.4, 81.3] | 3.54 | 35.0 | 0.0% | 10.8% | 8.8% |
 | PPO (1024×1000, seed 7) | pending training completion | | | | | |
 
-Raw per-seed data: `results/fixedwing_pid/comparison.json`; trajectories
+Raw per-seed data (not shipped): `results/fixedwing_pid/comparison.json`; trajectories
 (first episode each of 8 replicas, seed 2000) in
 `trajectories_<controller>_seed2000.{json,png}`.
 
@@ -196,7 +212,7 @@ Mission time is ~6.6 s longer (35.0 vs 28.4 s) for the same reason — wider,
 later turns.
 
 Scenarios (tuning split, single episode each, seed 7, calm air; full data in
-`results/fixedwing_pid/scenarios_pid.json` / `scenarios_l1_tecs.json`):
+`results/fixedwing_pid/scenarios_pid.json` / `scenarios_l1_tecs.json`, not shipped):
 
 | scene | PID verdict | PID highlights | L1+TECS highlights |
 |---|---|---|---|
@@ -252,13 +268,13 @@ python environments/fixedwing/eval_fixedwing_pid.py benchmark \
 python scripts/baseline_eval.py fixedwing --baseline pid_cascade --seed 101
 ```
 
-Artifacts (under `results/fixedwing_pid/`): `scenarios_pid.json`,
+Artifacts (under `results/fixedwing_pid/`, none of them shipped): `scenarios_pid.json`,
 `scenarios_l1_tecs.json`, `comparison.json`, `comparison.md`, and per-controller
 `trajectories_<controller>_seed<k>.json` plus top-down PNG plots (x–y, colour = altitude).
 
 The learned arm (PPO) is loaded from `results/fixedwing_ppo/checkpoint.pt`
-with the training `config.json`; a missing checkpoint is reported and skipped
-rather than silently substituted.
+(not shipped) with the training `config.json`; a missing checkpoint is reported
+and skipped rather than silently substituted.
 
 ## 9. References
 

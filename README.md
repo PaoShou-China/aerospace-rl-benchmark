@@ -1,9 +1,9 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
-A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains nine aerospace tasks spanning atmospheric flight and spacecraft dynamics. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
+A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains ten aerospace tasks spanning atmospheric flight and spacecraft dynamics. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
 Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly or used to generate behavior-cloning data for the warm-started learning pipeline.
 
-The five atmospheric vehicle tasks use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
+The six atmospheric vehicle tasks (`quadx`, `quadx_track`, `fixedwing`, `quadplane`, `rocket`, `missile`) use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.
 
 All state lives on exactly one device as `float64` physics / `float32`
 observation buffers. There is **no engine round-trip per replica, no
@@ -43,6 +43,7 @@ decompositions, termination conditions, spawn distributions, wind
 response) live in the module docstring of each package:
 [multirotor](environments/multirotor/__init__.py),
 [fixedwing](environments/fixedwing/__init__.py),
+[vtol](environments/vtol/__init__.py),
 [rocket](environments/rocket/__init__.py),
 [missile](environments/missile/__init__.py),
 [satellite/attitude_control](environments/satellite/attitude_control/__init__.py),
@@ -86,7 +87,9 @@ algorithms/               # ── everything that produces actions (learned or 
     ├── baselines.py        #   PN/PDG/LQR/autopilot/... controllers
     └── fixedwing_autopilot.json  # serialized L1+TECS autopilot parameters
 scripts/                  # generic training / evaluation entry points
-├── train.py              # legacy small-config PPO CLI sweep entry for all 8 tasks
+├── train.py              # legacy small-config PPO CLI sweep entry for the 8 tasks it registers
+│                         #   (quadx, fixedwing, rocket, missile, satellite, transfer, docking,
+│                         #    rendezvous; quadx_track and quadplane use their per-task entries)
 ├── eval.py               # deterministic evaluation of trained checkpoints
 ├── baseline_eval.py      # evaluation of the classical baselines
 ├── sweep_tune.py         # small hyperparameter sweep harness
@@ -97,13 +100,13 @@ environments/<category>/eval_* / *_test.py  # per-task deep-dive harnesses
 docs/technical-highlights.md  # reviewer-oriented infrastructure write-up
 ```
 
-The five Genesis rigid-body tasks (`quadx`, `quadx_track`, `fixedwing`,
-`rocket`, `missile`) run on the Genesis rigid-body engine with fully
+The six Genesis rigid-body tasks (`quadx`, `quadx_track`, `fixedwing`,
+`quadplane`, `rocket`, `missile`) run on the Genesis rigid-body engine with fully
 tensorized actuation/contact layers (the missile target is a kinematic
 3-DOF aircraft advanced analytically each physics substep; the QuadX-Track
 ground target and its camera are analytic geometry); the four space tasks
 (`satellite`, `transfer`, `docking`, `rendezvous`) are pure-tensor
-integrators with no engine at all. All nine share the identical
+integrators with no engine at all. All ten share the identical
 `step`/`reset`/buffer contract, so the training entries treat them uniformly.
 
 ## Algorithms
@@ -115,8 +118,11 @@ Otherwise PPO uses each entry's fixed learning rate (the library default is
 1e-3; the shipped entries pin 3e-4, transfer 2.5e-4).
 
 - **PPO** ([rsl-rl](https://github.com/leggedrobotics/rsl_rl)): the
-  on-policy arm, a state-independent Gaussian policy over a 2x128 tanh MLP
-  with rsl-rl `EmpiricalNormalization`, trained with clipped PPO.
+  on-policy arm, a state-independent Beta policy (rsl-rl `BetaDistribution`,
+  bounded by construction and rescaled to the env's `[-1, 1]` action box)
+  over a 2x128 tanh MLP with rsl-rl `EmpiricalNormalization`, trained with
+  clipped PPO. `build_cfg(distribution='gaussian')` switches back to an
+  unbounded Gaussian.
 
 Every run records task configuration, real transition counts, physical-step
 counts and device-side completion metrics in `results/<task>/run.json`.
@@ -128,26 +134,32 @@ Each task is paired with a classical GNC baseline
 non-learning reference on the same env, reward and success bar. Every
 controller reads only the `'policy'` observation group, takes env constants
 at construction, never touches internal state buffers, and leaves env
-semantics untouched. Reference success rates below are the shipped official
-`scripts/baseline_eval.py` results in `results/<task>/baseline.json` (1024
-envs, seed 7, GPU; each row's evaluation window and episode count come from
-that file). Rows that cite another artifact or are pending a re-run say so
-explicitly:
+semantics untouched.
+
+Reference success rates below are the shipped `scripts/baseline_eval.py`
+results in `results/<task>/baseline.json`. `baseline_eval.py` defaults to
+1024 envs / 20000 steps / seed 7, but each shipped artifact was generated with
+the smaller window and replica count printed in its own row (all rows are
+single-seed, first episode per replica). A second artifact set in
+`results/<task>/baselines/<controller>_seed7.json` (256 replicas, seed 7)
+carries the within-task ablations; those rows say so explicitly. The multi-seed
+(re)analysis of the 128-replica protocol lives in
+[docs/baseline_test_report.md](docs/baseline_test_report.md):
 
 | Task | Baseline | Reference result |
 |---|---|---|
-| QuadX-Waypoints | SE(3) geometric control (Lee et al. 2010) with integral trim | 100% (1025 episodes, 583-step window) |
-| QuadX-Waypoints | Position PID → attitude P/PD cascade on the env rate PID | 99.1% (1024 episodes, 800-step window, 0 crash/OOB) |
-| QuadX-Track | constant-velocity Kalman filter + fixed-offset SE(3) + public 3 s timeout hold | 85.1% (1024 episodes, 1200-step window); 92.3% visible time, 0.27 m standoff error |
-| Fixedwing-Waypoints | L1 lateral + TECS longitudinal autopilot | 95.9% (1024 episodes, 1361-step window) |
-| Quadplane-VTOL | velocity-scheduled cascaded PID + gentle forward pusher | **0% (not yet validated)**: crashes in 100% of episodes on train/dev/test seeds (`results/quadplane/cascade_report.json`); no BC warm start until fixed |
-| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | v2 (40 Hz, settled 2 s) baseline re-run pending; the 82.8% / 84.1% figures in older notes are v1 **instantaneous** ever-success rates and are NOT comparable to the v2 criterion |
-| Satellite (CMG) | quaternion PD + Schaub-Junkins damped pseudo-inverse | 100% (1024 episodes, 334-step window) |
-| Satellite (CMG, steering ablation) | same quaternion PD + ordinary Moore–Penrose pseudo-inverse | see `results/satellite/steering_compare.md` |
-| Transfer | Gauss one-step greedy tangential guidance | 100%, terminal return 0.855 (1024 episodes, 166 steps) |
-| Docking | CWH discrete LQR (symplectic-exact) + shield/fuel derating | 100% (1033 episodes, 223-step window) |
-| Rendezvous | two-impulse CWH ZEM/PN guidance, recursive re-solve | 100% (1024 episodes, 574-step window, mean return 195.5) |
-| Missile-Intercept | augmented PN (N=15) → body-rate commands | 83.0% (1037 episodes, 433-step window) |
+| QuadX-Waypoints | SE(3) geometric control (Lee et al. 2010) with integral trim | 90.6% (32 replicas, seed 7, 800-step window); 100% on the 256-replica seed-7 set; 99.7% mean over the protocol seeds 7/13/21 (128 replicas each; held-out seed 101 is also 100%) |
+| QuadX-Waypoints | Position PID → attitude P/PD cascade on the env rate PID | 99.2% (256 replicas, seed 7, 800-step window, 0 crash/OOB). The older `results/quadx/baseline_cascaded_pid.json` (512 replicas, 11.9%) predates the corrected cascade and is kept only as a historical artifact |
+| QuadX-Track | constant-velocity Kalman filter + fixed-offset SE(3) + public 3 s timeout hold | 82.8% (128 replicas, seed 21, 1200-step window); 90.2% visible time, 0.258 m standoff error |
+| Fixedwing-Waypoints | L1 lateral + TECS longitudinal autopilot | 97.0% (128 replicas, seed 13, 1500-step window, 99 finished episodes; the run ends before the 120 s limit, `complete=false`) |
+| Quadplane-VTOL | SE(3) + forward pusher | 89.1% (128 replicas, seed 13, 1200-step window). The hybrid-cascade and L1-wing variants score 26.6% and 49.6% on the 256-replica seed-7 set |
+| Rocket-Landing | ZEM/PN braking + virtual-pad manifold + pulse servo (PDG) | v2 criterion (40 Hz, continuously settled for 2 s): 100% (128 replicas, seed 13, 1200-step window, `ever_stable_2s=1.0`, mean return 903.5). The 82.8% / 84.1% figures in older notes are v1 **instantaneous** ever-success rates and are NOT comparable to the v2 criterion |
+| Satellite (CMG) | quaternion PD + Schaub-Junkins damped pseudo-inverse | 100% (128 replicas, seed 13, 326-step window) |
+| Satellite (CMG, steering ablation) | same quaternion PD + ordinary Moore–Penrose pseudo-inverse | 100% (256 replicas, seed 7, `results/satellite/baselines/quat_pd_mp_pinv_cmg_seed7.json`); scenario-level comparison in [docs/method/baseline-satellite-mp-pinv.md](docs/method/baseline-satellite-mp-pinv.md) |
+| Transfer | Gauss one-step greedy tangential guidance | 100% (128 replicas, seed 13, 166 steps, terminal return 0.0067) |
+| Docking | CWH discrete LQR (symplectic-exact) + shield/fuel derating | 100% (128 replicas, seed 13, 263-step window) |
+| Rendezvous | two-impulse CWH ZEM/PN guidance, recursive re-solve | 100% (128 replicas, seed 13, 581-step window, mean return 184.9) |
+| Missile-Intercept | augmented PN (N=15) → body-rate commands | 71.1% (128 replicas, seed 13, 656-step window) |
 
 These are honest references, not strawmen: the fixedwing and rocket
 baselines retain documented residual failures (out-of-bound endgame limit
@@ -176,24 +188,34 @@ ablation arms: [eval_docking_lqr.py](environments/satellite/rendezvous_docking/e
 
 ## Wind disturbance
 
-The four atmospheric vehicles (QuadX-Waypoints, Fixedwing-Waypoints,
-Rocket-Landing, Missile-Intercept) accept an optional wind disturbance through
-two mechanisms:
+Five atmospheric vehicles (QuadX-Waypoints, Fixedwing-Waypoints,
+Quadplane-VTOL, Rocket-Landing, Missile-Intercept) accept an optional wind
+disturbance through two mechanisms:
 - `steady_wind` (tuple, m/s): constant world-frame wind velocity.
 - `dryden` (0–1 scale of the severity presets) + `severity`
   (`'light' | 'moderate' | 'severe'`): Dryden gust turbulence from
-  environments/common/disturbances.py, advancing once per control step.
+  `environments/common/disturbances.py`, advancing once per control step.
 
 Aerodynamic terms evaluate air-relative velocity `v_air = v - wind`
 (lifting surfaces and body-drag laws), so the default calm air
 (`steady_wind=None, dryden=0`) reproduces the benchmark bit-for-bit;
 `eval.py` restores each run's recorded `env_kwargs` from
-`results/<task>/config.json`. The quadx, fixedwing and rocket train entries
-hard-code a `WIND` constant (pure Dryden gusts at 30% of the moderate
-preset); the missile and quadx_track train entries run calm air. Satellite
-tasks operate in vacuum and have no wind. QuadX-Track uses the atmospheric
-plant but is kept in calm air so the method comparison is not confounded by
-gust variance.
+`results/<task>/config.json`, so a checkpoint trained in wind is evaluated
+under the same wind configuration (there is no hidden calm-air override).
+
+Training-entry wind settings:
+
+- quadx, fixedwing and quadplane hard-code `WIND = dict(steady_wind=None,
+  dryden=0.3, severity="moderate")` (pure Dryden gusts at 30% of the moderate
+  preset);
+- rocket pins `dryden=0.0` so that training and the calm-air baseline share
+  the same caliber;
+- missile (no wind in `ENV_KWARGS`) and quadx_track (`WIND = None`, and its
+  constructor exposes no wind kwargs) run calm air.
+
+Satellite tasks operate in vacuum and have no wind. QuadX-Track uses the
+atmospheric plant but is kept in calm air so the method comparison is not
+confounded by gust variance.
 
 ## Dependencies
 
@@ -207,7 +229,8 @@ python -m pip install -r requirements.txt
 ```
 
 A CUDA-enabled PyTorch is required for the Genesis rigid-body tasks
-(`quadx`, `fixedwing`, `rocket`, `missile`) when running the GPU backend;
+(`quadx`, `quadx_track`, `fixedwing`, `quadplane`, `rocket`, `missile`) when
+running the GPU backend;
 the four tensor-dynamics spacecraft tasks and every classical baseline also
 run with CPU-only PyTorch. `genesis-world` and `rsl-rl-lib` pull their own
 transitive dependencies; `gymnasium` / `pettingzoo` are not needed by this
@@ -236,6 +259,8 @@ The original CLI aggregator still works for quick sweeps:
 ```bash
 python scripts/train.py quadx   # fixedwing | missile | rocket | satellite
                                 # transfer | docking | rendezvous
+# quadx_track and quadplane are NOT registered here; use their per-task entries
+# (environments/multirotor/train_quadx_track.py, environments/vtol/train_quadplane.py)
 ```
 
 Evaluation and baselines:
@@ -251,20 +276,36 @@ python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg  # stee
 python scripts/satellite_steering_compare.py    # damped vs ordinary pinv vs PPO
 # per-task deep-dive harnesses live in their category directories
 # (see the per-category READMEs):
-python environments/multirotor/eval_quadx_track_kf.py   # KF/PID tuning on seed 101
-python environments/multirotor/test_quadx_track.py      # sensing-contract checks
-python environments/multirotor/test_quadx_cascade_pid.py  # cascade PID direction/hover/waypoint tests
+python environments/multirotor/eval_quadx_track_kf.py    # KF/PID tuning on seed 101
+python environments/multirotor/test_quadx_track.py       # sensing-contract checks
+python environments/multirotor/test_quadx_cascade_pid.py # cascade PID direction/hover/waypoint tests
+python environments/vtol/eval_quadplane_baseline.py      # quadplane baseline ablation
+python environments/fixedwing/eval_fixedwing_autopilot.py   # scenario grids, ablation arms
+python environments/fixedwing/eval_fixedwing_pid.py      # cascade-PID ablation
 python environments/satellite/rendezvous_docking/eval_docking_lqr.py
-python environments/fixedwing/eval_fixedwing_autopilot.py    # scenario grids, ablation arms,
+python environments/satellite/rendezvous_docking/eval_docking_pole_placement.py
 python environments/satellite/rendezvous_docking/eval_rendezvous_baseline.py  # per-scenario breakdowns
+python environments/satellite/rendezvous_docking/eval_rendezvous_pd.py
 python environments/rocket/rocket_pdg_test.py
+python environments/rocket/rocket_pd_tune.py
 python environments/missile/eval_missile_scenarios.py
 ```
 
-Results land in `results/<task>/` (`run.json` for training runs,
-`baseline.json` / per-harness reports for baselines). QuadX-Track keeps its
-three comparison arms separate: `results/quadx_track/baseline.json` and
-`kf_tuning.json` for the classical method, and `results/quadx_track/ppo/` for the learned arm.
+Results land in `results/<task>/`:
+
+- `baseline.json` — the shipped default-controller baseline (one episode per
+  replica; replica count, seed and step window are recorded in the file);
+- `baselines/<controller>_seed7.json` — within-task ablations (256 replicas,
+  seed 7);
+- `run.json`, `config.json`, `eval.json` — archived training/evaluation runs
+  where a run has been kept;
+- `results/baseline_protocol/seed{7,13,21,101}/<task>/baseline.json` — the
+  multi-seed 128-replica protocol analysed in
+  [docs/baseline_test_report.md](docs/baseline_test_report.md).
+
+Not every task directory ships every artifact; each row above and the
+per-task method documents state which files are absent, so a path that is
+quoted there is either shipped or explicitly marked as not published.
 
 ## References
 
@@ -324,7 +365,7 @@ environment docstring lists the specific source of its defaults.
 
 All future tasks follow the same per-task recipe (tensorized env + spec
 docstring → classical baseline registered in `algorithms/baselines/` →
-self-contained `train_<task>.py` with 1024 envs / seed 7 →
+self-contained `train_<task>.py` with the task's own hard-coded env count and seed →
 `results/<task>/` → README update). No
 multi-agent tasks are planned — every task below is a single agent.
 

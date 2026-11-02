@@ -10,11 +10,19 @@ mp4 to results/<task>/vis.mp4.
 
 Scene conventions: every main camera is fixed at a global task view so targets,
 waypoints, the landing site and orbit context never leave the frame due to
-vehicle motion. Except for satellite (already a fixed global attitude scene),
-a large bottom-right inset follows the controlled object at close range.
-Bodies and markers are enlarged (display-only) where the true scale would leave
-them a few pixels wide; each overlay states the magnification so the render is
-never mistaken for a scale drawing.
+vehicle motion. The composed 1440x810 frame is 16:9 and has three disjoint
+zones: the panorama keeps its full 960x810 frame on the left (nothing is drawn
+on top of it), a 480x430 state card sits top-right, and a 480x354 close-up
+below it (separated by a 26 px label bar) follows the controlled object at
+close range. The state card is a styled panel (task title, hero metric, key/
+value rows, colour legend, note, episode progress and a terminal RESULT
+pill), not a stack of raw readout lines. Bodies and markers are enlarged
+(display-only) where the true scale would leave them a few pixels wide; each
+card states the magnification so the render is never mistaken for a scale
+drawing. Genesis' camera `fov` is vertical, so when the frame aspect changes
+the vertical fov is recomputed to keep the original HORIZONTAL coverage
+(_hfov_match): the taller frame only adds sky/ground above and below, the
+left/right framing the cameras were set up for is preserved.
 
 Per-task scene contents:
   quadx       cf2x URDF on a grey ground plane under a light sky, opaque green
@@ -28,7 +36,11 @@ Per-task scene contents:
   quadplane   PyFlyt quadplane URDF enlarged 8x, red waypoint spheres,
               close-up inset
   rocket      rocket URDF enlarged 8x + landing pad on a ground plane,
-              close-up inset; historical trail never covers the body
+              close-up inset; hard-stops are handled here: the display scale is
+              anchored at the airframe's LOWEST point (_scale_ground_lift), so
+              the 8x body stands on the pad instead of sinking ~17 m into it
+              when the true base is only centimetres above the pad; historical
+              trail never covers the body
   satellite   recognizable bus (grey body, +/-z equipment compartments, +x
               sensor face, -x nozzle, top antenna, +/-y solar panels with a
               light grid), body-frame axis triad (X red / Y green / Z blue)
@@ -131,22 +143,36 @@ MODELS = (
 TRAIL_MARKERS = 256
 ORBIT_POINTS = 96
 HIDDEN = np.array((0.0, 0.0, -1e5))  # park spot for unused trail markers
-# Layout: the global panorama keeps its full 960x540 frame on the left and
-# nothing is ever pasted on top of it. The right column is split into a state
-# readout (top), a one-line label bar, and the close-up (bottom), so the three
-# zones are disjoint: the panorama is never occluded by the inset, and the
-# readout never covers the close-up.
-MAIN_RES = (960, 540)
-STATE_RES = (480, 244)
+# Layout: the panorama keeps a tall 960x810 frame on the left and nothing is
+# ever pasted on top of it. The right column is a styled state card (top), a
+# one-line label bar, and the close-up (bottom), so the three zones are
+# disjoint: the panorama is never occluded, and the readout never covers the
+# close-up. The composed 1440x810 canvas is 16:9 instead of the earlier 8:3,
+# which kept the panorama very letterboxed in a normal player.
+MAIN_RES = (960, 810)
+STATE_RES = (480, 430)
 LABEL_H = 26
-CLOSE_RES = (480, 540 - STATE_RES[1] - LABEL_H)  # 480x270 (16:9)
-STATE_RES_FULL = (480, 540)  # tasks without a close-up (satellite)
-FRAME_RES = (MAIN_RES[0] + STATE_RES[0], MAIN_RES[1])  # 1440x540
-STATE_PAD = 14
-STATE_FONT = 19
-STATE_LINE = 24
-STATE_HEAD = 34
+CLOSE_RES = (480, 810 - STATE_RES[1] - LABEL_H)  # 480x354
+FRAME_RES = (MAIN_RES[0] + STATE_RES[0], 810)  # 1440x810 (16:9)
+CARD_BG = (22, 25, 31)
+CARD_BORDER = (52, 58, 70)
+CARD_TRACK = (44, 50, 60)
+TEXT_COLOR = (238, 242, 247)
+DIM_COLOR = (156, 166, 180)
+FAINT_COLOR = (112, 122, 136)
+ACCENT_COLOR = (255, 199, 64)
+LEGEND_COLORS = {
+    "green": (90, 200, 90),
+    "red": (226, 74, 60),
+    "yellow": (240, 205, 60),
+    "cyan": (80, 200, 225),
+    "orange": (235, 145, 55),
+    "blue": (95, 130, 235),
+    "grey": (150, 155, 165),
+    "white": (240, 242, 245),
+}
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 # rendezvous display furniture (all display-only, metres of the CWH LVLH frame)
 RING_RADII = (250.0, 500.0, 1000.0, 2000.0)  # range rings; 2000 m = range_fail
 RING_SEGMENTS = 48
@@ -379,6 +405,79 @@ def _urdf(scene, path, scale=1.0, **kw):
 
 
 
+def _urdf_lowest_z(path):
+    """Lowest z of a URDF's geometry BEFORE scaling, walking fixed joints.
+
+    Per-link primitive bounds alone are not enough: the rocket's three landing
+    legs are boxes on joints at z=-2.4, i.e. 4 cm lower than the body cylinder.
+    Only primitives are inspected (cylinder/box); meshes are ignored.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(Path(path).read_text().split("</robot>")[0] + "</robot>")
+    links = root.findall("link")
+    if not links:
+        return 0.0
+    parent_of, joint_z = {}, {}
+    for joint in root.findall("joint"):
+        if joint.find("child") is None or joint.find("parent") is None:
+            continue
+        child = joint.find("child").attrib["link"]
+        parent_of[child] = joint.find("parent").attrib["link"]
+        origin = joint.find("origin")
+        joint_z[child] = (
+            float(origin.attrib.get("xyz", "0 0 0").split()[2]) if origin is not None else 0.0
+        )
+
+    def link_z(name):
+        z, guard = 0.0, 0
+        while name in parent_of and guard < 64:
+            z += joint_z[name]
+            name = parent_of[name]
+            guard += 1
+        return z
+
+    lowest = 0.0
+    for link in links:
+        z = link_z(link.attrib["name"])
+        # collision geometry only: the rocket's `flame` link is a visual-only
+        # plume reaching 4.4 m below the link origin and must not anchor it
+        geoms = link.findall("collision")
+        for geom in geoms:
+            origin = geom.find("origin")
+            z_geom = z + (
+                float(origin.attrib.get("xyz", "0 0 0").split()[2]) if origin is not None else 0.0
+            )
+            geometry = geom.find("geometry")
+            if geometry is None:
+                continue
+            for g in geometry:
+                if g.tag == "cylinder":
+                    extent = float(g.attrib["length"]) / 2.0
+                elif g.tag == "box":
+                    extent = float(g.attrib["size"].split()[2]) / 2.0
+                elif g.tag == "sphere":
+                    extent = float(g.attrib["radius"])
+                else:
+                    continue
+                lowest = min(lowest, z_geom - extent)
+    return lowest
+
+
+def _scale_ground_lift(lowest_z, scale):
+    """Vertical offset that keeps a display-enlarged body out of the ground.
+
+    Genesis scales URDF geometry about each link origin, so a body whose real
+    bottom clears the pad by centimetres would have its scaled bottom
+    (scale-1)*|lowest_z| below the pad -- the enlarged airframe sinks into it.
+    Scale about the LOWEST point instead: the offset below puts the displayed
+    bottom back on the true (unscaled) bottom, so the model stands on the pad.
+    """
+    if scale <= 1.0 or lowest_z >= 0.0:
+        return 0.0
+    return -lowest_z * (scale - 1.0)
+
+
 def _ground(scene, size=GROUND_SIZE):
     """Flat grey ground wide enough to reach the horizon of every camera."""
     return scene.add_entity(
@@ -522,84 +621,164 @@ def _perp_basis(d):
     return u, np.cross(d, u)
 
 
-def _font(size):
+def _font(size, bold=True):
     from PIL import ImageFont  # noqa: E402
 
+    path = FONT_PATH if bold else FONT_REGULAR
     try:
-        return ImageFont.truetype(FONT_PATH, size)
+        return ImageFont.truetype(path, size)
     except OSError:
         return ImageFont.load_default()
 
 
-def _wrap(text, font, max_px):
-    """Greedy word wrap so long state lines still fit the readout column."""
-    from PIL import ImageDraw, Image  # noqa: E402
-
-    dr = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    words, out, cur = text.split(" "), [], ""
-    for w in words:
-        trial = w if not cur else f"{cur} {w}"
-        if dr.textlength(trial, font=font) <= max_px:
-            cur = trial
-            continue
-        if cur:
-            out.append(cur)
-        cur = w
-    if cur:
-        out.append(cur)
-    return out
+def _fit(draw, text, font, max_px):
+    """Trim a string with an ellipsis so it never leaves its column."""
+    if draw.textlength(text, font=font) <= max_px:
+        return text
+    while text and draw.textlength(text + "\u2026", font=font) > max_px:
+        text = text[:-1]
+    return text + "\u2026"
 
 
-def _frame(main_rgb, close_rgb, lines, label=None):
-    """Tile panorama | readout / label / close-up without any overlap.
+def _hfov_match(fov, new_res, old_res=(960, 540)):
+    """Vertical fov that keeps the old horizontal field of view.
 
-    main_rgb keeps its native 960x540 frame at the far left; the right column
-    holds the state readout on top and the close-up below, separated by a
-    one-line label bar. Every pixel belongs to exactly one zone, so the
-    panorama is never covered and the readout never sits on the close-up.
-    Pass close_rgb=None for tasks that have no close-up (satellite); the
-    readout then fills the whole column.
+    Genesis' ``fov`` is vertical. Changing the render aspect (e.g. from 960x540
+    to a taller 960x810 panorama) would otherwise crop the horizontal framing
+    the cameras were set up for, so widen the vertical fov by the aspect ratio
+    instead: same left/right coverage, more sky/ground above and below.
+    """
+    aspect_old = old_res[0] / old_res[1]
+    aspect_new = new_res[0] / new_res[1]
+    t = math.tan(math.radians(fov) / 2.0) * aspect_old / aspect_new
+    return math.degrees(2.0 * math.atan(t))
+
+
+def _state_card(state, height=STATE_RES[1]):
+    """Styled state readout: title, hero metric, key/value rows, legend, footer.
+
+    Every string is pre-authored per task and trimmed to its column, so the
+    card can never overflow into the label bar or the close-up.
     """
     from PIL import Image, ImageDraw  # noqa: E402
 
+    w = STATE_RES[0]
+    img = Image.new("RGB", (w, height), CARD_BG)
+    dr = ImageDraw.Draw(img)
+    dr.rounded_rectangle((0, 0, w - 1, height - 1), radius=10, outline=CARD_BORDER)
+    x0, x1 = 18, w - 18
+
+    title_f = _font(19)
+    tag_f = _font(10, bold=False)
+    dr.text((x0, 14), _fit(dr, state["task"], title_f, x1 - x0 - 60),
+            font=title_f, fill=TEXT_COLOR)
+    tw = dr.textlength("STATE", font=tag_f)
+    dr.text((x1 - tw, 22), "STATE", font=tag_f, fill=FAINT_COLOR)
+    y = 44
+    dr.line((x0, y, x1, y), fill=CARD_BORDER)
+    y += 18
+
+    # hero metric: small label over one large value
+    lab_f = _font(10, bold=False)
+    hero_f = _font(40)
+    dr.text((x0, y), state["hero"][0].upper(), font=lab_f, fill=FAINT_COLOR)
+    dr.text((x0, y + 17), _fit(dr, state["hero"][1], hero_f, x1 - x0),
+            font=hero_f, fill=TEXT_COLOR)
+    y += 82
+    dr.line((x0, y, x1, y), fill=CARD_BORDER)
+    y += 16
+
+    row_lab_f = _font(12, bold=False)
+    row_val_f = _font(14)
+    for label, value in state.get("rows", ()):
+        dr.text((x0, y + 2), label, font=row_lab_f, fill=DIM_COLOR)
+        value = _fit(dr, value, row_val_f, (x1 - x0) * 0.62)
+        dr.text((x1 - dr.textlength(value, font=row_val_f), y), value,
+                font=row_val_f, fill=TEXT_COLOR)
+        y += 28
+
+    legend = state.get("legend") or ()
+    if legend:
+        y += 4
+        dr.text((x0, y), "LEGEND", font=_font(9, bold=False), fill=FAINT_COLOR)
+        y += 16
+        leg_f = _font(11, bold=False)
+        for color, text in legend:
+            fill = LEGEND_COLORS.get(color, LEGEND_COLORS["white"])
+            dr.rounded_rectangle((x0, y + 3, x0 + 9, y + 12), radius=2, fill=fill)
+            dr.text((x0 + 18, y + 1),
+                    _fit(dr, text, leg_f, x1 - x0 - 24), font=leg_f, fill=DIM_COLOR)
+            y += 21
+
+    note = state.get("note")
+    footer_y = height - 72
+    if note:
+        dr.text((x0, min(y + 6, footer_y - 22)),
+                _fit(dr, note, _font(10, bold=False), x1 - x0),
+                font=_font(10, bold=False), fill=FAINT_COLOR)
+
+    # footer: episode progress plus the env's own terminal outcome
+    result = state.get("result")
+    if result:
+        pill_f = _font(11)
+        color = {
+            "SUCCESS": (46, 150, 82),
+            "FAILURE": (170, 62, 58),
+        }.get(result, (176, 128, 44))
+        pw = dr.textlength(result, font=pill_f) + 22
+        dr.rounded_rectangle((x1 - pw, footer_y, x1, footer_y + 24),
+                             radius=12, fill=color)
+        dr.text((x1 - pw + 11, footer_y + 5), result, font=pill_f,
+                fill=(245, 248, 250))
+    dr.text((x0, footer_y + 6), "EPISODE", font=_font(9, bold=False),
+            fill=FAINT_COLOR)
+    track_y = footer_y + 38
+    dr.rounded_rectangle((x0, track_y, x1, track_y + 6), radius=3, fill=CARD_TRACK)
+    frac = float(state.get("progress") or 0.0)
+    if frac > 0.0:
+        dr.rounded_rectangle((x0, track_y, x0 + max(6, int((x1 - x0) * frac)),
+                              track_y + 6), radius=3, fill=ACCENT_COLOR)
+    dr.text((x0, track_y + 12), state.get("clock", ""),
+            font=_font(10, bold=False), fill=DIM_COLOR)
+    return img
+
+
+def _frame(main_rgb, close_rgb, state, label=None):
+    """Tile panorama | state card / label bar / close-up without any overlap.
+
+    main_rgb keeps its native 960x810 frame at the far left; the right column
+    holds the readout card on top and the close-up below, separated by a
+    one-line label bar. Every pixel belongs to exactly one zone, so the
+    panorama is never covered and the readout never sits on the close-up.
+    """
+    from PIL import Image  # noqa: E402
+
     canvas = Image.new("RGB", FRAME_RES, (10, 11, 13))
     canvas.paste(Image.fromarray(main_rgb), (0, 0))
-    state_h = STATE_RES_FULL[1] if close_rgb is None else STATE_RES[1]
-
-    # ---- state readout (top right) ----
-    panel = Image.new("RGB", (STATE_RES[0], state_h), (17, 19, 23))
-    dr = ImageDraw.Draw(panel)
-    head = _font(15)
-    body = _font(STATE_FONT)
-    dr.text((STATE_PAD, 9), "STATE", fill=(132, 143, 160), font=head)
-    y, max_w = STATE_HEAD, STATE_RES[0] - 2 * STATE_PAD
-    wrapped = [ln for src in lines for ln in _wrap(src, body, max_w)]
-    limit = state_h - 8
-    for i, ln in enumerate(wrapped):
-        if y + STATE_LINE > limit:
-            dr.text((STATE_PAD, y), f"... (+{len(wrapped) - i} more)",
-                    fill=(190, 190, 190), font=body)
-            break
-        dr.text((STATE_PAD, y), ln, fill=(238, 242, 247), font=body)
-        y += STATE_LINE
-    canvas.paste(panel, (MAIN_RES[0], 0))
-
+    canvas.paste(_state_card(state), (MAIN_RES[0], 0))
     if close_rgb is not None:
         # ---- label bar ----
-        bar = Image.new("RGB", (STATE_RES[0], LABEL_H), (30, 33, 40))
+        bar = Image.new("RGB", (STATE_RES[0], LABEL_H), (28, 32, 39))
+        from PIL import ImageDraw  # noqa: E402
+
         db = ImageDraw.Draw(bar)
-        db.text((STATE_PAD, 4), label or "CLOSE-UP", fill=(255, 214, 64), font=head)
-        canvas.paste(bar, (MAIN_RES[0], STATE_RES[1]))
+        db.rectangle((0, 0, 2, LABEL_H - 1), fill=ACCENT_COLOR)
+        db.text((14, 5), label or "CLOSE-UP", fill=ACCENT_COLOR, font=_font(11))
 
         # ---- close-up (bottom right) ----
         close = Image.fromarray(close_rgb)
         if close.size != CLOSE_RES:
             close = close.resize(CLOSE_RES, Image.LANCZOS)
+        canvas.paste(bar, (MAIN_RES[0], STATE_RES[1]))
         canvas.paste(close, (MAIN_RES[0], STATE_RES[1] + LABEL_H))
 
     # ---- zone separators ----
+    # All separators live inside the right column so the 960x810 panorama is
+    # left byte-for-byte intact (no dark line even on its last two columns).
+    from PIL import ImageDraw  # noqa: E402
+
     dcs = ImageDraw.Draw(canvas)
-    dcs.rectangle((MAIN_RES[0] - 2, 0, MAIN_RES[0] - 1, FRAME_RES[1] - 1), fill=(8, 9, 11))
+    dcs.rectangle((MAIN_RES[0], 0, MAIN_RES[0] + 1, FRAME_RES[1] - 1), fill=(8, 9, 11))
     if close_rgb is not None:
         dcs.rectangle(
             (MAIN_RES[0], STATE_RES[1] - 2, FRAME_RES[0] - 1, STATE_RES[1] - 1),
@@ -611,11 +790,6 @@ def _frame(main_rgb, close_rgb, lines, label=None):
             fill=(8, 9, 11),
         )
     return np.asarray(canvas)
-
-
-def _overlay(rgb, lines):
-    """Legacy helper kept for call sites that have no close-up column pieces."""
-    return _frame(rgb, None, lines)
 
 
 
@@ -646,9 +820,12 @@ def build_scene(task, extras, first):
         ents["body"] = _urdf(scene, MODELS / "vehicles/cf2x/cf2x.urdf", scale=6.0)
         ents["goal"] = _marker(scene, 0.18, (0.0, 1.0, 0.0, 1.0), extras["target"])
         cam = scene.add_camera(
-            res=MAIN_RES, pos=(6, -8, 5.5), lookat=(0, 0, 2.0), fov=45, far=2000
+            res=MAIN_RES, pos=(6, -8, 5.5), lookat=(0, 0, 2.0),
+            fov=_hfov_match(45, MAIN_RES), far=2000
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=5000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=5000
+        )
     elif task == "quadx_track":
         # Reuse the PyFlyt cf2x model (enlarged 8x for readability). Only the
         # target, true LOS and the environment's geometric occluders are added.
@@ -665,9 +842,12 @@ def build_scene(task, extras, first):
         ents["trail"] = _trail(scene, 0.08, (0.2, 0.4, 0.9, 0.6))
         ents["target_trail"] = _trail(scene, 0.08, (0.9, 0.15, 0.1, 0.7))
         cam = scene.add_camera(
-            res=MAIN_RES, pos=(19, -19, 12.5), lookat=(0, 0, 4.5), fov=55, far=3000
+            res=MAIN_RES, pos=(19, -19, 12.5), lookat=(0, 0, 4.5),
+            fov=_hfov_match(55, MAIN_RES), far=3000
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=5000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=5000
+        )
     elif task == "fixedwing":
         _ground(scene)
         ents["body"] = _urdf(
@@ -678,9 +858,12 @@ def build_scene(task, extras, first):
         # fixed global camera centred on the waypoint cluster; the panorama is
         # its own zone in the composed frame, so nothing is panned away
         cam = scene.add_camera(
-            res=MAIN_RES, pos=(85, -85, 70), lookat=(0, 0, 30), fov=55, far=5000
+            res=MAIN_RES, pos=(85, -85, 70), lookat=(0, 0, 30),
+            fov=_hfov_match(55, MAIN_RES), far=5000
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=5000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=5000
+        )
     elif task == "quadplane":
         # Same PyFlyt waypoint scene convention as Fixedwing, with the native
         # quadplane URDF (enlarged 6x); no synthetic tilt/mode animation is
@@ -693,19 +876,28 @@ def build_scene(task, extras, first):
         ents["trail"] = _trail(scene, 0.5, (0.2, 0.4, 0.9, 0.6))
         # same fixed global framing as Fixedwing
         cam = scene.add_camera(
-            res=MAIN_RES, pos=(100, -100, 74), lookat=(0, 0, 32), fov=55, far=5000
+            res=MAIN_RES, pos=(100, -100, 74), lookat=(0, 0, 32),
+            fov=_hfov_match(55, MAIN_RES), far=5000
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=5000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=5000
+        )
     elif task == "rocket":
         _ground(scene)
         _urdf(scene, MODELS / "landing_pad.urdf", pos=(0, 0, 0.1))
-        # 5.4 m airframe at ~450 m altitude would be a few pixels: enlarged 8x
+        # 5.4 m airframe at ~450 m altitude would be a few pixels: enlarged 8x.
+        # The display scale is anchored at the airframe's lowest point (computed
+        # after scene.build below), otherwise the 8x body would sink ~17 m into
+        # the pad as it lands (the true base only clears the pad by centimetres).
         ents["body"] = _urdf(scene, MODELS / "vehicles/rocket/rocket.urdf", scale=8.0)
         ents["trail"] = _trail(scene, 0.5, (0.2, 0.4, 0.9, 0.6))
         cam = scene.add_camera(
-            res=MAIN_RES, pos=(350, -350, 420), lookat=(0, 0, 250), fov=60, far=8000
+            res=MAIN_RES, pos=(350, -350, 420), lookat=(0, 0, 250),
+            fov=_hfov_match(60, MAIN_RES), far=8000
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=8000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=8000
+        )
 
     elif task == "satellite":
         # Recognizable bus: grey body + equipment compartments on the +/-z
@@ -774,7 +966,15 @@ def build_scene(task, extras, first):
         # FIXED oblique camera: never follows the tumbling body, so the bus
         # stays clear and stable throughout the episode
         cam = scene.add_camera(
-            res=MAIN_RES, pos=(3.4, -3.4, 2.15), lookat=(0, 0, 0), fov=45, far=100
+            res=MAIN_RES, pos=(3.4, -3.4, 2.15), lookat=(0, 0, 0),
+            fov=_hfov_match(45, MAIN_RES), far=100
+        )
+        # The main camera is the fixed global attitude view; the close-up is a
+        # second fixed camera closer to the bus so the CMG axes and body triad
+        # stay readable. Panels may sweep out of the close-up frame during a
+        # large slew, which is what a close-up does; the panorama keeps them.
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=100
         )
     elif task == "transfer":
         # 3D dynamics (i = pi/3), so a 3D view centered on Earth. Orbit lines
@@ -820,9 +1020,12 @@ def build_scene(task, extras, first):
         u /= np.linalg.norm(u)
         campos = -36.0 * u + 36.0 * n  # ~45 deg above the orbital plane
         cam = scene.add_camera(
-            res=MAIN_RES, pos=tuple(campos), lookat=(0, 0, 0), fov=45, far=300
+            res=MAIN_RES, pos=tuple(campos), lookat=(0, 0, 0),
+            fov=_hfov_match(45, MAIN_RES), far=300
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=300)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=300
+        )
         # 2000 km scale bar (2 scene units), below the frame center
         view = -campos / np.linalg.norm(campos)
         right = np.cross(view, (0.0, 0.0, 1.0))
@@ -853,10 +1056,12 @@ def build_scene(task, extras, first):
             res=MAIN_RES,
             pos=tuple(mid0 + np.array((0.0, -4500.0, 1300.0))),
             lookat=tuple(mid0),
-            fov=50,
+            fov=_hfov_match(50, MAIN_RES),
             far=20000,
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=45, far=20000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(45, CLOSE_RES), far=20000
+        )
     else:  # docking / rendezvous
         # Target station (grey) with two solar panels ATTACHED to the ±y
         # faces (no longer intersecting the core) and a docking port on the
@@ -982,10 +1187,19 @@ def build_scene(task, extras, first):
             cam_pos = np.array((42.0, -46.0, 30.0))
             look = (0.0, 0.0, 0.0)
         cam = scene.add_camera(
-            res=MAIN_RES, pos=tuple(cam_pos), lookat=look, fov=60, far=5000
+            res=MAIN_RES, pos=tuple(cam_pos), lookat=look,
+            fov=_hfov_match(60, MAIN_RES), far=5000
         )
-        ents["close_cam"] = scene.add_camera(res=CLOSE_RES, fov=55, far=3000)
+        ents["close_cam"] = scene.add_camera(
+            res=CLOSE_RES, fov=_hfov_match(55, CLOSE_RES), far=3000
+        )
     scene.build(n_envs=1)
+    if task == "rocket":
+        # display-only: after build the visual geometry is final, so the anchor
+        # offset for the 8x airframe can be measured exactly
+        ents["body_lift"] = _scale_ground_lift(
+            _urdf_lowest_z(MODELS / "vehicles/rocket/rocket.urdf"), 8.0
+        )
     return scene, ents, cam
 
 
@@ -1011,8 +1225,23 @@ def render(task, frames, extras, out_path, fps):
         ents["t_axis"].set_pos((px + L / 2.0, 0.0, 0.0))
         ents["t_axis"].set_quat((math.sqrt(0.5), 0.0, math.sqrt(0.5), 0.0))
     terminal = extras.get("terminal")
+    n_frames = len(frames)
+
+    def _state_task(name, hero, rows=(), legend=(), note=None, fi=0, result=None):
+        frac, clock = (fi + 1) / n_frames, (
+            f"t = {fi / 30.0:.1f} s / {n_frames / 30.0:.1f} s"
+        )
+        out = dict(task=name, hero=hero, rows=list(rows), legend=list(legend),
+                   note=note, progress=frac, clock=clock)
+        if result:
+            out["result"] = result
+        return out
+
     for fi, f in enumerate(frames):
-        ents["body"].set_pos(tuple(map(float, f["pos"])))
+        # display-only lift (rocket): keeps the enlarged airframe off the pad
+        pos = tuple(map(float, f["pos"]))
+        lift = ents.get("body_lift", 0.0)
+        ents["body"].set_pos((pos[0], pos[1], pos[2] + lift))
         if f["quat"] is not None:
             ents["body"].set_quat(tuple(map(float, f["quat"])))
         if task == "missile":
@@ -1057,16 +1286,19 @@ def render(task, frames, extras, out_path, fps):
             ents["close_cam"].set_pose(
                 pos=tuple(p + off), lookat=tuple(p), up=WORLD_UP
             )
-            lines = [
-                "QuadX-Waypoints  green = active waypoint  (body scaled 6x)",
-                f"altitude = {p[2]:.2f} m   |   4 waypoints inside the 5 m dome",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
+            state = _state_task(
+                "QuadX-Waypoints",
+                ("Altitude", f"{p[2]:.2f} m"),
+                [("Waypoints", "4 inside the 5 m dome"), ("Body", "scaled 6x")],
+                [("green", "active waypoint"), ("grey", "ground shadow")],
+                "fixed global camera · PyFlyt 30/30 close-up",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             rgb = _frame(
                 cam.render(rgb=True, force_render=True)[0],
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 "CLOSE-UP: quadx",
             )
             rgb_frames.append(rgb)
@@ -1088,18 +1320,21 @@ def render(task, frames, extras, out_path, fps):
             ents["close_cam"].set_pose(
                 pos=tuple(p + off), lookat=tuple(p), up=WORLD_UP
             )
-            lines = [
-                f"QuadX-Track  target {'VISIBLE' if f['visible'] else 'LOST'}"
-                f"   altitude = {p[2]:.2f} m",
-                "red = ground target | grey = LOS occluders | white = LOS",
-                "(body scaled 12x for visibility)",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
+            state = _state_task(
+                "QuadX-Track",
+                ("Altitude", f"{p[2]:.2f} m"),
+                [("Target", "VISIBLE" if f["visible"] else "LOST"),
+                 ("Body", "scaled 12x")],
+                [("red", "ground target"), ("grey", "LOS occluder"),
+                 ("white", "line of sight")],
+                "fixed global view · true target state",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             rgb = _frame(
                 cam.render(rgb=True, force_render=True)[0],
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 "CLOSE-UP: quadx_track",
             )
             rgb_frames.append(rgb)
@@ -1167,18 +1402,22 @@ def render(task, frames, extras, out_path, fps):
         if task == "rendezvous":
             r = float(np.linalg.norm(p))
             rgb = cam.render(rgb=True, force_render=True)[0]
-            lines = [
-                "Rendezvous  CWH LVLH frame, target at origin  [metres]",
-                "X radial | Y along-track | Z cross-track",
-                "green = goal 10 m | red = keep-out 5 m | rings 250/500 m",
-                f"range = {r:.0f} m  |v| = {speed:.2f} m/s  |  bodies scaled 6x",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
+            state = _state_task(
+                "Rendezvous · CWH LVLH",
+                ("Range to target", f"{r:.0f} m"),
+                [("Relative speed", f"{speed:.2f} m/s"),
+                 ("Goal", "10 m ball"),
+                 ("Keep-out", "5 m sphere")],
+                [("green", "goal 10 m"), ("red", "keep-out 5 m"),
+                 ("grey", "range rings 250 / 500 m")],
+                "target at LVLH origin · bodies scaled 6x · arrow 100 m per m/s",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             rgb = _frame(
                 rgb,
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 "CLOSE-UP: chaser",
             )
             rgb_frames.append(rgb)
@@ -1186,20 +1425,22 @@ def render(task, frames, extras, out_path, fps):
         if task == "docking":
             r = float(np.linalg.norm(p))
             rgb = cam.render(rgb=True, force_render=True)[0]
-            lines = [
-                "Docking  CWH LVLH frame, target at origin  [metres]",
-                f"success: range < {extras['pos_goal']} m & |v| < {extras['vel_goal']} m/s"
-                f" | fail: > {extras['range_fail']} m",
-                f"range = {float(r):.2f} m   |v| = {speed:.3f} m/s"
-                "   (arrow 10 m per m/s)",
-                "grey/green = target | orange = chaser  (bodies scaled 4x)",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
+            state = _state_task(
+                "Docking · CWH LVLH",
+                ("Range to target", f"{float(r):.2f} m"),
+                [("Relative speed", f"{speed:.3f} m/s"),
+                 ("Success", f"< {extras['pos_goal']} m & < {extras['vel_goal']} m/s"),
+                 ("Fail", f"> {extras['range_fail']} m")],
+                [("grey", "target station"), ("green", "docking port"),
+                 ("orange", "chaser")],
+                "bodies scaled 4x · velocity arrow 10 m per m/s",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             rgb = _frame(
                 rgb,
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 "CLOSE-UP: chaser + station",
             )
             rgb_frames.append(rgb)
@@ -1212,27 +1453,43 @@ def render(task, frames, extras, out_path, fps):
                 if task == "quadplane"
                 else np.array((19.0, -19.0, 12.0))
             )
+            # follow the DISPLAYED body (rocket's scaled airframe is lifted so
+            # its base sits on the pad), never the raw link origin
+            lift = np.array((0.0, 0.0, ents.get("body_lift", 0.0)))
             ents["close_cam"].set_pose(
-                pos=tuple(p + offset), lookat=tuple(p), up=WORLD_UP
+                pos=tuple(p + offset + lift), lookat=tuple(p + lift), up=WORLD_UP
             )
             scale = {"fixedwing": 8, "quadplane": 8, "rocket": 8}[task]
-            lines = [
-                {
-                    "fixedwing": "Fixedwing-Waypoints  red = 4 waypoints"
-                    f"  (body scaled {scale}x)",
-                    "quadplane": "Quadplane-VTOL  red = 4 waypoints"
-                    f"  (body scaled {scale}x)",
-                    "rocket": "Rocket landing  pad at origin"
-                    f"  (body scaled {scale}x)",
-                }[task],
-                f"altitude = {p[2]:.1f} m",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
+            names = {
+                "fixedwing": "Fixedwing-Waypoints",
+                "quadplane": "Quadplane · VTOL",
+                "rocket": "Rocket landing",
+            }
+            if task == "rocket":
+                rows = [("Landing pad", "at origin"), ("Body", f"scaled {scale}x")]
+                legend = [("grey", "ground plane"), ("blue", "descent path")]
+                note = "fixed global view of the 0-450 m descent · 8x model anchored on the pad"
+            else:
+                rows = [("Waypoints", "4 red spheres"), ("Body", f"scaled {scale}x")]
+                legend = [("red", "waypoint target"), ("blue", "flown path")]
+                note = (
+                    "live VTOL attitude · no synthetic tilt animation"
+                    if task == "quadplane"
+                    else "fixed global view of the waypoint circuit"
+                )
+            state = _state_task(
+                names[task],
+                ("Altitude", f"{p[2]:.1f} m"),
+                rows,
+                legend,
+                note,
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             rgb = _frame(
                 png,
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 f"CLOSE-UP: {task}",
             )
             rgb_frames.append(rgb)
@@ -1240,12 +1497,17 @@ def render(task, frames, extras, out_path, fps):
             # fixed camera on the central body: following the spacecraft would
             # hide the orbit shape; the full trajectory must stay in frame
             rgb = cam.render(rgb=True, force_render=True)[0]
-            lines = [
-                "Orbital transfer  inertial GCRF frame  [1 unit = 1000 km]",
-                "green = initial orbit | cyan = target circle @ apogee",
-                "red = perigee | yellow = apogee | orange = trajectory",
-                "spacecraft oversized (not to scale) | bottom bar = 2000 km",
-            ]
+            state = _state_task(
+                "Orbital transfer · GCRF",
+                ("Scale bar", "2000 km"),
+                [("1 unit", "1000 km"), ("Frame", "inertial GCRF"),
+                 ("Markers", "perigee / apogee")],
+                [("green", "initial orbit"), ("cyan", "target circle"),
+                 ("orange", "trajectory")],
+                "spacecraft box oversized (not to scale)",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             ents["close_cam"].set_pose(
                 pos=tuple(p + np.array((4.2, -4.2, 2.1))),
                 lookat=tuple(p),
@@ -1254,22 +1516,35 @@ def render(task, frames, extras, out_path, fps):
             rgb = _frame(
                 rgb,
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 "CLOSE-UP: spacecraft",
             )
             rgb_frames.append(rgb)
         elif task == "satellite":
-            # fixed oblique camera (set at build time): no follow, no shake
+            # main camera is the fixed global attitude view; the close-up is a
+            # separate fixed camera nearer the bus so the axes stay readable
             att = math.degrees(_quat_angle(f["quat"], f["target_quat"]))
-            g = " ".join(f"{a:+.2f}" for a in f["gimbal"])
-            lines = [
-                "Satellite CMG slew  body: X red / Y green / Z blue",
-                "yellow = target triad | cyan = CMG axes | ghost = target",
-                f"att err = {att:.1f} deg   gimbal [rad] = [{g}]",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
-            rgb_frames.append(_frame(cam.render(rgb=True, force_render=True)[0], None, lines))
+            state = _state_task(
+                "Satellite · CMG slew",
+                ("Attitude error", f"{att:.1f} deg"),
+                [(f"Gimbal {ax}", f"{v:+.2f} rad")
+                 for ax, v in zip("XYZ", f["gimbal"])],
+                [("red", "body X"), ("green", "body Y"), ("blue", "body Z")],
+                "yellow = target triad · cyan = CMG axis · ghost = target",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
+            ents["close_cam"].set_pose(
+                pos=(2.0, -2.0, 1.4), lookat=(0.0, 0.0, 0.0), up=WORLD_UP
+            )
+            rgb_frames.append(
+                _frame(
+                    cam.render(rgb=True, force_render=True)[0],
+                    ents["close_cam"].render(rgb=True, force_render=True)[0],
+                    state,
+                    "CLOSE-UP: bus + CMG",
+                )
+            )
         elif task == "missile":
             # Fixed global engagement view; only the inset follows the missile.
             ents["me"].set_pos(tuple(p))
@@ -1279,17 +1554,19 @@ def render(task, frames, extras, out_path, fps):
                 lookat=tuple(p),
                 up=WORLD_UP,
             )
-            lines = [
-                "Missile intercept  yellow = missile | red = target"
-                "  (missile body scaled 200x)",
-                f"altitude = {p[2] / 1000.0:.2f} km",
-            ]
-            if terminal is not None and fi == len(frames) - 1:
-                lines.append(f"RESULT: {terminal}")
+            state = _state_task(
+                "Missile intercept",
+                ("Altitude", f"{p[2] / 1000.0:.2f} km"),
+                [("Target", "red 60 m marker"), ("Body", "scaled 200x")],
+                [("yellow", "missile + locator"), ("red", "target marker")],
+                "fixed global engagement view (0-4 km)",
+                fi,
+                terminal if fi == n_frames - 1 else None,
+            )
             rgb = _frame(
                 png,
                 ents["close_cam"].render(rgb=True, force_render=True)[0],
-                lines,
+                state,
                 "CLOSE-UP: missile",
             )
             rgb_frames.append(rgb)
@@ -1306,7 +1583,7 @@ def render(task, frames, extras, out_path, fps):
         fps=fps,
         codec="libx264",
         quality=8,
-        macro_block_size=1,  # keep the native 960x540 frames unstretched
+        macro_block_size=1,  # keep the native 1440x810 frames unstretched
     )
 
 

@@ -249,6 +249,8 @@ def run_training(
     as k * mean action std to keep the drift rate constant. The coupling is
     applied once BEFORE the first chunk too -- at a pinned small sigma the
     uncoupled initial lr can sit in the collapse band (lr/sigma > ~3.3e-4).
+    Gaussian-policy only: it reads the actor's ``log_std_param``, which the
+    default ``BetaDistribution`` does not have.
 
     sigma_pin (PPO only): re-pin the exploration std to this value at every
     chunk (the entropy bonus and policy gradient otherwise drift it). With
@@ -256,7 +258,7 @@ def run_training(
     noisy-rollout objective aligned with greedy behavior: at sigma=0.5 the
     in-rollout success collapses and PPO's gradient chases noise (measured
     dose-response, 100-update gates: sigma 0.5 -> 12% greedy, 0.35 -> 46%,
-    0.2 -> holds ~60-64%).
+    0.2 -> holds ~60-64%). Gaussian-policy only, like lr_sigma_coupling.
 
     algo: 'ppo' (default, rsl-rl OnPolicyRunner). Consumes the identical
     batched env protocol, checkpoint naming and reporting pipeline so results

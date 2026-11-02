@@ -96,21 +96,32 @@ thrust authority $F_{\max}/m=0.02$ m/s², preserving most of the progress credit
 during the accelerate-toward-target phase while still penalizing unrecoverable
 approach speeds near the target. The per-step reward is
 \begin{equation}
-r_t = w\,\big(\Phi(s_{t+1}) - \Phi(s_t)\big) - \gamma\,\frac{\lVert F_t\rVert}{F_{\max}},
-\qquad w = 100,\quad \gamma = 0.01. \tag{7}
+r_t = w\,\big(\Phi(s_{t+1}) - \Phi(s_t)\big) - \gamma\,\frac{\lVert F_t\rVert}{F_{\max}} - \tau,
+\qquad w = 100,\quad \gamma = 0.01,\quad \tau = 0.02. \tag{7}
 \end{equation}
-The shaping is potential-based, so the episode sum telescopes,
+The per-step time (hover) penalty $\tau=0.02$ is required because the
+telescoping shaping is time-invariant: hovering at a few hundred metres pays
+approximately nothing and would otherwise be a profitable failure target
+(full 1000-step hover costs $\approx -20$ against a $+100$ success bonus; the
+mix of dense time cost and terminal reward follows the SpaceGym CVPRW 2026 /
+AAS 23-026 formulations). The shaping is potential-based, so the episode sum telescopes,
 \begin{equation}
 \sum_{t=0}^{T-1} w\,\big(\Phi(s_{t+1})-\Phi(s_t)\big) = w\,\big(\Phi(s_T)-\Phi(s_0)\big), \tag{8}
 \end{equation}
-and the cumulative shaping is path-independent: hovering costs approximately
-zero, closing and braking pay positively, retreating pays negatively, and
-round trips net zero. The quadratic velocity term aligns the reward gradient
+and the cumulative shaping is path-independent: closing and braking pay
+positively, retreating pays negatively, round trips net zero, and hovering
+loses $\tau$ per step. The quadratic velocity term aligns the reward gradient
 with the maximum-brake approach profile at deceleration $a_{\mathrm{ref}}$.
-On success a terminal bonus $R_{+}=+20$ is added; a violation incurs a one-time
-penalty $R_{-}=-20$ (no per-step fee). The 20-point terminal spread (rather
-than the 100 used for docking) reduces advantage noise near the success/timeout
-decision boundary while preserving the incentive ordering.
+On success a terminal bonus $R_{+}=+100$ is added; a violation incurs a one-time
+penalty $R_{-}=-100$ (no per-step fee; in progress mode the dense
+`keep_out_penalty=10` of the base class is *not* applied and keep-out
+penetration is charged through this terminal penalty instead). The 100-point
+spread was restored on 2026-10-28: with the earlier 20-point spread the
+terminal event never became an attractor for the 2×128-MLP PPO recipe (greedy
+success stalled at the ~0.5–2% spawn-luck floor across two full runs), while
+the 100-point spread was the only setting observed to reach 0.3–0.9 success;
+its late-phase erosion is counteracted by full-batch updates
+(`num_mini_batches=1`) and the 400-update LR half-life.
 
 ## 7. Success, termination, and truncation
 
@@ -167,7 +178,9 @@ with `complete` set) and `init_range_hi`; `extras['terminal_observations']` carr
 | `pos_norm` ($d_{\mathrm{norm}}$) | per-episode $d_0$ |
 | `brake_ref` ($a_{\mathrm{ref}}$) | 0.1 m/s² |
 | `progress_weight` / `gamma` | 100 / 0.01 |
-| `terminal_bonus` / `viol_penalty` | +20 / −20 |
+| `time_penalty` ($\tau$) | 0.02 per step |
+| `terminal_bonus` / `viol_penalty` | +100 / −100 |
+| `keep_out_penalty` | 10 (dense mode only; progress mode uses the terminal violation penalty) |
 
 ## 11. References
 

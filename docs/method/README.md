@@ -31,19 +31,61 @@ disagrees with the implementation, these documents follow the code.
 
 ## Classical (non-learned) baselines
 
-| Document | Task | Method |
+Every environment registers one default controller in `BUILDERS` and exposes
+alternative control laws as CLI-selectable arms in `BASELINE_VARIANTS`
+(`scripts/baseline_eval.py --baseline <key>`). That is **10 defaults + 20
+distinct variant controllers = 30 controller arms**
+(`algorithms/baselines/baselines.py`); the 22 `--baseline` keys include two
+aliases of default arms (marked below), so the tables list 32 rows covering
+those 30 distinct controllers. `--baseline` keys are shown in backticks.
+
+### 3.1 Default controller per task (`BUILDERS`)
+
+| Document | Task | Default method |
 |---|---|---|
 | [baseline-quadx-se3.md](baseline-quadx-se3.md) | quadx | SE(3) geometric tracking control (Lee et al. 2010) with integral trim |
-| [baseline-quadx-cascade-pid.md](baseline-quadx-cascade-pid.md) | quadx | Position PID → attitude P/PD cascade on the env's native rate PID (A/B arm) |
 | [baseline-quadx-track-kf-pid.md](baseline-quadx-track-kf-pid.md) | quadx_track | Constant-velocity Kalman filter + fixed-offset SE(3) tracking with a public timeout hold |
 | [baseline-fixedwing-l1-tecs.md](baseline-fixedwing-l1-tecs.md) | fixedwing | L1 lateral guidance (Park-Deyst-Howe 2004) + TECS longitudinal autopilot |
-| [baseline-fixedwing-pid.md](baseline-fixedwing-pid.md) | fixedwing | Conventional cascaded PID autopilot: course→bank→bank-rate, altitude→pitch→pitch-rate, airspeed PI (A/B arm) |
-| [baselines/baselines.py](../../algorithms/baselines/baselines.py) (`QuadplaneHybridBaseline`) | quadplane | Velocity-scheduled cascaded PID + gentle forward pusher (**not yet validated**: 100% crash rate on train/dev/test seeds) |
+| [baselines/variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py) (`QuadplaneSE3PusherBaseline`) | quadplane | Quad-rotor SE(3) geometric control for the whole waypoint task, pusher throttle closing the body-x ground-speed error (validated: 87.5% on 256 replicas / seed 7, 89.1%±3.1 over the four-seed protocol) |
 | [baseline-rocket-pdg.md](baseline-rocket-pdg.md) | rocket | ZEM/ZEV powered-descent guidance, virtual-pad braking manifold, pulse servo |
 | [baseline-missile-apn.md](baseline-missile-apn.md) | missile | Augmented proportional navigation mapped to body-rate commands |
 | [baseline-satellite-cmg-pd.md](baseline-satellite-cmg-pd.md) | satellite | Quaternion PD + Schaub-Junkins damped pseudo-inverse CMG steering |
-| [baseline-satellite-mp-pinv.md](baseline-satellite-mp-pinv.md) | satellite | Same PD, ordinary Moore–Penrose pseudo-inverse CMG steering (steering-law ablation) |
 | [baseline-transfer-gauss.md](baseline-transfer-gauss.md) | transfer | Gauss one-step greedy tangential guidance with propellant-priced objective |
-| [baseline-transfer-qlaw.md](baseline-transfer-qlaw.md) | transfer | Petropoulos Q-law feedback guidance on the planar (a, e) subset with effectivity coasting |
 | [baseline-docking-cwh-lqr.md](baseline-docking-cwh-lqr.md) | docking | Symplectic-exact discrete CWH LQR + range shield / capture net / fuel derating |
 | [baseline-rendezvous-two-impulse.md](baseline-rendezvous-two-impulse.md) | rendezvous | Recursively re-solved two-impulse CWH ZEM/ZEV guidance with feasibility guards |
+
+`RendezvousCWHPDBaseline` is additionally registered under the separate
+registry key `rendezvous_cwhpd` (a second controller for the same task, not
+reachable through `--baseline`).
+
+### 3.2 Per-task variants (`BASELINE_VARIANTS`)
+
+| Task | `--baseline` key | Controller | Method reference |
+|---|---|---|---|
+| quadx | `cascaded_pid` | `QuadXCascadePIDBaseline` | [baseline-quadx-cascade-pid.md](baseline-quadx-cascade-pid.md): position PID → attitude P/PD cascade on the env's native rate PID |
+| quadx | `smc` | `QuadXSMCBaseline` | [variants_quadx.py](../../algorithms/baselines/variants_quadx.py): sliding surface `s = e_v + λe_p` + saturating exponential reaching law, Euler attitude cascade |
+| quadx_track | `pursuit` | `QuadXTrackPursuitBaseline` | [variants_air.py](../../algorithms/baselines/variants_air.py): raw-measurement pure pursuit, no estimator |
+| quadx_track | `pid_ema` | `QuadXTrackPIDEMABaseline` | [variants_air.py](../../algorithms/baselines/variants_air.py): EMA-filtered target + SE(3) cascade |
+| fixedwing | `pid_cascade` | `FixedwingPIDBaseline` | [baseline-fixedwing-pid.md](baseline-fixedwing-pid.md): course→bank→bank-rate, altitude→pitch→pitch-rate, airspeed PI |
+| fixedwing | `nlgl_tecs` | `FixedwingNLGLBaseline` | [variants_fw_rocket.py](../../algorithms/baselines/variants_fw_rocket.py): Park nonlinear guidance law + TECS longitudinal stack |
+| rocket | `pd_landing` | `RocketPDLandingBaseline` | [baseline-rocket-pd-landing.md](baseline-rocket-pd-landing.md): brake-distance/threshold-height PD landing, hysteretic engine band, one-shot ignition |
+| rocket | `eguidance` | `RocketEGuidanceBaseline` | [variants_fw_rocket.py](../../algorithms/baselines/variants_fw_rocket.py): Apollo E-guidance (quadratic polynomial targeting) mid-course |
+| missile | `ppn` | `MissilePPNBaseline` | [variants_air.py](../../algorithms/baselines/variants_air.py): pure pursuit, no lead |
+| missile | `tpn` | `MissileTPNBaseline` | [variants_air.py](../../algorithms/baselines/variants_air.py): true PN, no gravity augmentation |
+| quadplane | `hybrid_cascade` | `QuadplaneHybridBaseline` | [baselines.py](../../algorithms/baselines/baselines.py): velocity-scheduled rotor/wing mode switching with a wing-lift unload term; retuned for the live-wing plant (26.6% success, ablation arm) |
+| quadplane | `l1_wing` | `QuadplaneL1WingBaseline` | [variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py): wing-mode L1 lateral guidance + quad low-speed assist (49.6%, ablation arm) |
+| satellite | `quat_pd_damped_cmg` | `SatelliteCMGBaseline` | [baseline-satellite-cmg-pd.md](baseline-satellite-cmg-pd.md): the default arm, selectable by key |
+| satellite | `quat_pd_mp_pinv_cmg` | `SatelliteOrdinaryPinvBaseline` | [baseline-satellite-mp-pinv.md](baseline-satellite-mp-pinv.md): same PD, ordinary Moore–Penrose pseudo-inverse steering |
+| satellite | `quat_pd_wpinv_cmg` | `SatelliteWeightedPinvBaseline` | [variants_space.py](../../algorithms/baselines/variants_space.py): weighted pseudo-inverse + null-space singularity-avoidance steering |
+| transfer | `gauss_tangential` | `TransferGaussBaseline` | [baseline-transfer-gauss.md](baseline-transfer-gauss.md): the default arm, selectable by key |
+| transfer | `q_law` | `TransferQLawBaseline` | [baseline-transfer-qlaw.md](baseline-transfer-qlaw.md): Petropoulos Q-law feedback guidance on the planar (a, e) subset with effectivity coasting |
+| transfer | `edelbaum` | `TransferEdelbaumBaseline` | [variants_space.py](../../algorithms/baselines/variants_space.py): Edelbaum open-loop Δv budget, thrust along local velocity |
+| docking | `pole_placement` | `DockingCWHPlacementBaseline` | [baselines.py](../../algorithms/baselines/baselines.py): CWH full-state feedback, standard pole placement, no extra layers |
+| docking | `zem_zev` | `DockingZEMZEVBaseline` | [variants_space.py](../../algorithms/baselines/variants_space.py): CWH ZEM/ZEV single-pulse guidance + fuel/range guards |
+| rendezvous | `cwh_pd` | `RendezvousCWHPDBaseline` | [baselines.py](../../algorithms/baselines/baselines.py): CWH-compensated PD to the origin, no constraint layers |
+| rendezvous | `glideslope` | `RendezvousGlideslopeBaseline` | [variants_space.py](../../algorithms/baselines/variants_space.py): range-rate braking corridor (glideslope) on the initial LOS |
+
+The two "default arm, selectable by key" rows are duplicates of 3.1 under the
+CLI name: they are not extra controllers. Per-arm success rates, Wilson
+intervals, and failure-mode tables for all 30 distinct controllers are in
+[baseline_test_report.md](../baseline_test_report.md).

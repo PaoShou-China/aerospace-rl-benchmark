@@ -129,12 +129,43 @@ leaves it at `None`.
 
 ## 5. Measured performance
 
-Under the official `baseline_eval` protocol (1024 parallel envs, seed 7),
-the root README's frozen baseline table reports **100% success** (the
-task-level criterion $R>0$ at the final orbit) with **terminal
-$R \approx 0.86$**. The frozen controller audit
-(`docs/evaluation_protocol.md`, §2) records the law as fully successful
-and frozen as the behavior-cloning data source for this task.
+All shipped records use the `scripts/baseline_eval.py` accounting (first
+episode per replica, `env_kwargs = {}`, 166-step horizon). No 1024-replica
+transfer artifact exists, so the older "1024 envs / seed 7 / terminal
+R ≈ 0.86" claim is withdrawn; the verified numbers are:
+
+**Protocol dataset A** (`results/baseline_protocol/seed{7,13,21,101}/transfer/baseline.json`,
+128 replicas per seed):
+
+| seed | success | successes / finished | mean episode return | env steps |
+|---|---:|---:|---:|---:|
+| 7 | 100% | 128 / 128 | 0.0074 | 166 |
+| 13 | 100% | 128 / 128 | 0.0067 | 166 |
+| 21 | 97.7% | 125 / 128 | 0.0066 | 166 |
+| 101 (held-out) | 100% | 128 / 128 | 0.0074 | 166 |
+
+Protocol seeds 7/13/21: mean **99.2% ± 1.4** (509/512), `complete = true`.
+Because the task-level success criterion is `R > 0` at the final orbit
+(the environment's `terminal_reward` is the telescoping episode return),
+the 21-seed failures are exactly the replicas whose final `R` was non-positive.
+
+**Shipped single record.** `results/transfer/baseline.json` is the seed-13
+protocol record: 128 replicas, seed 13, 166 steps, **100% (128/128)**,
+mean episode return **0.0067**, `complete = true`.
+
+**Dataset B** (`results/transfer/baselines/gauss_tangential_seed7.json`,
+256 replicas, seed 7): **100% (256/256)**, mean episode return **0.0074**.
+
+**Per-episode physical accounting** (dataset B `task_metrics`, means over
+256 episodes): pericenter raise **0.134 km**, apocenter drift
+**0.0375 km**, propellant **1.17 × 10⁻⁴ kg**. The law therefore satisfies
+`R > 0` narrowly rather than driving the perigee toward the +20 km
+reference used by the Q-law arm; its one-step greedy gate coasts unless a
+burn's predicted objective gain exceeds the propellant price.
+
+The frozen controller audit (`docs/evaluation_protocol.md`, §2) lists the
+law as fully successful and frozen as the behavior-cloning data source for
+this task; the audit's separate per-scenario artifacts are not shipped.
 
 ## 6. Known limitations
 

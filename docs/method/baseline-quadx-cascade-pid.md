@@ -180,30 +180,48 @@ observation layout is in [env-quadx-waypoints.md](env-quadx-waypoints.md).
 ## 5. Measured performance
 
 All numbers below are from this repository on the GPU backend, calm air (no
-`results/quadx/config.json`, so the default env kwargs), seed 7, and the
-unbiased accounting of `scripts/baseline_eval.py`: one completed episode per
-replica, no in-flight episode dropped. The two classical arms were re-run back
-to back on the same machine; the learned arms are the unchanged shipped entries.
+`results/quadx/config.json`, so the default env kwargs), and the unbiased
+accounting of `scripts/baseline_eval.py`: one completed first episode per
+replica, no in-flight episode dropped. The only shipped quadx records are
+`baseline.json` (32 replicas / seed 7), `baseline_cascaded_pid.json` (512
+replicas / seed 7) and the dataset-B files under `results/quadx/baselines/`
+(256 replicas / seed 7); there is no 1024-replica artifact in the checkout.
 
-### 5.1 Official 1024-env comparison
+### 5.1 Shipped comparison records
 
-| Arm | Episodes | Success | Mean waypoints | Crash / OOB / timeout | Window | Mean return | Wall |
-|---|---|---|---|---|---|---|---|
-| SE(3) geometric (`baseline.json`) | 1025 | **100.0%** | 4.000 | 0 / 0 / 0 | 583 steps | 72.30 | 509 s |
-| Cascaded PID (`baseline_cascaded_pid.json`) | 1024 | **99.12%** | 3.991 | 0 / 0 / 9 | 800 steps | 72.53 | 629 s |
-| PPO (`train_quadx.py`, unchanged) | — | reuse shipped checkpoint with `scripts/eval.py quadx` | | | | | |
+| Arm | Replicas | Success | Crash / OOB / timeout | Window | Mean return |
+|---|---|---|---|---|---|
+| SE(3) geometric (`baseline.json`, seed 7) | 32 | 90.6% (29/32) | 0 / 0 / 3 | 800 steps | 66.09 |
+| Cascaded PID (`baseline_cascaded_pid.json`, seed 7) | 512 | **11.9%** (61/512) | 8.8% / 1.0% / 77.8% | 800 steps | 14.14 |
+| Cascaded PID (`baselines/cascaded_pid_seed7.json`, dataset B) | 256 | **99.2%** | 0 / 0 / 0.8% | 800 steps | 72.74 |
+| SE(3) geometric (`baselines/se3_geometric_seed7.json`, dataset B) | 256 | 100.0% | 0 / 0 / 0 | 648 steps | 72.86 |
+| SMC (`baselines/smc_seed7.json`, dataset B) | 256 | 100.0% | 0 / 0 / 0 | 557 steps | 72.86 |
 
-The cascade is 0.9 pp behind the geometric arm and reaches the same mean
-return. Its only failures are 9 timeouts (0.88%): those replicas chase a
-boundary waypoint, arrive just after the 20 s episode cap, and are counted as
-unsuccessful. There are **no crashes and no out-of-bounds terminations**, i.e.
-the direction/authority behaviour is sound and the residual gap is transit time,
+The 512-replica `baseline_cascaded_pid.json` is a **stale artifact** (77.8%
+timeouts, mean 0.75 of 4 waypoints reached) that predates the controller/plant
+fixes; the same controller on the current code reaches 99.2% at 256 replicas /
+seed 7. Do not quote the 11.9% figure as a current measurement. The earlier
+"official 1024-env" values (99.12%, mean 3.99/4, 9 timeouts) are not
+reproducible from the checkout and are withdrawn; §5.3 and §6 retain the
+tuning-sweep numbers recorded when the gains were chosen, but the corresponding
+`results/quadx/cascade_pid_tests.json` is not shipped.
+
+On the current code the cascade (dataset B, 256/seed 7) is 0.8 pp behind the
+geometric arm and reaches essentially the same mean return. Its only recorded
+failures are two timeouts (0.8%): those replicas chase a boundary waypoint,
+arrive just after the 20 s episode cap, and are counted as unsuccessful. There
+are **no crashes and no out-of-bounds terminations**, i.e. the
+direction/authority behaviour is sound and the residual gap is transit time,
 which is the expected price of the plain damped position PID without the SE(3)
-arm's velocity cap and feed-forward. Both files live in `results/quadx/`; the
-SE(3) window differs (583 vs 800 steps) only because the cascade run must wait
-for its timeouts.
+arm's velocity cap and feed-forward. The SE(3) dataset-B window differs (648 vs
+800 steps) only because the cascade run must wait for its timeouts.
 
 ### 5.2 Control-direction checks (`results/quadx/cascade_pid_tests.json`)
+
+`results/quadx/cascade_pid_tests.json` is produced by
+`environments/multirotor/test_quadx_cascade_pid.py` but is **not shipped** in
+the repository; the values below are the recorded harness output at tuning
+time. Re-run the harness to regenerate them.
 
 T0 starts from a settled level hover with zero velocity and reads one control
 call, so the collective comparison is not contaminated by the spawn fall step.
@@ -237,8 +255,9 @@ error drives the yaw rate negative toward the fixed reference.
 - **Single waypoint +y**, offset $(0,2.5,0.6)$ m (32 envs, 300 steps): final
   error mean 0.105 m, max **0.118 m**; travelled $(-0.000,+2.400,+0.573)$ m.
 - **Four waypoints**, 512 envs / seed 7 during tuning: success **99.41%**,
-  mean 3.994/4, 0 crashes, 0 OOB, 3 timeouts; official 1024-env row is in
-  §5.1.
+  mean 3.994/4, 0 crashes, 0 OOB, 3 timeouts (tuning record; the harness
+  artifact is not shipped). The current dataset-B record for this controller
+  is 99.2% at 256 envs / seed 7.
 
 
 ## 6. Tuning record
@@ -267,9 +286,9 @@ Narrative:
    deterministic, not noise).
 2. **$K_D=4.0$ (chosen).** $\zeta=1.15$; the damping term alone removes the
    overshoot. OOB falls to 0 and success rises to 99.4% at 512 envs; the
-   official 1024-env run is 99.12% with the 9 residual timeouts: those are slow
-   boundary transits, not divergences. This is the no-velocity-cap alternative
-   discussed in §7.
+   current dataset-B record is 99.2% at 256 envs with two residual timeouts:
+   those are slow boundary transits, not divergences. This is the
+   no-velocity-cap alternative discussed in §7.
 3. **$K_P=4.0$.** Stiffer proportional path re-introduces 16 OOB at 512 envs
    and lowers the return; rejected.
 4. **$A_{\max}=5.0$.** More acceleration authority does not help: it converts
@@ -324,13 +343,15 @@ Narrative:
   python scripts/baseline_eval.py quadx                       # SE(3), baseline.json
   python scripts/baseline_eval.py quadx --baseline cascaded_pid  # -> baseline_cascaded_pid.json
   ```
-  Both runs use 1024 envs, seed 7, the same env construction (including restored
-  `results/quadx/config.json` when present), the same reward and the same success accounting.
+  The script defaults to 1024 envs / seed 7; the shipped records used the
+  replica counts listed in §5.1, with the same env construction (including
+  restored `results/quadx/config.json` when present), the same reward and the
+  same success accounting.
 - **Tests.** `environments/multirotor/test_quadx_cascade_pid.py` runs the direction-sign
   checks, hover station keeping, +x/+y single-waypoint convergence and a 512-env
-  four-waypoint check; `--sweep` additionally runs the small gain sweep. The official
-  1024-env record is produced by `scripts/baseline_eval.py`. The harness writes
-  `results/quadx/cascade_pid_tests.json`.
+  four-waypoint check; `--sweep` additionally runs the small gain sweep. The
+  shipped records are produced by `scripts/baseline_eval.py`. The harness writes
+  `results/quadx/cascade_pid_tests.json` (not shipped).
 - **Fair-comparison commands.** The learned arms are the shipped entries, unchanged:
   ```bash
   python environments/multirotor/train_quadx.py     # ALGORITHM = 'ppo'
@@ -338,8 +359,9 @@ Narrative:
   python scripts/baseline_eval.py quadx             # SE(3)
   python scripts/baseline_eval.py quadx --baseline cascaded_pid
   ```
-  All four arms share the task, the 1024-env/seed-7 protocol, the reward and the
-  `4/4 waypoints < 0.2 m` success gate.
+  All four arms share the task, the reward and the
+  `4/4 waypoints < 0.2 m` success gate; when comparing, fix the replica count
+  and seed explicitly (the script defaults are 1024 / seed 7).
 
 ## 9. References
 

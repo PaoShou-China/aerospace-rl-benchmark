@@ -114,9 +114,9 @@ POLICY_HZ = 50
 def _body_tilt_from_quat(q_wxyz: Tensor) -> Tensor:
     """(N, 4) wxyz world quaternion → (N,) combined roll+pitch magnitude [rad]."""
     w, x, y, z = q_wxyz.unbind(-1)
-    # Euler roll = atan2(2(wy + zx), 1 - 2(y² + z²))
-    # Euler pitch = asin(2(xy - wz))
-    sinp = 2 * (x * y - w * z)
+    # Euler roll = atan2(2(wx + yz), 1 - 2(x² + y²))
+    # Euler pitch = asin(2(wy - xz))
+    sinp = 2 * (w * y - x * z)
     sinp = sinp.clamp(-1.0, 1.0)
     sinr_cosp = 2 * (w * x + y * z)
     cosr_cosp = 1 - 2 * (x * x + y * y)

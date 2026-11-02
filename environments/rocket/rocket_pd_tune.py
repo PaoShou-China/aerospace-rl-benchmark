@@ -1,9 +1,11 @@
 """Rocket PD-landing baseline: gain-selection scenario for RocketPDLandingBaseline.
 
 The PD law's constants are chosen HERE, on tuning seeds, and only the frozen
-winner is re-evaluated on the official harness (scripts/baseline_eval.py,
-256 envs, seed 7 -> results/rocket/baseline_pd_landing.json).  One candidate
-per run: a 128-replica batch, one episode per replica (1900 steps), calm air,
+winner is re-evaluated on the official harness (scripts/baseline_eval.py
+rocket --baseline pd_landing; the shipped record is
+results/rocket/baselines/pd_landing_seed7.json, 256 envs / seed 7).  One
+candidate per run: a 128-replica batch, one episode per replica (1900-step
+safety cap over the env's 1200-step 30 s horizon), calm air,
 spawn ICs = the env's own begin_reset distribution (xy +/-20 m, z 400-450,
 vz -100 m/s, euler +/-0.3 rad) -- no per-initial-state hand adjustment.
 
@@ -37,7 +39,7 @@ from environments.rocket import RocketLandingEnv  # noqa: E402
 from algorithms.baselines.baselines import RocketPDLandingBaseline  # noqa: E402
 
 NUM_ENVS = 128
-STEPS = 1900  # 30 s episode + margin, one episode/replica
+STEPS = 1900  # safety cap over the env's 1200-step 30 s horizon, one episode/replica
 SEED = 101  # tuning seed, DISTINCT from eval seed 7
 OUT = _ROOT / "results" / "rocket_pd_tune"
 

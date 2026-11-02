@@ -56,9 +56,6 @@ NUM_ENVS = 1024
 UPDATES = 2000
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
-OUT_DIR = "results/rocket_ppo"  # separate from results/rocket, which holds
-# the classical-baseline eval records (baseline.json /
-# baseline_pd_landing.json)
 RESUME = False  # upstream-aligned task rewrite (2026-10-20): old
 # checkpoints belong to the dropped staged task, and
 # the action box changed (ignition/throttle in [0,1]),
@@ -73,8 +70,13 @@ WIND = dict(steady_wind=None, dryden=0.0, severity="moderate")
 # Rocket benchmark version:
 #   'v2' (default, current Falcon9): 7-dim finlet mixer (finlet x/y/yaw, ignition, throttle, 2 gimbals),  # noqa: E501
 #     40 Hz, rocket_v2.urdf with 6 spherical footpads, ever_stable_2s primary metric
-#   'v1' (external benchmark): 7-dim finlet mixer, 60 Hz default, rocket.urdf (no footpads), ever_success primary metric  # noqa: E501
-BENCHMARK_VERSION = "v2"  # 'v2' (Falcon9 current) | 'v1' (external benchmark)
+#   'v1' (real-scale): single-Merlin terminal landing, dual-tank variable mass, 60 s horizon
+BENCHMARK_VERSION = "v2"  # 'v2' (scaled legacy) | 'v1' (real-scale F9)
+# separate from results/rocket, which holds the classical-baseline eval
+# records (baseline.json / baseline_pd_landing.json)
+OUT_DIR = (
+    "results/rocket_v1_ppo" if BENCHMARK_VERSION == "v1" else "results/rocket_ppo"
+)
 # reward (2026-10-22): the redesigned shaping (impact-speed potential, off-axis
 # cost, first-touch bonus, success +100) is now the env's ONLY implementation --
 # the verbatim-upstream arm was deleted from rocket/env.py after the
@@ -88,12 +90,17 @@ BENCHMARK_VERSION = "v2"  # 'v2' (Falcon9 current) | 'v1' (external benchmark)
 class _JsonStd(list):
     """Per-dim init std as a JSON-serializable list that rsl_rl still accepts.
 
-    rsl_rl GaussianDistribution computes `init_std * torch.ones(output_dim)`,
-    which requires a tensor (a plain list crashes there), but run_training
-    dumps its config to config.json with json.dumps, which crashes on a
-    tensor ("Object of type Tensor is not JSON serializable", measured at the
-    END of a full 1000-iter run 2026-10-20 -- the training itself completed).
+    Only relevant to the optional Gaussian policy: rsl_rl
+    GaussianDistribution computes `init_std * torch.ones(output_dim)`, which
+    requires a tensor (a plain list crashes there), but run_training dumps its
+    config to config.json with json.dumps, which crashes on a tensor
+    ("Object of type Tensor is not JSON serializable", measured at the END of
+    a full 1000-iter run 2026-10-20 -- the training itself completed).
     This list subclass converts on multiply, satisfying both.
+
+    The default policy is BetaDistribution (bounded, rescaled to `[-1, 1]`),
+    which has no `init_std` knob at all: INIT_STD below is inert unless a
+    caller switches `distribution="gaussian"`.
     """
 
     def __mul__(self, other):
@@ -104,11 +111,14 @@ class _JsonStd(list):
 
 # Per-dim init_std for the unified 7-dim finlet convention:
 #   [finlet_x, finlet_y, finlet_yaw, ignition, throttle, gimbal_x, gimbal_y]
+# Historical (Gaussian-policy era): the default BetaDistribution ignores
+# init_std, so this vector is inert in shipped runs; it only takes effect if
+# a caller passes distribution="gaussian" to build_cfg.
 # Same rationale as before: 0.2 on ignition/throttle (exploration-critical),
 # 0.05 on finlets/gimbals (attitude reflex is dense-reward, no exploration).
 INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 # Task-specific per-dim exploration std (documented deviation from the shared
-# scalar 0.5 default). Rationale (measured 2026-10-20):
+# scalar 0.5 default; Gaussian-policy-only, measured 2026-10-20):
 #   * a scalar 0.2 kept the ignition/depth exploration alive but the fin/gimbal
 #     noise alone tumbling the booster in free-fall: PD-feasibility sweep showed
 #     zero-mean sigma=0.2 fin noise drives omega^2 to 1.65 rad^2/s^2 (a trivial

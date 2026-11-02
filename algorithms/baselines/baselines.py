@@ -461,7 +461,7 @@ class Baseline:
         """
         if name in self.design:
             return self.design[name]
-        return getattr(type(self), name) if default is None else default
+        return getattr(self, name) if default is None else default
 
     @staticmethod
     def _clamp(x, lo, hi):
@@ -1736,6 +1736,22 @@ class RocketPDGBaseline(Baseline):
 
     def __init__(self, env, design=None):
         super().__init__(env, design)
+        if getattr(env, "f9_real", False):
+            self.M_DRY = 25600.0
+            self.T_MAX = 845000.0
+            self.MIN_RATIO = 0.57
+            self.REST_Z = 0.65
+            self.FIN_K = 45.0
+            self.FIN_YAW_K = 30.0
+            self.AERO_K = 400.0
+            self.V_TOUCH = 1.0
+            self.S_GATE = 60.0
+            self.H_VIRT = 0.0
+            self.S_PULSE = 0.0
+            self.H_PULSE = 0.0
+            self.KP_T = 4.0e6
+            self.KD_T = 4.0e6
+            self.KD_Z = 2000.0
         # tunable gains as instance attributes.  Several gains are indexed with
         # ``[:, None]`` inside ``actions`` (they support per-env scheduling), so
         # scalar defaults must be promoted to a (num_envs,) tensor here.
@@ -1757,13 +1773,22 @@ class RocketPDGBaseline(Baseline):
         # by the test entry): max-thrust saturation, engine-off coasting,
         # ignition toggles, guidance demand above authority, t_go floor hits
         z = torch.zeros(self.num_envs, device=d, dtype=f64)
+        self.touchdown = torch.zeros(self.num_envs, device=d, dtype=torch.bool)
         self.diag = {
             k: z.clone()
             for k in ("steps", "sat_max", "coast", "ignitions", "infeasible", "floor", "fin_sat")
         }
+        self._f9_controller = RocketPDLandingBaseline(env, design=design) if self.M_DRY > 1000.0 else None
+
+    def reset_idx(self, mask):
+        self.touchdown.masked_fill_(mask, False)
+        if self._f9_controller is not None:
+            self._f9_controller.reset_idx(mask)
 
     @torch.no_grad()
     def actions(self, obs):
+        if self._f9_controller is not None:
+            return self._f9_controller.actions(obs)
         o = _vec(obs).to(torch.float64)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         # aux tail: [13:20] 7-dim action echo, [20:24] FOUR finlet actuation
@@ -1796,6 +1821,12 @@ class RocketPDGBaseline(Baseline):
         # free-fall while descending, which is how the earliest builds crashed).
         zem = self.rf - p - v_w * t_go[:, None]
         a_cmd = 6.0 * zem / t_go.square()[:, None] - 2.0 * v_w / t_go[:, None]
+        if self.M_DRY > 1000.0:
+            h_guide = (p[:, 2] - self.REST_Z).clamp_min(0.1)
+            v_ref = -torch.minimum(torch.full_like(h_guide, 30.0), 0.5 * h_guide)
+            v_ref = torch.minimum(v_ref, torch.full_like(v_ref, -1.0))
+            a_profile = 3.0 * (v_ref - v_w[:, 2]) + self.G
+            a_cmd = torch.cat((torch.zeros_like(p[:, :2]), (a_profile - self.G)[:, None]), -1)
         a_vert = (a_cmd[:, 2] + self.G).clamp_min(0.0)
         lat_cap = self._clamp(self.LAT_TILT * a_vert, 1.0, self.A_LAT_MAX)[:, None]
         a_cmd = torch.cat((a_cmd[:, :2].clamp(-lat_cap, lat_cap), a_cmd[:, 2:]), -1)
@@ -1833,7 +1864,7 @@ class RocketPDGBaseline(Baseline):
         # engine off for the settle phase.
         pad_c = o[:, 29] > 0.5
         h_agl = (p[:, 2] - self.REST_Z).clamp_min(0.0)
-        endg = (s < self.S_GATE) & (h_agl > 0.0)
+        endg = (s < self.S_GATE) & (h_agl > 0.0) & (self.M_DRY < 1000.0)
         a_min = (self.MIN_RATIO * self.T_MAX / m - self.G).clamp_min(0.5)
         A_END = a_min + self.EPS_END
         h_v = (h_agl - self.H_VIRT).clamp_min(0.05)
@@ -1845,6 +1876,8 @@ class RocketPDGBaseline(Baseline):
         self.diag["infeasible"] += (endg & ~pulse & (m * a_req > self.T_MAX)).to(torch.float64)
         T_min = self.MIN_RATIO * self.T_MAX
         a_lat_end = -1.5 * v_w[:, :2] - (p[:, :2] - self.rf[:2])
+        if self.M_DRY > 1000.0:
+            a_lat_end = torch.zeros_like(a_lat_end)
         lat_end_cap = self._clamp(self.LAT_TILT * a_vert_end, 1.0, self.A_LAT_MAX)
         # pulse phase: damp LATERAL VELOCITY only, never chase position, and
         # with a tight cap.  The fins are dead below ~2 m/s (force ~ V^2) and
@@ -1889,6 +1922,10 @@ class RocketPDGBaseline(Baseline):
         # catcher.  A hard cut-after-touchdown latch removes that catch and
         # turns the rebound into a fatal re-contact (probed: 1.36 m/s).
         ign = torch.where(endg, ign_end, ign_mid) & ~pad_c
+        if self.M_DRY > 1000.0:
+            self.touchdown |= pad_c
+            h_agl = (p[:, 2] - self.REST_Z).clamp_min(0.0)
+            ign = torch.where(endg, ign_end, ign_mid) & (h_agl > 0.5) & ~self.touchdown
         self.diag["ignitions"] += (ign & ~ignited_obs).to(torch.float64)
         self.diag["coast"] += (~ign).to(torch.float64)
         T_cmd = torch.where(endg, T_end, T_cmd)
@@ -1922,11 +1959,23 @@ class RocketPDGBaseline(Baseline):
         flow = -v_w / Vn[:, None]  # retrograde axis (world)
         f_b = torch.einsum("nji,nj->ni", R, flow)  # ...in body frame
         e_flow = torch.stack((-f_b[:, 1], f_b[:, 0], torch.zeros_like(f_b[:, 0])), -1)
-        cm_z = (47.0 * -2.0 + 0.2 * 2.051) / m  # fueltank sits at z=0
-        z_fin = 2.051 - cm_z
-        h = 2.0 + cm_z  # booster lever below CM
+        if self.M_DRY > 1000.0:
+            prop = fuel * self.FUEL_FULL
+            m_lox = prop * (287400.0 / 410900.0)
+            m_rp1 = prop - m_lox
+            z_lox = 16.0 + 0.5 * m_lox / (1220.0 * 9.9)
+            z_rp1 = 1.6 + 0.5 * m_rp1 / (833.0 * 9.9)
+            cm_z = (25600.0 * 12.4 + m_lox * z_lox + m_rp1 * z_rp1) / m
+            z_fin = 45.0 - cm_z
+            h = 0.5 + cm_z
+        else:
+            cm_z = (47.0 * -2.0 + 0.2 * 2.051) / m  # fueltank sits at z=0
+            z_fin = 2.051 - cm_z
+            h = 2.0 + cm_z  # booster lever below CM
         ff_cap = (0.95 * self.FIN_K * z_fin * V2)[:, None]
         tau_ff = ((self.AERO_K * V2)[:, None] * e_flow).clamp(-ff_cap, ff_cap)
+        if self.M_DRY > 1000.0:
+            tau_ff = torch.zeros_like(tau_ff)
 
         # ---- attitude PD (tilt tracking + spin damping, yaw free)
         tau_cmd = torch.cat(
@@ -1988,8 +2037,12 @@ class RocketPDGBaseline(Baseline):
             "nji,nj->ni", R, torch.cat((a_fin_w, torch.zeros_like(a_fin_w[:, :1])), -1)
         )[:, :2]
         d_fin = a_fin_b * (m / (self.FIN_K * V2).clamp_min(1e-9))[:, None]
+        if self.M_DRY > 1000.0:
+            d_fin = torch.zeros_like(d_fin)
         tau_coup = torch.stack((-a_fin_b[:, 1], a_fin_b[:, 0], torch.zeros_like(a_fin_b[:, 0])), -1)
         tau_coup = tau_coup * (m * z_fin)[:, None]
+        if self.M_DRY > 1000.0:
+            tau_coup = torch.zeros_like(tau_coup)
         tau_cmd = tau_cmd + torch.where(ign[:, None], -tau_coup, torch.zeros_like(tau_coup))
 
         # ---- torque allocation by ceiling: fast TVC first, fins for the rest.
@@ -2135,12 +2188,30 @@ class RocketPDLandingBaseline(Baseline):
 
     def __init__(self, env, design=None):
         super().__init__(env, design=design)
+        if getattr(env, "f9_real", False):
+            self.M_DRY = 25600.0
+            self.T_MAX = 845000.0
+            self.MIN_RATIO = 0.57
+            self.REST_Z = 0.65
+            self.FIN_K = 45.0
+            self.FIN_YAW_K = 30.0
+            self.KP_XY = 0.0
+            self.KD_XY = 0.0
+            self.V_MAX = 30.0
+            self.BRAKE_FRAC = 0.5
+            self.M_ON = 100.0
+            self.H_TERM = 0.0
+            self.V_BAND = 0.3
+            self.KP_ATT = 4.0e6
+            self.KD_ATT = 4.0e6
+            self.KD_YAW = 2000.0
         d = self.device
         f64 = torch.float64
         self.ez = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=f64)
         # started: edge latch for the braking-distance ignition switch (cleared
         # by reset_idx, mirroring the env)
         self.started = torch.zeros(self.num_envs, device=d, dtype=torch.bool)
+        self.touchdown = torch.zeros(self.num_envs, device=d, dtype=torch.bool)
         z = torch.zeros(self.num_envs, device=d, dtype=f64)
         self.diag = {
             k: z.clone()
@@ -2158,6 +2229,7 @@ class RocketPDLandingBaseline(Baseline):
 
     def reset_idx(self, mask):
         self.started.masked_fill_(mask, False)
+        self.touchdown.masked_fill_(mask, False)
 
     @torch.no_grad()
     def actions(self, obs):
@@ -2176,6 +2248,8 @@ class RocketPDLandingBaseline(Baseline):
 
         # ---- 2. height-scheduled descent speed + vertical velocity feedback
         v_ref = -torch.minimum(torch.full_like(h, self.V_MAX), self.K_H * h)
+        if self.M_DRY > 1000.0:
+            v_ref = torch.minimum(v_ref, torch.full_like(v_ref, -1.0))
         a_z = self.KV_Z * (v_ref - v_w[:, 2])
         f_z = a_z + self.G  # specific force along world +z
         f_z_att = f_z.clamp_min(self.G)  # attitude reference stays upright
@@ -2219,6 +2293,9 @@ class RocketPDLandingBaseline(Baseline):
         # the 1.0 m/s pre-contact budget -- a hard cut-after-touchdown latch
         # turns the rebound into an uncaught fatal re-contact.
         ign &= ~pad_c
+        if self.M_DRY > 1000.0:
+            self.touchdown |= pad_c
+            ign &= (h > 0.5) & ~self.touchdown
         self.started |= ign
         n_on = ign.sum().to(torch.float64)
         self.diag["ignitions"] += (ign & ~ignited_obs).to(torch.float64).sum()
@@ -2262,9 +2339,19 @@ class RocketPDLandingBaseline(Baseline):
 
         # ---- torque allocation with fixed physical gains (TVC first, fins rest)
         V2 = vb.square().sum(-1)
-        cm_z = (47.0 * -2.0 + 0.2 * 2.051) / m
-        z_fin = 2.051 - cm_z
-        lever = 2.0 + cm_z
+        if self.M_DRY > 1000.0:
+            prop = fuel * self.FUEL_FULL
+            m_lox = prop * (287400.0 / 410900.0)
+            m_rp1 = prop - m_lox
+            z_lox = 16.0 + 0.5 * m_lox / (1220.0 * 9.9)
+            z_rp1 = 1.6 + 0.5 * m_rp1 / (833.0 * 9.9)
+            cm_z = (25600.0 * 12.4 + m_lox * z_lox + m_rp1 * z_rp1) / m
+            z_fin = 45.0 - cm_z
+            lever = 0.5 + cm_z
+        else:
+            cm_z = (47.0 * -2.0 + 0.2 * 2.051) / m
+            z_fin = 2.051 - cm_z
+            lever = 2.0 + cm_z
         k_gim = (lever * T_cmd * self.GIMBAL_RAD).clamp_min(1e-9)
         k_fin = (self.FIN_K * z_fin * V2).clamp_min(1e-9)
         k_yaw = (self.FIN_YAW_K * V2).clamp_min(1e-9)

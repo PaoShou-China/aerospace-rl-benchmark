@@ -110,7 +110,9 @@ $\text{success rate}+0.5\cdot\text{visible fraction}-0.2\cdot\text{track error}$
 track error). The selected values are written to `results/quadx_track/kf_tuning.json` and frozen as the
 class defaults used in the reported evaluation.
 
-**Tuning result (seed 101, 256 episodes per combination, `results/quadx_track/kf_tuning.json`).**
+**Tuning result (seed 101, 256 episodes per combination; the harness writes
+`results/quadx_track/kf_tuning.json`, which is not shipped in the repository,
+so the table below is the recorded tuning output).**
 
 | $\sigma_a$ | $K_X$ | $K_V$ | success | visible frac. | track error [m] | score |
 |---|---|---|---|---|---|---|
@@ -128,28 +130,32 @@ same constants are used for every reported episode.
 
 ## 6. Measured performance
 
-Reported evaluation: `scripts/baseline_eval.py quadx_track`, 1024 replicas, seed 7, GPU, one full 30 s
-episode per replica (`results/quadx_track/baseline.json`). The controller saw only the public
-observation — the same 25-D vector, zero placeholder and visibility flag the learned policies receive.
+Protocol dataset B: `results/quadx_track/baselines/cv_kf_pid_seed7.json`
+(256 replicas, seed 7, one full 1200-step 30 s episode per replica). The
+controller saw only the public observation — the same 25-D vector, zero
+placeholder and visibility flag the learned policies receive. Protocol dataset
+A (128 replicas × seeds 7/13/21/101) gives 89.1 / 85.9 / 82.8 / 82.0%, mean
+85.9±3.1%; the shipped `results/quadx_track/baseline.json` is the seed-21
+member of that set (82.8%). The table below is the seed-7 dataset-B record.
 
 | Metric | Value |
 |---|---|
-| Success rate (visible fraction ≥ 0.85, no crash) | 0.851 (871/1024 episodes) |
-| Visible-time fraction | 0.923 |
-| Lost time per episode | 2.31 s |
-| Longest dropout | 2.16 s |
-| Mean standoff tracking error (visible steps) | 0.266 m |
+| Success rate (visible fraction ≥ 0.85, no crash) | 0.8516 (218/256 first episodes) |
+| Visible-time fraction | 0.9219 |
+| Lost time per episode | 2.343 s |
+| Longest dropout | 2.187 s |
+| Mean standoff tracking error (visible steps) | 0.2626 m |
 | Collision rate (ground contact) | 0.000 |
 | Out-of-bounds rate | 0.000 |
-| Time-limit rate without success | 0.149 |
-| Flight distance per episode | 24.17 m |
-| Loss-cause steps per episode (FOV / range / occlusion) | 31.2 / 0.0 / 61.3 |
-| Mean episode return | 85.9 |
+| Time-limit rate without success | 0.1484 |
+| Flight distance per episode | 23.80 m |
+| Loss-cause steps per episode (FOV / range / occlusion) | 28.1 / 0.0 / 65.6 |
+| Mean episode return | 85.68 |
 
 Reading: the baseline keeps the target visible 92% of the 30 s episode and holds the fixed 1.5 m
-standoff to 0.27 m RMS. All losses are geometric — the target leaves the footprint (FOV, 31 steps) or
-passes behind a static occluder (61 steps); the range window never fails, because the fixed 6 m altitude
-keeps the slant range near 6 m. The longest dropout (2.16 s) stays below the 3 s hold timeout, so the
+standoff to 0.26 m RMS. All losses are geometric — the target leaves the footprint (FOV, 28 steps) or
+passes behind a static occluder (66 steps); the range window never fails, because the fixed 6 m altitude
+keeps the slant range near 6 m. The longest dropout (2.19 s) stays below the 3 s hold timeout, so the
 frozen-hold rule never fires in the reported run; the 15% of episodes that miss the 0.85 success bar do
 so by losing slightly more than 4.5 s of visibility, not by crashing.
 
@@ -170,8 +176,8 @@ so by losing slightly more than 4.5 s of visibility, not by crashing.
 
 - Controller: `algorithms/baselines/baselines.py`, class `QuadXTrackKFBaseline` (`name='cv_kf_pid'`),
   registered in `BUILDERS['quadx_track']`; exposed by `QuadXTrackEnv.conventional_controller`.
-- Evaluation: `scripts/baseline_eval.py quadx_track` (artifact `results/quadx_track/baseline.json`).
-- Tuning: `environments/multirotor/eval_quadx_track_kf.py` (artifact `results/quadx_track/kf_tuning.json`).
+- Evaluation: `scripts/baseline_eval.py quadx_track` (artifact `results/quadx_track/baseline.json`, seed 21 / 128 replicas); dataset-B record `results/quadx_track/baselines/cv_kf_pid_seed7.json` (seed 7 / 256 replicas).
+- Tuning: `environments/multirotor/eval_quadx_track_kf.py` (writes `results/quadx_track/kf_tuning.json`, not shipped).
 - Environment: `docs/method/env-quadx-track.md` (camera model, target schedule, reward, metrics).
 
 ## 9. References

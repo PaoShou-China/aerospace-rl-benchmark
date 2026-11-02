@@ -142,8 +142,14 @@ Cumulative clipped-command fractions (total thrust, per-rotor, rate) are accumul
 
 | Protocol | Source | Result |
 |---|---|---|
-| Official `baseline_eval` protocol (1024 envs, seed 7), aggregate reference | root `README.md` table | 100% success over 5120 episodes |
-| `scripts/baseline_eval.py quadx` (1024 envs, seed 7, one full episode per replica, no selection bias) | `results/quadx/baseline.json` | 1024/1024 episodes successful (success rate 1.0), mean episode return 70.91, 523 env steps, 57.07 s wall |
+| Protocol dataset A (128 replicas × seeds 7/13/21/101, one first episode per replica) | `results/baseline_protocol/seed*/quadx/baseline.json` | seeds 100.0 / 100.0 / 99.2 / 100.0%; mean 99.7±0.5% over 384 episodes |
+| Protocol dataset B (256 replicas, seed 7) | `results/quadx/baselines/se3_geometric_seed7.json` | 100% success, mean episode return 72.86 |
+| `scripts/baseline_eval.py quadx` with this checkout's shipped record (32 envs, seed 7, 800-step window) | `results/quadx/baseline.json` | 29/32 first episodes successful (success rate 0.906), mean episode return 66.09, `complete = true` |
+
+The shipped `results/quadx/baseline.json` is a 32-replica smoke-scale record, not
+a 1024-replica run; the 99.7% figure is the four-seed protocol dataset A.
+Older 1024-env numbers (e.g. 1024/1024, return 70.91, 523 steps) are not
+reproducible from the current checkout and are withdrawn.
 
 The functional test suite `environments/multirotor/test_quadx_se3.py` certifies (failures raise): exact
 wrench→rotor allocation without simulation (T0); $\ge 0.90$ benchmark waypoint success across batch sizes

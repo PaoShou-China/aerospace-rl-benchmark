@@ -7,7 +7,7 @@
        STAGE_LEN=41.2 m, INTERSTAGE_LEN=6.5 m, DIA=3.66 m
        Masses: community estimates (dry 25,600 kg incl. legs + fins)
        Inertias: derived from geometry + material density
-       Dry total (incl. all links below) = 24,700 kg (close to target 25,600) -->
+       Dry total (incl. all links below) = 25,600 kg (public community estimate) -->
 
   <!-- ============= base_link (root) ============= -->
   <!-- NOTE: collision REMOVED — only leg spheres are contact shapes.
@@ -21,7 +21,7 @@
     </visual>
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
-      <mass value="1000.0"/>
+      <mass value="2900.0"/>
       <inertia ixx="2000" ixy="0" ixz="0" iyy="2000" iyz="0" izz="1500"/>
     </inertial>
   </link>
@@ -66,11 +66,11 @@
   <!-- ============= interstage — visual only, NO collision ============= -->
   <link name="interstage">
     <visual>
-      <origin rpy="0 0 0" xyz="0 0 38.45"/>
+      <origin rpy="0 0 0" xyz="0 0 3.25"/>
       <geometry><cylinder radius="1.75" length="6.5"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 0 38.45"/>
+      <origin rpy="0 0 0" xyz="0 0 3.25"/>
       <mass value="4000.0"/>
       <inertia ixx="5.0e5" ixy="0" ixz="0" iyy="5.0e5" iyz="0" izz="3.0e4"/>
     </inertial>
@@ -122,21 +122,20 @@
   </joint>
 
   <!-- ============= Landing legs (4, at 90 deg) ============= -->
-  <!-- Leg spheres: positioned at z=0 from leg joint (i.e. body origin z=0) so
-       they catch the rocket immediately when the body settles to z=0.4 m (sphere r).
-       Previously at z=-2.7 m below body → rocket free-fell 2.7 m extra → impact 30+ m/s.
-       Radius=0.5 m (upscaled from 0.4) for realistic Falcon 9 footpad size. -->
+  <!-- Four deployed footpads on an 18 m diameter footprint. Each link joint
+       starts at the 1.83 m body radius and each foot center is 7.17 m farther
+       outboard, giving a 9 m radial support location. -->
   <link name="leg_1">
     <visual>
-      <origin rpy="0 0 0" xyz="6.0 0 -0.5"/>
+      <origin rpy="0 0 0" xyz="7.17 0 -0.5"/>
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="6.0 0 0.0"/>
+      <origin rpy="0 0 0" xyz="7.17 0 0.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
-      <origin rpy="0 0 0" xyz="6.0 0 -1.5"/>
+      <origin rpy="0 0 0" xyz="7.17 0 -1.5"/>
       <mass value="600.0"/>
       <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
     </inertial>
@@ -149,15 +148,15 @@
 
   <link name="leg_2">
     <visual>
-      <origin rpy="0 0 0" xyz="0 6.0 -0.5"/>
+      <origin rpy="0 0 0" xyz="0 7.17 -0.5"/>
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="0 6.0 0.0"/>
+      <origin rpy="0 0 0" xyz="0 7.17 0.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 6.0 -1.5"/>
+      <origin rpy="0 0 0" xyz="0 7.17 -1.5"/>
       <mass value="600.0"/>
       <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
     </inertial>
@@ -170,15 +169,15 @@
 
   <link name="leg_3">
     <visual>
-      <origin rpy="0 0 0" xyz="-6.0 0 -0.5"/>
+      <origin rpy="0 0 0" xyz="-7.17 0 -0.5"/>
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="-6.0 0 0.0"/>
+      <origin rpy="0 0 0" xyz="-7.17 0 0.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
-      <origin rpy="0 0 0" xyz="-6.0 0 -1.5"/>
+      <origin rpy="0 0 0" xyz="-7.17 0 -1.5"/>
       <mass value="600.0"/>
       <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
     </inertial>
@@ -191,15 +190,15 @@
 
   <link name="leg_4">
     <visual>
-      <origin rpy="0 0 0" xyz="0 -6.0 -0.5"/>
+      <origin rpy="0 0 0" xyz="0 -7.17 -0.5"/>
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="0 -6.0 0.0"/>
+      <origin rpy="0 0 0" xyz="0 -7.17 0.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 -6.0 -1.5"/>
+      <origin rpy="0 0 0" xyz="0 -7.17 -1.5"/>
       <mass value="600.0"/>
       <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
     </inertial>
@@ -213,11 +212,11 @@
   <!-- ============= Grid fins (4, at z=45 m, 45 deg spacing) ============= -->
   <link name="fin_pos_x">
     <visual>
-      <origin rpy="0 0 0" xyz="1.83 0 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry><box size="3.0 0.05 1.0"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="1.83 0 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="200.0"/>
       <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
     </inertial>
@@ -230,11 +229,11 @@
 
   <link name="fin_neg_x">
     <visual>
-      <origin rpy="0 0 0" xyz="-1.83 0 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry><box size="3.0 0.05 1.0"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="-1.83 0 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="200.0"/>
       <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
     </inertial>
@@ -247,11 +246,11 @@
 
   <link name="fin_pos_y">
     <visual>
-      <origin rpy="0 0 0" xyz="0 1.83 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry><box size="0.05 3.0 1.0"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 1.83 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="200.0"/>
       <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
     </inertial>
@@ -264,11 +263,11 @@
 
   <link name="fin_neg_y">
     <visual>
-      <origin rpy="0 0 0" xyz="0 -1.83 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry><box size="0.05 3.0 1.0"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 -1.83 45.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="200.0"/>
       <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000"/>
     </inertial>
@@ -282,11 +281,11 @@
   <!-- ============= RCS ring mount ============= -->
   <link name="rcs_ring">
     <visual>
-      <origin rpy="0 0 0" xyz="0 0 40.5"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry><cylinder radius="1.83" length="0.1"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 0 40.5"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="500.0"/>
       <inertia ixx="5000" ixy="0" ixz="0" iyy="5000" iyz="0" izz="5000"/>
     </inertial>
@@ -300,11 +299,11 @@
   <!-- ============= Engine exit flame (visual only) ============= -->
   <link name="flame">
     <visual>
-      <origin rpy="0 0 0" xyz="0 0 -3.5"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry><sphere radius="0.01"/></geometry>
     </visual>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 0 -3.5"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="0.01"/>
       <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
     </inertial>

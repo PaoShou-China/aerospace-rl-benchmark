@@ -169,17 +169,21 @@ before the official seed-7 evaluation; see §6 for the selected values.
 ## 5. Implementation and registration
 
 - Controller: `algorithms/baselines/baselines.py`, class
-  `TransferQLawBaseline`, registry entry
+  `TransferQLawBaseline` (`name = 'q_law_petropoulos'`), registry entry
   `BASELINE_VARIANTS['transfer']['q_law']`; built via
   `build_baseline('transfer', env, variant='q_law')`.
 - Evaluation: `scripts/baseline_eval.py transfer --baseline q_law`
-  (same official protocol as every baseline: 1024 envs, seed 7,
-  unbiased one-episode-per-replica statistics; report written to
-  `results/transfer/baseline_q_law_petropoulos.json` with the full
-  controller `config()`).
+  (first episode per replica; the shipped artifact is
+  `results/transfer/baselines/q_law_petropoulos_seed7.json`, 256 replicas,
+  seed 7, 166 steps, with the full controller `config()`). The
+  `--baseline` key (`q_law`) and the class `name`
+  (`q_law_petropoulos`) differ; `baseline_eval.py` names the output file
+  from the class `name`, i.e. `baseline_q_law_petropoulos.json` in the
+  default output directory. **That 1024-replica harness file is not
+  shipped**; only the 256-replica dataset-B JSON is in the checkout.
 - Verification / tuning / comparison harness:
   `environments/satellite/orbit_transfer/eval_transfer_qlaw.py`
-  (self-contained, no CLI):
+  (self-contained, no CLI; `OFFICIAL_ENVS = 1024`, `TUNE_ENVS = 512`):
 
   - `phase_a()` — small-thrust correctness (7 checks, all at or near
     machine precision unless noted):
@@ -198,11 +202,17 @@ before the official seed-7 evaluation; see §6 for the selected values.
     A5 $Q$ never increases along a burn;
     A6 grid $\dot a_{xx}$ vs the analytic Eq. (3).
   - `phase_b()` — tuning grid over (`RP_RAISE`, $W_e$, $\eta_{\min}$)
-    on seeds 13/21.
-  - `phase_c()` — official-protocol evaluation of the frozen law.
+    on seeds 13/21 (512 replicas per cell, 27 cells).
+  - `phase_c()` — official-protocol evaluation of the frozen law
+    (1024 replicas by default).
   - `phase_d()` — three-way comparison Gauss / Q-law / PPO
     with per-arm success rate, terminal R, perigee gain, apogee drift,
     propellant, $\Delta v$ and burn duty.
+
+  The harness writes `results/transfer/qlaw_report.json` and
+  `results/transfer/comparison.json`; **neither file is shipped**, so the
+  phase-B/phase-D numbers below are run-time records, not re-verifiable
+  artifacts.
 
 ## 6. Measured performance
 
@@ -219,7 +229,7 @@ magnitude error 5.3% / 6.0%, first-order prediction vs the 300 s
 nonlinear step); A5 zero $Q$-increasing steps along the burn; A6 grid
 $\dot a_{xx}$ vs Eq. (3): $3.7\times10^{-16}$.
 
-**Tuning (`phase_b()`, seeds 13/21, 512 envs, 27-point grid).**
+**Tuning (`phase_b()`, seeds 13/21, 512 envs, 27-point grid; harness record, not shipped).**
 Selection rule: max mean terminal R, tie-break $|\Delta r_a|$, then
 propellant. Selected $(\texttt{RP\_RAISE}, W_e, \eta_{\min}) =
 (20\,\mathrm{km}, 1.0, 0.1)$ with $R=1.1510$, 100% success,
@@ -231,29 +241,39 @@ $|\Delta r_a|$ drift to 8-11 km (R $\le 0.12$); $\eta_{\min}=0.3$
 starves the burn (duty 0.74, $\Delta r_p$ short of target). The tuned
 values coincide with the shipped class constants — no further change.
 
-**Official evaluation (seed 7, 1024 envs, one episode per replica).**
+**Shipped dataset B (seed 7, 256 replicas, one episode per replica).**
+`results/transfer/baselines/gauss_tangential_seed7.json` and
+`results/transfer/baselines/q_law_petropoulos_seed7.json`, both
+`complete = true`:
 
-| Arm | success | terminal R | $\Delta r_p$ | $|\Delta r_a|$ | propellant | burn duty |
-|---|---|---|---|---|---|---|
-| Gauss greedy | 100% | 0.8274 | 10.69 km | 0.197 km | 0.0111 kg | — |
-| **Q-law (this)** | **100%** | **1.1524** | **15.52 km** | **0.160 km** | 0.0192 kg | 0.985 |
+| Arm | success | mean terminal R | $\Delta r_p$ | $|\Delta r_a|$ | propellant |
+|---|---|---:|---:|---:|---:|
+| Gauss greedy | 100% (256/256) | 0.0074 | 0.134 km | 0.0375 km | $1.17\times10^{-4}$ kg |
+| **Q-law (this)** | **100% (256/256)** | **1.1523** | **15.524 km** | **0.161 km** | 0.0192 kg |
 
-(Reports: `results/transfer/baseline.json`,
-`results/transfer/baseline_q_law_petropoulos.json`; Gauss arm
-re-measured here. Q-law also integrates $\Delta v$ harness-side:
-4.91 m/s per episode.) Against the same-seed tuning result (R 1.1510)
-the official score 1.1524 shows no tuning-set overfit. Q-law buys a
-45% larger perigee gain and a smaller apogee drift at roughly 1.7x the
-propellant: the effectivity gate keeps the duty near one because
+Both rows satisfy the task-level success criterion `R > 0`; the mean
+episode return equals the terminal `R` because the environment's reward
+is the exact potential-based telescoping of that terminal objective.
+Against the tuning-seed record (R 1.1510) the seed-7 score 1.1523 shows
+no tuning-set overfit. The two arms are not close in physical terms:
+Q-law raises the perigee by ~116× more than the Gauss greedy law, at
+~164× the propellant and ~4.3× the apocenter drift. The effectivity gate
+keeps the Q-law duty near one (the harness recorded 0.985) because
 near-apogee transverse thrust is almost always effective for this
-objective, whereas the Gauss greedy rule prices propellant explicitly
-and coasts more.
+objective, whereas the Gauss greedy rule prices propellant explicitly and
+coasts whenever a burn's one-step gain does not clear the propellant
+price — which is almost always at the 10 mN reference thrust. The
+harness-side $\Delta v$ figure quoted in earlier drafts (4.91 m/s) is
+inconsistent with the shipped propellant mass; the rocket-equation value
+for 0.0192 kg at $I_{sp}=4000$ s is ≈7.5 m/s, but neither figure is a
+shipped artifact and neither is used as a benchmark number here.
 
-**Comparison with the learned arm (PPO):** see
-`results/transfer/comparison.json` and `qlaw_report.json` once the
-equal-interaction-budget training run completes (PPO 1000 updates x 32
-steps x 1024 envs = 32.8M transitions, seed 7, evaluated with
-`scripts/eval.py` semantics).
+**Comparison with the learned arm (PPO):** `results/transfer/comparison.json`
+and `qlaw_report.json` are **not shipped**, and no PPO checkpoint for
+transfer exists in the checkout. The 32.8 M-transition budget
+(1024 envs × 1000 updates × 32 steps/env) is the equal-interaction target
+from `docs/evaluation_protocol.md`; it is not a completed run and no
+comparison number is claimed here.
 
 ## 7. Known limitations
 

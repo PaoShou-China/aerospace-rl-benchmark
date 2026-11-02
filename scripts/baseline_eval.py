@@ -1,6 +1,8 @@
 """Evaluation of the classical (non-learned) baselines on the batched GPU envs.
 
-Usage: python baseline_eval.py quadx|fixedwing|rocket|missile|satellite|transfer|docking|rendezvous
+Usage: python baseline_eval.py <task>
+Tasks: quadx | quadx_track | fixedwing | quadplane | rocket | missile |
+       satellite | transfer | docking | rendezvous
 Defaults mirror eval.py: 1024 envs, seed 7, same env construction (if
 results/<task>/config.json exists, its env_kwargs are restored),
 same success accounting from the env's completed-episode counters.  Each

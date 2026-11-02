@@ -28,8 +28,8 @@ per-environment Python loop, no host synchronization.
 - **Per-episode state.** None: the ignition hysteresis is driven by the *observed* ignited flag, so the default no-op
   `reset_idx` suffices; only the diagnostic counters (`steps, sat_max, coast, ignitions, infeasible, floor, fin_sat`)
   persist across episodes.
-- **Rates.** Policy 60 Hz / control 120 Hz (2 inner control periods per policy step) / physics 240 Hz; 30 s
-  (1800-step) episode limit.
+- **Rates.** Policy 40 Hz / control 120 Hz (3 inner control periods per policy step) / physics 240 Hz; 30 s
+  (1200-step) episode limit.
 
 ## 3. Guidance and control law
 
@@ -173,16 +173,23 @@ All values are the exact code constants of `RocketPDGBaseline`.
 
 ## 5. Measured performance
 
-All numbers are quoted from repository artifacts with their protocols; the success criterion is the upstream settling
-check (pad contact with $\lVert v\rVert < 0.02$ m/s, $\lVert\omega\rVert < 0.02$ rad/s, tilt < 0.1 rad; pre-contact
-speed > 1.0 m/s or spin > 0.35 rad/s is fatal).
+The success criterion is now the v2 benchmark metric `ever_stable_2s`: pad
+contact with $\lVert v\rVert < 0.02$ m/s, $\lVert\omega\rVert < 0.02$ rad/s and
+tilt < 0.1 rad held for 2 s (81 policy samples at 40 Hz), with a
+pre-contact speed > 1.0 m/s or spin > 0.35 rad/s fatal. The instantaneous
+per-contact event still drives the settle reward.
 
 | Source / protocol | Result |
 |---|---|
-| `results/rocket/baseline.json` — official `scripts/baseline_eval.py rocket`, 1024 envs, seed 7, GPU, 1800 env steps (one full 30 s episode per replica, 1024 episodes) | success rate **0.8281** (848/1024), mean episode return 3968.2 |
-| `results/rocket/pdg_test_report.json`, scenario A (random upstream ICs) — `rocket_pdg_test.py`, 1024 replicas, 1250-step window, seed 7, GPU | SR 0.4395; pad-touch rate 0.731; touch speed p10/p50/p90 = 0.077/0.282/1.382 m/s; touch tilt mean 0.025 rad; touch spin mean 0.154 rad/s |
-| same, scenario B (corner ICs: xy ±20 m × z {400, 450} × tilt {0, ±0.3}) | SR 0.3363; touch rate 0.489; touch speed p50 0.146 m/s |
-| same, scenarios C/D/E (nominal z = 425 m; low-z 400 m; ±3 m/s lateral velocity, all xy = 0) | SR 0.4785 / 0.4961 / 0.4717; touch rate 0.776 / 0.776 / 0.769 |
+| `results/rocket/baseline.json` — official `scripts/baseline_eval.py rocket`, 128 envs, seed 13, GPU, 1200 env steps (one first episode per replica) | success rate **100%** (128/128, `ever_stable_2s`), mean episode return 903.47, `complete = true` |
+| `results/rocket/baselines/zem_zev_pdg_seed7.json` — dataset B, 256 envs, seed 7, 1200 env steps | success rate **100%**, mean episode return 907.31 |
+| `results/rocket/baselines/pd_landing_seed7.json` — dataset B, 256 envs, seed 7 | success rate 100%, mean episode return 22.34 |
+| `results/rocket/baselines/eguidance_seed7.json` — dataset B, 256 envs, seed 7 | success rate 34.4%, mean episode return −3332.01 |
+| `results/rocket/pdg_test_report.json`, scenarios A–E — `rocket_pdg_test.py`, 1024 replicas, 1250-step window, seed 7, GPU (harness artifact, **not shipped**) | scenario A (random upstream ICs): SR 0.4395; pad-touch rate 0.731; touch speed p10/p50/p90 = 0.077/0.282/1.382 m/s. B (corner ICs): SR 0.3363. C/D/E (nominal z 425 m; low-z 400 m; ±3 m/s lateral drift): 0.4785 / 0.4961 / 0.4717 |
+
+The historical 60 Hz record (1024 envs, 1800 steps, success 0.8281, return
+3968.2) predates both the 40 Hz policy switch and the 2 s settle metric; it is
+not comparable with the current rows and is retained only as history.
 
 Guidance diagnostics from the same harness (the analytic-law analogs of solver statistics), scenario A: max-thrust
 saturation 0.89% of steps, engine-off coast 50.9%, infeasible demand 0.89%, $t_{go}$ floor hits 60.6%, ~122 ignition
@@ -200,8 +207,8 @@ Only limitations documented in the code comments or READMEs are listed.
   $K_{D,T} = 8000$ marginally better alone (83.9%) but degraded with the soft band, 10000 overshooting (79.2%).
 - **Authority-saturated braking transients** are retained as documented residual failures (root README), visible as
   the ~0.9% saturation and infeasible-demand fractions above.
-- **Pulse-band quantization.** The touchdown-speed guarantee is quantization-bounded (~0.25 m/s per 25 ms control
-  sample, i.e. roughly ±0.12 m/s per 60 Hz policy step).
+- **Pulse-band quantization.** The touchdown-speed guarantee is quantization-bounded (~0.25 m/s per 25 ms
+  policy sample, i.e. one 40 Hz policy step held for three 120 Hz control steps).
 - **Aerodynamic model validity.** The linear fin-spring model holds only to ~10° of tilt (fins stall beyond the
   ~9.6° trim point), so the feed-forward is capped; large tilt commands are outside the design envelope.
 - **One-way engine.** With $T_{\min}/(mg) = 1.91$ the engine can only brake; the terminal descent is necessarily a
@@ -216,7 +223,7 @@ Only limitations documented in the code comments or READMEs are listed.
   `BUILDERS` under `'rocket'`; instantiated by `build_baseline('rocket', env)` and declared as
   `conventional_controller` on `environments/rocket/env.py::RocketLandingEnv`.
 - Evaluation: `scripts/baseline_eval.py rocket` (official protocol, writes `results/rocket/baseline.json`); deep-dive
-  harness `environments/rocket/rocket_pdg_test.py` (writes `results/rocket/pdg_test_report.json`).
+  harness `environments/rocket/rocket_pdg_test.py` (writes `results/rocket/pdg_test_report.json`, not shipped).
 
 ## 8. References
 

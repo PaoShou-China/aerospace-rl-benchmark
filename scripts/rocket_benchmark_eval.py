@@ -22,6 +22,7 @@ def main():
     p.add_argument("--backend", choices=("cpu", "gpu"), default="gpu")
     p.add_argument("--variation", choices=("nominal", "shifted", "stress"), default="nominal")
     p.add_argument("--agent-hz", type=int, choices=(40, 60), default=40)
+    p.add_argument("--benchmark-version", choices=("v1", "v2"), default="v2")
     p.add_argument("--num-envs", type=int, default=128)
     p.add_argument("--seeds", type=int, nargs="+", default=[1000007, 2000007, 3000007, 4000007])
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -48,6 +49,8 @@ def main():
                     a.variation,
                     "--agent-hz",
                     str(a.agent_hz),
+                    "--benchmark-version",
+                    a.benchmark_version,
                     "--num-envs",
                     str(a.num_envs),
                     "--seeds",
@@ -88,7 +91,12 @@ def main():
     from scripts.first_episode import FirstEpisodes  # noqa: E402
 
     env = RocketLandingEnv(
-        a.num_envs, a.backend, a.seeds[0], variation=a.variation, agent_hz=a.agent_hz
+        a.num_envs,
+        a.backend,
+        a.seeds[0],
+        variation=a.variation,
+        agent_hz=a.agent_hz,
+        benchmark_version=a.benchmark_version,
     )
     try:
         controller = build_baseline("rocket", env)

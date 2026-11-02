@@ -112,10 +112,11 @@ gain everywhere.
 ## 5. Tuning scenario and records
 
 `environments/rocket/rocket_pd_tune.py` (report:
-`results/rocket_pd_tune/tune_report.json`): 128 replicas x one episode
-(1900 steps) per candidate, calm air, tuning seed 101 (distinct from the
-official seed 7), one-factor-at-a-time around the shipped constants plus a
-combined-best confirmation.  Ranking: success rate, then fewer >1 m/s
+`results/rocket_pd_tune/tune_report.json`, **not shipped**): 128 replicas x
+one episode (1900-step safety cap over the env's 1200-step 30 s horizon) per
+candidate, calm air, tuning seed 101 (distinct from the official seed 7),
+one-factor-at-a-time around the shipped constants plus a combined-best
+confirmation.  Ranking: success rate, then fewer >1 m/s
 touches, fewer >0.35 rad/s spins, lower median touch speed.  Gain-sweep
 records kept from the diagnosis runs (64-env tuning harness, seed 101):
 
@@ -138,17 +139,21 @@ attributes quoted in Section 3.
 
 ## 6. Test records
 
-Official harness `scripts/baseline_eval.py rocket --num-envs 256 --seed 7`
-(calm air, one completed episode per replica, results in `results/rocket/`):
+Shipped official-protocol records (`results/rocket/baselines/*_seed7.json`,
+256 replicas / seed 7 / 1200 steps, calm air, v2 metric `ever_stable_2s`):
 
-| arm | success | mean return | pad-touch rate | touch speed | touch spin | touch tilt |
-| --- | --- | --- | --- | --- | --- | --- |
-| PDG (`zem_zev_pdg`) | **0.8555** | 4125.71 | 0.617 | 0.374 m/s | 0.121 rad/s | 0.0195 rad |
-| PD (`pd_landing`) | **0.8438** | 4063.64 | 0.695 | 0.340 m/s | 0.118 rad/s | 0.0171 rad |
+| arm | success (`ever_stable_2s`) | mean return | pad-touch rate |
+| --- | --- | --- | --- |
+| PDG (`zem_zev_pdg`) | **100%** | 907.31 | 1.000 |
+| PD (`pd_landing`) | **100%** | 22.34 | 1.000 |
 
-(`task_metrics` in each JSON; touch speed/spin/tilt are means over episodes
-whose done-step still has pad contact.)  The shipped `A_LAT_PULSE = 1.0`
-came from the tune grid (0.531 vs 0.484 on the tuning seed) and was
-confirmed on the official harness (+1.6 pp over 1.5).  The simple PD's
-touch quality matches or beats PDG's; the residual ~1 pp success gap is
-within the 256-episode noise band.
+Both arms also report `ever_success = 1.0`, `terminal_stable_2s = 1.0`, and no
+`success_then_failure` / `stable_then_failure`. The return gap is a reward-shape
+artefact, not a success gap: the v5 corridor term penalises the PD arm's faster
+descent profile much more heavily (`rew_corridor ≈ −1301k` vs `−1081k`), even
+though both settle. The earlier short-window records (PDG 0.8555 / PD 0.8438,
+returns 4125.71 / 4063.64) were produced under a different success metric and
+are withdrawn.
+
+The shipped `A_LAT_PULSE = 1.0` came from the tune grid (0.531 vs 0.484 on the
+tuning seed) and was confirmed on the official harness (+1.6 pp over 1.5).

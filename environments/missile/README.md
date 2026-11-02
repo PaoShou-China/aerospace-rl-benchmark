@@ -67,15 +67,17 @@ first policy step, and an airborne missile has no contacts to settle.
 ## Classical baseline
 
 `MissileAPNBaseline` ([algorithms/baselines/baselines.py](../../algorithms/baselines/baselines.py),
-`name='apn_rate'`): augmented PN (N=4) with half-N gravity compensation,
-mapped to the body-rate interface through the skid-to-turn kinematic inverse
+`name='apn_rate'`): augmented PN with navigation constant `N = 15` (retuned
+from the N=4/N=10 lineage; half-N gravity compensation), mapped to the
+body-rate interface through the skid-to-turn kinematic inverse
 `omega = cross(b_x, a_lat) / V`, with a first-order LOS-rate filter.
 
-Measured numbers (GPU, seed 7):
+Measured numbers:
 
 | Protocol | Result |
 |---|---|
-| official `scripts/baseline_eval.py missile` (`results/missile/baseline.json`), 1024 envs, 433 env steps | SR 0.8303 (861/1037 episodes), mean episode return 90.49 |
+| official `scripts/baseline_eval.py missile` (`results/missile/baseline.json`), 128 envs / seed 13 / 656 env steps / first episode per replica | SR 0.7109 (91/128), mean episode return 95.62, `complete = true` |
+| `results/missile/baselines/apn_rate_seed7.json`, 256 envs / seed 7 / 637 env steps | SR 0.7617, mean episode return 101.90 |
 | `test_missile_apn.py` T3, 256 envs, fixed operating point | pass gates only (mixed SR >= 0.45, straight SR >= 0.85); no artifact stored |
 
 The APN law assumes a non-maneuvering straight-line shot solution, so its
@@ -89,7 +91,9 @@ the fixed operating point (256 envs, ~256 completed episodes) and breaks it
 down by the env's own maneuver type (`t_type` 0 straight / 1 weave / 2
 barrel), measuring true min distance through a spy on `env.reset_idx` (the
 `completed_metrics['miss_distance']` slots are stale at termination because
-the env auto-resets internally). It writes `results/missile/scenarios.json`.
+the env auto-resets internally). It writes `results/missile/scenarios.json`;
+**that file is not shipped in the repository**, so no scenario breakdown is
+quoted here.
 
 Scope note: the spawn geometry (range, heading cone, maneuver severity) is
 generated internally from fixed env constants and exposes no injection points
@@ -97,17 +101,11 @@ for aspect angle or range, and 5-8 km initial ranges are outside the 2500 m
 spawn support — so the planned aspect-angle x range grid is replaced by this
 per-maneuver-type breakdown (documented in the script docstring).
 
-Caveat: the shipped `results/missile/scenarios.json` still contains an older
-difficulty sweep (cells for d = 0 / 0.5 / 1.0, SR 0.7305 / 0.6641 / 0.1318).
-It predates the 2026-10-24 removal of the `difficulty` kwarg; the current
-script neither sweeps difficulty nor passes that kwarg, so the file must be
-regenerated before it is quoted as a current measurement.
-
 ## Usage
 
 ```bash
 python environments/missile/train_missile.py        # PPO + BC warm start (constants in-file)
-python environments/missile/test_missile_apn.py gpu # T1-T3 test suite (default gpu, cpu also supported)
+python environments/missile/test_missile_apn.py     # T1-T3 test suite (default cpu; pass `gpu` to switch)
 python environments/missile/eval_missile_scenarios.py   # fixed operating point, per-maneuver breakdown
 python scripts/baseline_eval.py missile             # official baseline protocol
 python scripts/train.py missile                     # legacy small-config aggregator
@@ -115,13 +113,14 @@ python scripts/train.py missile                     # legacy small-config aggreg
 
 Results land in `results/missile/` (`run.json` / `config.json` from training,
 `baseline.json` from the official baseline protocol, `scenarios.json` from
-the scenario harness). The shipped `run.json` / `eval.json` still record
-`difficulty: 1.0`, so they predate the single operating point and are
-historical, not current measurements.
+the scenario harness). The repository ships only `baseline.json` and
+`results/missile/baselines/`; no training `run.json` / `eval.json` and no
+`scenarios.json` are published, so no full-RL or scenario-breakdown number is
+quoted.
 
 ## Honesty note
 
-Only the official baseline number in the table above (plus `baseline.json`
-itself) is a current measurement; `scenarios.json` is stale per the caveat
-above. No current full-RL result exists in this repository. Nothing here
-should be read as a benchmark claim beyond those measurements.
+Only the official baseline and the dataset-B controller files listed above
+are current measurements. No current full-RL result and no scenario
+breakdown exist in this repository. Nothing here should be read as a
+benchmark claim beyond those measurements.

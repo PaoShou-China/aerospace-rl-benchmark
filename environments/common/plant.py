@@ -26,6 +26,28 @@ def rotate(q, v):
     return inverse_rotate(torch.cat((q[..., :1], -q[..., 1:]), -1), v)
 
 
+def f9_tank_properties(fuel, params):
+    """Return LOX/RP-1 masses, principal inertias and local tank centroids."""
+    p = params["propellant_params"]
+    total = fuel * p["total_fuel"]
+    fractions = torch.tensor(
+        [p["lox_fraction"], 1.0 - p["lox_fraction"]], device=fuel.device, dtype=fuel.dtype
+    )
+    masses = (total[:, None] * fractions[None, :]).clamp_min(1e-8)
+    densities = torch.tensor([p["lox_density"], p["rp1_density"]], device=fuel.device, dtype=fuel.dtype)
+    heights = masses / (densities[None, :] * p["tank_area"])
+    radius2 = p["tank_area"] / math.pi
+    transverse = masses * (3.0 * radius2 + heights.square()) / 12.0
+    axial = 0.5 * masses * radius2
+    inertia = torch.stack(
+        torch.stack((transverse, transverse, axial), -1).unbind(dim=1), dim=1
+    )
+    inertia = torch.diag_embed(inertia).clamp_min(1e-8)
+    com = torch.zeros((*fuel.shape, 2, 3), device=fuel.device, dtype=fuel.dtype)
+    com[..., 2] = 0.5 * heights
+    return masses, inertia, com
+
+
 def _mix32(x):
     """32-bit avalanche finalizer (murmur3 fmix32); bijective modulo 2**32."""
     x = (x ^ (x >> 16)) & 0xFFFFFFFF
@@ -197,7 +219,12 @@ class TensorPlant:
 
                 verify_rocket_v2_assets()
                 model_path = source / "rocket_v2.urdf"
-            # v1 uses rocket.urdf (no footpads) -- nothing to verify
+            elif rocket_benchmark == "v1":
+                from .consistency import verify_f9_real_assets
+
+                verify_f9_real_assets()
+                self.params = yaml.safe_load((source / "f9_real.yaml").read_text())
+                model_path = source / "rocket_falcon9_stage1.urdf"
         self.body_id = c.loadURDF(
             str(model_path),
             basePosition=(
@@ -213,7 +240,8 @@ class TensorPlant:
         self.pad = None
         self.target = None
         if vehicle == "rocket":
-            pad = Path(__file__).parent / "original_pyflyt/models/landing_pad.urdf"
+            pad_name = "f9_landing_pad.urdf" if rocket_benchmark == "v1" else "landing_pad.urdf"
+            pad = Path(__file__).parent / "original_pyflyt/models" / pad_name
             self.pad_id = c.loadURDF(str(pad), basePosition=(0, 0, 0.1), useFixedBase=True)
             self.pad = c._bodies[self.pad_id]["entity"]
         if vehicle == "missile":
@@ -411,18 +439,32 @@ class TensorPlant:
             elif vehicle == "rocket":
                 from .consistency import inertial_basis
 
-                self.fuel = torch.full((n,), 0.05, device=d, dtype=torch.float64)
+                self.f9_real = rocket_benchmark == "v1"
+                initial_fuel = (
+                    self.params["propellant_params"]["initial_mass"]
+                    / self.params["propellant_params"]["total_fuel"]
+                    if self.f9_real
+                    else 0.05
+                )
+                self.initial_fuel = initial_fuel
+                self.fuel = torch.full((n,), initial_fuel, device=d, dtype=torch.float64)
                 self.ignited = torch.zeros(n, device=d, dtype=torch.bool)
                 self.gimbal = torch.zeros((n, 2), device=d, dtype=torch.float64)
-                self.fuel_id = self.links["fueltank_link"]
-                self.fuel_basis = torch.as_tensor(
-                    inertial_basis(self.drone.links[self.fuel_id]), device=d, dtype=torch.float64
-                )
-                self.fuel_inertia = torch.tensor(
-                    [self.params["booster_params"][f"inertia_i{x}{x}"] for x in "xyz"],
-                    device=d,
-                    dtype=torch.float64,
-                )
+                if self.f9_real:
+                    self.fuel_ids = [self.links["fueltank_lox"], self.links["fueltank_rp1"]]
+                    self.fuel_bases = torch.stack(
+                        [torch.as_tensor(inertial_basis(self.drone.links[i])) for i in self.fuel_ids]
+                    ).to(device=d, dtype=torch.float64)
+                else:
+                    self.fuel_id = self.links["fueltank_link"]
+                    self.fuel_basis = torch.as_tensor(
+                        inertial_basis(self.drone.links[self.fuel_id]), device=d, dtype=torch.float64
+                    )
+                    self.fuel_inertia = torch.tensor(
+                        [self.params["booster_params"][f"inertia_i{x}{x}"] for x in "xyz"],
+                        device=d,
+                        dtype=torch.float64,
+                    )
                 body = self.params["body_params"]
                 self.body_drag_constant = torch.tensor(
                     [0.5 * 1.225 * body[f"drag_coef_{x}"] * body[f"area_{x}"] for x in "xyz"],
@@ -548,6 +590,20 @@ class TensorPlant:
 
     def perturb_mass(self, scale):
         """Scale the body-link mass by ``scale`` (float or (num_envs,) tensor)."""
+        if self.vehicle == "rocket" and self.rocket_benchmark == "v1":
+            if not hasattr(self, "_f9_dry_ids"):
+                self._f9_dry_ids = [i for i in range(self.drone.n_links) if i not in self.fuel_ids]
+                self._f9_dry_mass_nominal = self.drone.get_links_mass(
+                    links_idx_local=self._f9_dry_ids
+                ).to(torch.float64)
+            if isinstance(scale, (int, float)):
+                scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=torch.float64)
+            else:
+                scale = scale.to(self.device).to(torch.float64).reshape(self.n, 1)
+            self.drone.set_links_mass(
+                (self._f9_dry_mass_nominal * scale).to(gs.tc_float), links_idx_local=self._f9_dry_ids
+            )
+            return
         if self._body_link_id is None:
             return
         if self._body_mass_nominal is None:
@@ -816,6 +872,15 @@ class TensorPlant:
                 # (core/drones/rocket.py L92-116), not the fueltank.
                 vel = self._air_velocity([self.drag_id], q)[:, 0]
                 self.force[:, self.drag_id] -= self.body_drag_constant * vel.abs() * vel
+                if self.f9_real:
+                    contact = self.params["contact_params"]
+                    supported = self.pad_contact.to(torch.float64)
+                    self.torque[:, self.drag_id] -= (
+                        supported[:, None] * contact["angular_damping"] * inverse_rotate(q, w)
+                    )
+                    self.force[:, self.drag_id, :2] -= (
+                        supported[:, None] * contact["lateral_damping"] * inverse_rotate(q, v)[:, :2]
+                    )
                 variation = self.rocket_variation
                 gimbal_tau = b["gimbal_tau"] if variation is None else variation.gimbal_tau[:, None]
                 booster_tau = b["booster_tau"] if variation is None else variation.booster_tau
@@ -837,9 +902,12 @@ class TensorPlant:
                     throttle * (1 + b["noise_ratio"] * self.rng.normal(mask, 0.0)) * (self.fuel > 0)
                 )
                 self.throttle[:, 0].copy_(torch.where(mask, throttle, self.throttle[:, 0]))
+                total_fuel = (
+                    self.params["propellant_params"]["total_fuel"] if self.f9_real else b["total_fuel"]
+                )
                 fuel = (
                     self.fuel
-                    - self.throttle[:, 0] * b["max_fuel_rate"] / b["total_fuel"] * self.physics_dt
+                    - self.throttle[:, 0] * b["max_fuel_rate"] / total_fuel * self.physics_dt
                 ).clamp(0, 1)
                 self.fuel.copy_(torch.where(mask, fuel, self.fuel))
                 angles = self.gimbal * math.radians(b["gimbal_range_degrees"])
@@ -854,24 +922,33 @@ class TensorPlant:
                     thrust = thrust * variation.thrust
                 thrust = thrust * self._thrust_scale
                 self.force[:, self.links["booster_link"]] += direction * thrust[:, None]
-                mass = (self.fuel * b["total_fuel"]).clamp_min(1e-8)
-                inertia = (
-                    self.fuel_basis.T
-                    @ torch.diag_embed((self.fuel[:, None] * self.fuel_inertia).clamp_min(1e-8))
-                    @ self.fuel_basis
-                )
-                # unconditional mass write: set_links_mass/inertia are idempotent,
-                # so the update runs every physics step -- while no fuel burns it
-                # writes back identical values, keeping the hot path free of the
-                # bool((throttle>1e-6).any()) host sync (mass depends only on
-                # fuel, and fuel only changes while throttle>0, so skipping the
-                # write when fuel is constant was a pure performance shortcut)
-                self.drone.set_links_mass(
-                    mass[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
-                )
-                self.drone.set_links_inertia(
-                    inertia[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
-                )
+                if self.f9_real:
+                    mass, principal, com = f9_tank_properties(self.fuel, self.params)
+                    inertia = torch.stack(
+                        [
+                            self.fuel_bases[k].T @ principal[:, k] @ self.fuel_bases[k]
+                            for k in range(2)
+                        ],
+                        dim=1,
+                    )
+                    self.drone.set_links_mass(mass.to(gs.tc_float), links_idx_local=self.fuel_ids)
+                    self.drone.set_links_inertia(
+                        inertia.to(gs.tc_float), links_idx_local=self.fuel_ids
+                    )
+                    self.drone.set_links_COM(com.to(gs.tc_float), links_idx_local=self.fuel_ids)
+                else:
+                    mass = (self.fuel * b["total_fuel"]).clamp_min(1e-8)
+                    inertia = (
+                        self.fuel_basis.T
+                        @ torch.diag_embed((self.fuel[:, None] * self.fuel_inertia).clamp_min(1e-8))
+                        @ self.fuel_basis
+                    )
+                    self.drone.set_links_mass(
+                        mass[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
+                    )
+                    self.drone.set_links_inertia(
+                        inertia[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
+                    )
         self.force *= mask[:, None, None]
         self.torque *= mask[:, None, None]
         qlinks = self.drone.get_links_quat().to(torch.float64)
@@ -991,7 +1068,7 @@ class TensorPlant:
         else:
             self.surfaces.actuation.masked_fill_(mask[:, None], 0)
             if self.vehicle == "rocket":
-                self.fuel.masked_fill_(mask, 0.05)
+                self.fuel.masked_fill_(mask, self.initial_fuel)
                 self.ignited.masked_fill_(mask, False)
                 self.gimbal.masked_fill_(mask[:, None], 0)
                 if self.rocket_variation is not None:

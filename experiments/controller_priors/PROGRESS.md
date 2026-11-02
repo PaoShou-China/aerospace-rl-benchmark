@@ -228,7 +228,7 @@ Last updated: 2026-11-01 (dataset size budget added; full rerun in progress).
 > rerun, which is not mixed into this table.
 
 Full tables: [`RESULTS.md`](RESULTS.md); raw: `results/controller_priors/_analysis/`
-and `results/controller_priors_scans/_analysis/`.
+and `results/controller_priors_scans/_analysis/` (**not shipped**).
 
 Final deterministic first-episode success (3 seeds, mean ± sd):
 
@@ -304,7 +304,8 @@ Headline findings:
 
 ## 7. Scans actually run
 
-Docking (seed 7, 512 envs, 100 updates), `results/controller_priors_scans`:
+Docking (seed 7, 512 envs, 100 updates), `results/controller_priors_scans`
+(not shipped):
 controller quality ×3, demonstration coverage ×2, sample count ×2, residual
 authority ×6 (including rho 0.05 and 0.4), model mismatch ×3 (plant, design,
 both), BC→PPO pinned-sigma ablation ×2 outputs (bc_only + bc_ppo).
@@ -349,7 +350,7 @@ train_arm,evaluate,run_experiments}.py,
 analysis/{task_metrics,aggregate,plot}.py,
 tests/test_controller_priors.py}`.
 
-Results (not source):
+Results (not source; **not shipped** in this checkout):
 `results/controller_priors/{docking,satellite,rendezvous}/...` (pilot_v2 for
 docking, pilot_v1 for satellite/rendezvous, holdout_v1 for docking seed 101,
 stability ablations),

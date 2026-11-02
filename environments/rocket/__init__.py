@@ -36,27 +36,34 @@ Observation Space (30,)
 
 Reward
     Dense shaping, one term per POLICY step (40 Hz) from whole-step state
-    deltas (2026-10-24 'v4'; the earlier v2 potential design was farmed by
-    minimum-speed descent):
-    r = -HOVER_COST                              0.3, time pressure
+    deltas (2026-10-28 'v5'; v4's pure-dive shaping let PPO farm +100 returns
+    by crashing at 5 m/s with zero successes, so v5 adds a feasible descent
+    corridor and a one-shot fatal cost):
+    r = -HOVER_COST                              0.3, time pressure, always
         + HOLD_COEF / (||p_xy|| + 0.1)           0.005, capped 0.05
         + LATERAL_COEF * (||p_xy_prev|| - ||p_xy||)     10
         + DESCENT_COEF * (z_prev - z)            0.1
         + DECEL_COEF * (dvz + 1) exp(-max(z,0)) sign(vz)  0.1
+        - CORRIDOR_COEF * relu(-vz - v_allow(z)) 0.5, v_allow = 0.5 + sqrt(2*2*z)
         - YAW_COEF * |w_yaw| - TILT_COEF * ||(roll, pitch)||  0.5 / 0.5
         + CONTACT_BASE - CONTACT_VEL_COEF * |vz|  0.5 - 1.0 |vz| on any
           pad-contact policy step, |vz| at the first contact inner step
+        - FATAL_COST once on a new terminal transition (500, so a dive-crash
+          return is negative instead of escaping the remaining hover cost)
         + SUCCESS_BONUS once on first settle (5000)
     All coefficients are constructor-overridable via the `reward` dict and
-    recorded in cfg. The hold term cannot farm hover, the descent term
-    keeps a pure fast dive net-negative, and the success bonus dominates
-    any delayed-contact stream.
+    recorded in cfg. The hold term cannot farm hover, the corridor plus the
+    fatal cost make a fast dive strictly unprofitable, and the success bonus
+    dominates any delayed-contact stream.
 
 Episode End
-    Success (NO truncation): pad contact with the PREVIOUS inner-step
-    speed < 0.02 m/s and spin < 0.02 rad/s, plus a current tilt < 0.1 rad.
-    The episode CONTINUES, so the rocket may settle and keep earning the
-    contact stream until the time limit.
+    Primary success metric (v2 benchmark): `ever_stable_2s` — pad contact with
+    speed < 0.02 m/s, spin < 0.02 rad/s and tilt < 0.1 rad held for 2 s
+    (121 samples at 60 Hz, 81 at 40 Hz) with no fatal/out-of-bounds end.
+    The instantaneous per-contact event above still drives the settle reward
+    and diagnostics. Success does NOT truncate: the episode CONTINUES, so the
+    rocket may settle and keep earning the contact stream until the time
+    limit.
     Termination: any non-pad contact (ground) or z < 0; a pad-contact
     step whose previous inner-step speed > 1.0 m/s or spin > 0.35 rad/s;
     bounds ||p_xy|| > 200 m or z > 500 m.

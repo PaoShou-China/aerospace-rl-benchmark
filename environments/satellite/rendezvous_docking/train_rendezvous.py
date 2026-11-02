@@ -77,8 +77,12 @@ ALGORITHM = "ppo"
 # 2026-10-29 ARM A: PPO knobs unchanged (this is the best prior arm); the lever
 # moves to the env -- time_penalty=.01/step in env.py makes the ~190 m hover
 # bust target unprofitable (SpaceGym CVPRW 2026; AAS 23-026).
-LR_SIGMA_COUPLING = 1.5e-3
-SIGMA_PIN = 0.2
+# 2026-11-02: the sigma-pin / lr-sigma-coupling mechanism is RETIRED by user
+# decision. The two knobs below were Gaussian-policy only (they read the
+# actor's `log_std_param`, absent from the default BetaDistribution) and the
+# pinned-sigma runs crashed under the current Beta default; instead of pinning
+# `distribution="gaussian"`, the entry now runs the default Beta policy with
+# neither knob. All sigma values recorded below are historical (Gaussian era).
 # 2026-10-29 no-BC from-scratch sweep (all with time_penalty=.01 + spawn easing
 # + 100-pt spread, seed 7): fixed lr 3e-4/ent .003 -> greedy 11% (boom 99%,
 # tail 50%); coupling 6e-4/ent .003 (sigma stuck 0.552) -> 21%; coupling 6e-4/
@@ -136,7 +140,5 @@ if __name__ == "__main__":
         clean=CLEAN,
         algo=ALGORITHM,
         bc_warmstart=BC_WARMSTART,
-        lr_sigma_coupling=LR_SIGMA_COUPLING,
-        sigma_pin=SIGMA_PIN,
         **PPO_OVERRIDES,
     )

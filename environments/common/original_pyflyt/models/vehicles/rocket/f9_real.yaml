@@ -1,0 +1,51 @@
+# Public-data engineering model for terminal F9 first-stage landing.
+# Geometry: SpaceX Falcon 9 user's guide; dry mass: public community estimate.
+# Aerodynamic/contact coefficients are engineering priors, not SpaceX data.
+booster_params:
+  min_thrust: 481650.0
+  max_thrust: 845000.0
+  specific_impulse: 282.0
+  max_fuel_rate: 305.5532623994147  # 845000 / (282 * 9.80665)
+  reignitable: true
+  gimbal_range_degrees: 5.0
+  booster_tau: 0.08
+  gimbal_tau: 0.03
+  noise_ratio: 0.005
+
+propellant_params:
+  total_fuel: 410900.0
+  initial_mass: 8500.0
+  initial_range: [6000.0, 10000.0]
+  lox_fraction: 0.6996098829648895  # 287400 / 410900
+  lox_base_z: 16.0
+  rp1_base_z: 1.6
+  tank_area: 9.9
+  lox_density: 1220.0
+  rp1_density: 833.0
+
+finlet_params:
+  Cl_alpha_2D: 3.0  # subsonic engineering prior
+  chord: 0.8
+  span: 3.0
+  flap_to_chord: 1.0
+  eta: 0.65
+  alpha_0_base: 0.0
+  alpha_stall_P_base: 20.0
+  alpha_stall_N_base: -20.0
+  Cd_0: 0.01
+  deflection_limit: 20.0
+  tau: 0.08
+
+body_params:
+  drag_coef_x: 0.8
+  drag_coef_y: 0.8
+  drag_coef_z: 0.85
+  area_x: 175.0
+  area_y: 175.0
+  area_z: 10.52
+
+contact_params:
+  pad_radius: 26.0
+  rest_base_z: 0.65
+  angular_damping: 50000000.0  # effective leg/foot energy dissipation prior
+  lateral_damping: 200000.0

@@ -1,10 +1,12 @@
-"""Legacy quick-sweep PPO entry for all 8 real tasks (CLI aggregator).
+"""Legacy quick-sweep PPO entry for 8 of the 10 registered tasks (CLI aggregator).
 
-Tasks: the three original-task Genesis RL environments (quadx, fixedwing,
-rocket) plus the fully tensorized space environments (satellite CMG attitude
-control, low-thrust perigee-raising transfer, CWH docking / rendezvous) and
-the project-authored 6-DOF missile intercept (Genesis rigid body + kinematic
-target).
+Registered here: the three original-task Genesis RL environments (quadx,
+fixedwing, rocket) plus the fully tensorized space environments (satellite CMG
+attitude control, low-thrust perigee-raising transfer, CWH docking / rendezvous)
+and the project-authored 6-DOF missile intercept (Genesis rigid body + kinematic
+target).  ``quadx_track`` and ``quadplane`` are not registered in this legacy
+aggregator; use their self-contained per-task entries
+(``train_quadx_track.py`` / ``train_quadplane.py``) instead.
 
 This is the small-config sweep entry (default 64 envs, 32-step rollouts,
 64x64 MLP, adaptive-KL schedule). For experiment runs use the self-contained

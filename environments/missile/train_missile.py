@@ -144,6 +144,10 @@ if __name__ == "__main__":
         # ratchet (0.57->160) under entropy 0.010 (clipped samples give
         # zero std-gradient); 0.007 kept std bounded in run 1. Env
         # reward rebalance kept as-is.
+        # All std values quoted above were measured under the Gaussian
+        # policy; the default BetaDistribution has no free std, so these
+        # observations are historical. `init_std` below is ignored unless
+        # the policy is switched to `distribution="gaussian"`.
         # 2026-10-29 comparison arm: identical PPO hyperparameters and
         # seed; only the env terminal-miss grading and ctrl-penalty
         # removal change. Baseline remains in results/missile.

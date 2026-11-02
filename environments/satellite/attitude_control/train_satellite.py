@@ -37,8 +37,13 @@ ALGORITHM = "ppo"
 # gate-proven run-8 recipe: sigma pinned 0.1, lr = 1.5e-4 * sigma (constant
 # mean-update drift K), obs normalizers frozen (the warm start fitted them),
 # 150 updates at the benchmark config.
+# NOTE (policy distribution): every sigma-pin / lr-sigma observation in this
+# file comes from the Gaussian-policy era. The current default is the bounded
+# BetaDistribution (`build_cfg(distribution="beta")`), which has no
+# `log_std_param`: `init_std` below is accepted but ignored, and the
+# `sigma_pin` / `lr_sigma_coupling` knobs require `distribution="gaussian"`.
 LEARNING_RATE = 3e-4
-INIT_STD = 1.0
+INIT_STD = 1.0  # inert under the default Beta policy; Gaussian-only knob
 # Pure-RL entry (arXiv:2505.00165 alignment): gamma 0.999 because 1200-step
 # episodes make 0.99 blind to the settle bonus; nsp 150 matches the paper's
 # 150-step rollout; 5 mini-batches mirror its ~32-sample minibatches.

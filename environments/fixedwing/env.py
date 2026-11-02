@@ -73,7 +73,7 @@ class FixedwingWaypointsEnv(BaseEnv, ResidualActionMixin):
     dead (main-wing zero-deflection upstream mapping). Termination on ground
     contact or out-of-bounds |p| > 100 m; truncation at 3600 policy steps
     (120 s at 30 Hz) or when all waypoints are reached. Plant physics live in
-    environments.common.plant with 30 Hz agent / 90 Hz control / 270 Hz
+    environments.common.plant with 30 Hz agent / 120 Hz control / 240 Hz
     physics. Domain randomization covers thrust (0.85, 1.15) and mass
     (0.90, 1.10).
     """
@@ -106,7 +106,7 @@ class FixedwingWaypointsEnv(BaseEnv, ResidualActionMixin):
     ):
         """Initialize the fixedwing waypoints environment.
 
-        Construct the Genesis-backed fixedwing plant at 30 Hz agent / 90 Hz
+        Construct the Genesis-backed fixedwing plant at 30 Hz agent / 120 Hz
         control, allocate task buffers (waypoints, reward, reset, domain-
         randomization counters), and optionally wire in a wind disturbance.
         Finalizes with a reset().

@@ -72,9 +72,9 @@ from environments.common.domain_randomization import (
 
 def _aim_quat(aim, roll):
     """Batched xyzw quaternion taking body +x to `aim` plus a small extra roll
-    about body x.  Local on purpose: the shared dynamics.quat_from_euler is
-    the repo's (scaled, near-identity) rocket/fixedwing convention and must
-    not be retargeted."""
+    about body x.  Local on purpose: the shared dynamics.quat_from_euler maps
+    three Euler angles (the rocket/fixedwing spawn convention), not an aim
+    vector, so it cannot express this rotation."""
     x_hat = torch.tensor([1.0, 0.0, 0.0], device=aim.device, dtype=aim.dtype).expand_as(aim)
     axis = torch.linalg.cross(x_hat, aim)
     ang = torch.atan2(axis.norm(dim=-1), aim[..., 0].clamp(-1, 1))

@@ -38,8 +38,7 @@ divide the 120 Hz control loop), **control 120 Hz** (`inner_steps = 3` control
 periods per policy step, action held constant), and **physics 240 Hz** (two
 substeps per control period, $h = 1/240$ s) on the Genesis rigid-body solver
 with per-substep actuation updates. All rates are read back from the plant
-(`agent_hz` is a constructor kwarg; `benchmark_version='v1'` restores the
-legacy 60 Hz configuration for historical comparisons).
+(`agent_hz` is a constructor kwarg; both supported versions default to 40 Hz).
 
 The vehicle model is the upstream F9-class booster scaled by $10^{3}$ from
 the Falcon 9 first stage (reference propellant 123.5 t RP-1 + 287.4 t LOX =
@@ -161,8 +160,8 @@ Evaluated on every 120 Hz control period, in the following order:
    the episode **continues** and the settled contact stream (Eq. 1g) keeps
    paying until the time limit. The old instantaneous pad-contact latch
    (`ever_success`, plus `terminal_single_point` / `terminal_stable_2s`) is
-   still reported as a diagnostic, but **v1 instantaneous success rates are
-   not comparable to the v2 score**.
+   still reported as a diagnostic. The real-scale v1 uses the separate settled
+   definition in Section 13.
 4. **Time limit (truncation).** `count` $\ge 1200$ policy steps (30 s),
    applied after the full control step; the only truncation source.
 
@@ -220,8 +219,8 @@ mask of Section 7.
 
 | Constant | Value |
 |---|---|
-| `agent_hz` / `inner_steps` | 40 / 3 (control 120 Hz, physics 240 Hz; v1: 60 / 2) |
-| `max_steps` | 1200 (30 s; buffer `max_episode_length` 1202; v1: 1800) |
+| `agent_hz` / `inner_steps` | 40 / 3 (control 120 Hz, physics 240 Hz) |
+| `max_steps` | v2: 1200 (30 s); real-scale v1: 2400 (60 s) |
 | `num_actions` / obs dim | 7 / 30 |
 | `HOVER_COST` / `HOLD_COEF` | 0.3 / 0.005 |
 | `LATERAL_COEF` / `DESCENT_COEF` / `DECEL_COEF` | 10.0 / 0.1 / 0.1 |
@@ -242,3 +241,39 @@ mask of Section 7.
   `core/abstractions/boosters.py` (ignition and throttle remap).
 - MIL-F-8785C (low-altitude Dryden turbulence model), via
   `environments/common/disturbances.py`.
+
+## 13. Real-scale terminal-landing version (`v1`)
+
+`benchmark_version='v1'` is the real-scale public-data engineering model;
+the former scaled v1 has been removed. v2 remains the independent scaled
+legacy benchmark. This model is not SpaceX flight-data validated. It simulates
+only the terminal powered landing, not entry burn, supersonic aerodynamics,
+propellant slosh, structural flexibility or landing-leg crush.
+
+| Item | Nominal value / convention | Provenance |
+|---|---|---|
+| Stage + interstage | 41.2 + 6.5 m; diameter 3.66 m | SpaceX Falcon 9 user's guide geometry |
+| Dry mass | 25,600 kg | Public community estimate; 22–28 t uncertainty |
+| Residual propellant | sampled 6,000–10,000 kg; LOX:RP-1 = 2.33 | Scenario choice, not an official reserve |
+| Engine | one Merlin 1D+, 845 kN sea-level maximum | Public engine data |
+| Throttle / Isp | 57–100%; 282 s sea level | Public thrust range and engine data |
+| Maximum mass flow | 305.55 kg/s | Derived as `T/(Isp*g0)` |
+| Tank model | independent LOX/RP-1 columns, variable mass/inertia/COM | Engineering open-system approximation |
+| TVC / grid fins | ±5° / four surfaces, ±20° | Public geometry plus engineering actuator priors |
+| Pad / feet | 26 m radius; base origin rests at z=0.65 m | Simulator task geometry |
+
+The 7-D action and 30-D observation interfaces are unchanged. Fuel observation
+is total remaining LOX+RP-1 divided by 410.9 t. Initial foot altitude is
+0.8–1.5 km, descent rate 60–120 m/s, horizontal offset at most 100 m and tilt
+at most 3°. The time limit is 60 s. Pad contact faster than 6 m/s, spin above
+0.35 rad/s or tilt above 15° is fatal. Success and its one-shot reward both
+require two continuous seconds with speed <0.1 m/s, spin <0.02 rad/s and tilt
+<5°; instantaneous contact no longer pays the success bonus in this version.
+
+Body aerodynamics, fin coefficients and rigid foot contact are explicitly
+engineering priors. Pad-supported angular/lateral damping represents energy
+dissipation in the legs and feet; it is not a measured landing-leg model. The
+real-scale conventional controller uses height-scheduled powered descent,
+upright TVC/fin attitude control, terminal engine cutoff and touchdown shutdown
+latching. Their uncertainty should be examined with parameter mismatch/domain
+randomization rather than interpreted as validated F9 data.

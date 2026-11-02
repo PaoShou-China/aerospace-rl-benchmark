@@ -1,9 +1,12 @@
 # RESULTS — first-round pilot (controller priors)
 
-**Status: PILOT-SCALE, not the final JGCD budget.** Every number below is read
-from files that actually exist under `results/controller_priors/` and
-`results/controller_priors_scans/`; the generating tables/figures are
-`_analysis/summary.csv`, `_analysis/stage_summary.csv`, `_analysis/figures/`.
+**Status: PILOT-SCALE, not the final JGCD budget.** Every number below was read
+from the run outputs under `results/controller_priors/` and
+`results/controller_priors_scans/` when the study was executed; those
+directories are **not shipped in this checkout**, so the recorded tables are
+the aggregate evidence (regenerate with the commands in `PROGRESS.md` §10).
+The generating tables/figures are `_analysis/summary.csv`,
+`_analysis/stage_summary.csv`, `_analysis/figures/`.
 
 Protocol: all arms in a task share the same PPO recipe, the same evaluation
 seed (`eval_seed=7`), the same env construction and the same first-episode
@@ -49,9 +52,9 @@ Stochastic evaluation (same protocol seed, sampled policy):
 | satellite | bc_only / bc_ppo / scratch / residual | 0.001 / **1.000** / 0.999 / **1.000** | 1.000 / 0.321 / 0.372 / **0.034** |
 | rendezvous | bc_only / bc_ppo / scratch / residual | 0.365 / 0.212 / 0.001 / **1.000** | 0.500 / 0.497 / 0.514 / **0.042** |
 
-Residual scaling makes stochastic exploration far smaller than direct PPO at
-the same nominal `init_std`; the measured environment perturbation is reported
-rather than assumed comparable.
+Residual scaling makes stochastic exploration far smaller than direct PPO;
+the measured environment perturbation (`exploration_env_action_rms`) is
+reported rather than assumed comparable.
 
 The BC fit (shared recipe, `fit_critic=False`, `fit_once`):
 
@@ -60,6 +63,11 @@ The BC fit (shared recipe, `fit_critic=False`, `fit_once`):
 | docking | 463,349 | 0.00333 | 0.00335 | 2460 / 527 / 527 | 1.000 | 0.5 |
 | satellite | 272,341 | 0.0189 | 0.0210 | 1122 / 240 / 240 | 0.108 | 1.0 |
 | rendezvous | 366,494 | 0.00175 | 0.00203 | 716 / 154 / 154 | 0.976 | 0.5 |
+
+The `initial std` column is the configured `init_std` value recorded for
+provenance. Under the shipped default `BetaDistribution` that field is inert
+(the policy has α/β, not a free std), so the actual stochastic exploration is
+the measured `exploration_env_action_rms` above, not the column value.
 
 Satellite has the largest normalized action regression error among the three:
 its expert CMG commands are near bang-bang and the learned mean is smooth, so

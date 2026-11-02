@@ -155,16 +155,50 @@ u = \operatorname{clip}\!\big(-v/\Delta v_{\mathrm{step}},\,-1,\,1\big) .
 
 ## 5. Measured performance
 
-- Root README, frozen baseline table: **100% success over 4096 episodes**
-  across the benchmark envelope.
-- Checked-in run `results/rendezvous/baseline.json` (official
-  `baseline_eval` protocol: 1024 envs, seed 7, unbiased per-replica
-  episode accounting): **success rate 1.0 (1024/1024)**, mean episode
-  return **195.44**, 559 env steps, 10.75 s wall time.
-- The frozen protocol (`docs/evaluation_protocol.md`, §1) records that
-  the termination-priority fix (terminal-step keep-out violation is a
-  failure, never a success) leaves this baseline unchanged: the 9 m hold
-  point lies outside the 5 m keep-out sphere.
+All shipped records use the `scripts/baseline_eval.py` accounting (first
+episode per replica, `env_kwargs = {}`, 1000-step horizon). The older
+"100% over 4096 episodes / 1024/1024, return 195.44, 559 steps" entry was
+a frozen 2026-10-22 audit snapshot; no 1024- or 4096-replica rendezvous
+artifact exists in the checkout, so it is not re-verifiable and the
+verified records below supersede it.
+
+**Protocol dataset A** (`results/baseline_protocol/seed{7,13,21,101}/rendezvous/baseline.json`,
+128 replicas per seed):
+
+| seed | success | successes / finished | mean episode return | env steps |
+|---|---:|---:|---:|---:|
+| 7 | 100% | 128 / 128 | 184.85 | 594 |
+| 13 | 100% | 128 / 128 | 184.92 | 581 |
+| 21 | 100% | 128 / 128 | 184.62 | 627 |
+| 101 (held-out) | 100% | 128 / 128 | 184.88 | 649 |
+
+Protocol seeds 7/13/21: **100% (384/384)**, mean return 184.79, mean 601
+env steps, `complete = true` in every file.
+
+**Shipped single record.** `results/rendezvous/baseline.json` is the
+seed-13 protocol record: 128 replicas, seed 13, 581 env steps,
+**100% (128/128)**, mean episode return **184.92**, `complete = true`.
+
+**Dataset B** (`results/rendezvous/baselines/*_seed7.json`, 256 replicas,
+seed 7):
+
+| arm | CLI key | success | mean return | env steps |
+|---|---|---:|---:|---:|
+| `cwh_two_impulse` (default) | — | 100% (256/256) | 184.91 | 594 |
+| `cwh_compensated_pd` | `cwh_pd` | 100% (256/256) | 179.44 | 875 |
+| `glideslope` | `glideslope` | 100% (256/256) | 180.96 | 805 |
+
+All three arms solve the nominal task; the much larger windows for
+`cwh_compensated_pd` and `glideslope` (875 / 805 vs 594 steps) reflect
+slower straight-line approaches without the two-impulse schedule, not
+different success criteria.
+
+The frozen protocol (`docs/evaluation_protocol.md` §1) records that the
+termination-priority fix (terminal-step keep-out violation is a failure,
+never a success) leaves this baseline unchanged: the 9 m hold point lies
+outside the 5 m keep-out sphere. The frozen audit's 150–1900 m scenario
+grid (`eval_rendezvous_baseline.py`) is not shipped as an artifact, so
+only the nominal-protocol records above are quoted as measurements.
 
 ## 6. Known limitations
 

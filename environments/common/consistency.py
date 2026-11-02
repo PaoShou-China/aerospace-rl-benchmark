@@ -135,3 +135,13 @@ def verify_rocket_v2_assets():
         if hashlib.sha256((base / name).read_bytes()).hexdigest() != expected:
             raise RuntimeError(f"rocket benchmark asset changed: {name}")
     return manifest
+
+
+def verify_f9_real_assets():
+    """Verify the independent public-data F9 terminal-landing assets."""
+    base = Path(__file__).parent / "original_pyflyt/models/vehicles/rocket"
+    manifest = json.loads((base / "f9_real_manifest.json").read_text())
+    for name, expected in manifest["files"].items():
+        if hashlib.sha256((base / name).resolve().read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"F9 real asset changed: {name}")
+    return manifest

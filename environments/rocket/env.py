@@ -68,6 +68,7 @@ engine with the per-physics-step ignition>0.5 rule.
 Success: pad contact with |v|<0.02, |omega|<0.02, tilt<0.1 (upstream values).
 """
 
+import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
@@ -125,6 +126,7 @@ def rocket_shaping(
     contact_vz,
     newly_complete,
     newly_fatal,
+    fuel=None,
 ):
     """Dense reward per POLICY step, returned as (total, per-component dict).
 
@@ -139,7 +141,11 @@ def rocket_shaping(
     dvz = vel_z - previous_vel_z
     decel = (dvz + 1.0) * torch.exp(-p[:, 2].clamp_min(0.0)) * torch.where(vel_z < 0.0, 1.0, -1.0)
     z = p[:, 2].clamp_min(0.0)
-    v_allow = cfg["corridor_v0"] + torch.sqrt(2.0 * cfg["corridor_accel"] * z)
+    corridor_accel = cfg["corridor_accel"]
+    if fuel is not None:
+        mass = cfg["dry_mass"] + fuel * cfg["fuel_full"]
+        corridor_accel = 0.6 * (cfg["max_thrust"] / mass - 9.81).clamp_min(0.5)
+    v_allow = cfg["corridor_v0"] + torch.sqrt(2.0 * corridor_accel * z)
     v_excess = ((-vel_z).clamp_min(0.0) - v_allow).clamp_min(0.0)
     comps = {
         "hover": torch.full_like(dxy, -cfg["hover"]),
@@ -176,7 +182,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
     contact with speed > 1.0 m/s or spin > 0.35 rad/s, |p_xy| > 200 m, or
     z < 0 m; truncation at max_steps = 30 * agent_hz (30 s). The plant uses
     40/60 Hz agent / 120 Hz control / 240 Hz physics. Domain randomization
-    covers thrust (0.97, 1.03) and mass (0.95, 1.05).
+    covers thrust (0.97, 1.03); mass stays nominal by default.
     """
     # Upstream ICs (unchanged): xy +/-20 m, z [400,450], euler +/-0.3 rad.
     # Success criteria (pad contact thresholds) are untouched. Wind is
@@ -191,11 +197,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
     PERTURBABLE_PARAMS = {"thrust": 1.0, "mass": 1.0}
     # Literature: rocket Monte Carlo dispersion analyses (e.g. SpaceDelta
     # Falcon-9 landing design verification) use thrust +/-3% (3 sigma) and
-    # specific impulse +/-1% for the propulsion system.  Landing-mass
-    # uncertainty comes from dry-mass estimate scatter (F9 first-stage dry
-    # mass is publicly estimated at 22-28 t, ~+/-12%) plus residual
-    # propellant; we use +/-5% as a realistic in-flight landing-mass band.
-    DEFAULT_DOMAIN_RANDOMIZE = {"thrust": (0.97, 1.03), "mass": (0.95, 1.05)}
+    # specific impulse +/-1% for the propulsion system.  Dry mass is not
+    # randomized by default; it remains available as an explicit
+    # param_mismatch / domain_randomize override.
+    DEFAULT_DOMAIN_RANDOMIZE = {"thrust": (0.97, 1.03)}
 
     def __init__(
         self,
@@ -227,10 +232,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         if variation not in VARIATIONS:
             raise ValueError(variation)
         self.benchmark_version = benchmark_version
-        # Default agent_hz per benchmark: v2=40 Hz (current Falcon9 upstream),
-        # v1=60 Hz (external benchmark). Explicit agent_hz overrides the default.
+        self.f9_real = benchmark_version == "v1"
+        # Both supported versions use a 40 Hz policy by default.
         if agent_hz is None:
-            agent_hz = 60 if benchmark_version == "v1" else 40
+            agent_hz = 40
         self.num_envs = num_envs
         self.task_cfg = {
             "vehicle": "rocket",
@@ -280,8 +285,14 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
                 f"(use 40 or 60)"
             )
         self.inner_steps = int(self.plant.control_hz // agent_hz)
-        self.max_steps = 30 * agent_hz
-        self.landing_metrics = LandingMetrics(num_envs, self.device, agent_hz)
+        self.max_steps = (60 if self.f9_real else 30) * agent_hz
+        self.landing_metrics = LandingMetrics(
+            num_envs,
+            self.device,
+            agent_hz,
+            velocity_limit=0.1 if self.f9_real else 0.02,
+            tilt_limit=math.radians(5.0) if self.f9_real else 0.1,
+        )
         self.max_episode_length = self.max_steps + 2
         # Unified 7-dim upstream finlet mixer convention (matches external benchmark):
         #   finlet x/y/yaw [-1,1], ignition [0,1], throttle [0,1], gimbals [-1,1]
@@ -350,10 +361,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         rocket_model_dir = (
             Path(__file__).parents[1] / "common/original_pyflyt/models/vehicles/rocket"
         )
-        model = rocket_model_dir / (
-            "rocket_v2.urdf" if benchmark_version == "v2" else "rocket.urdf"
-        )
-        primary_metric = "ever_stable_2s" if benchmark_version == "v2" else "ever_success"
+        model = rocket_model_dir / {
+            "v1": "rocket_falcon9_stage1.urdf",
+            "v2": "rocket_v2.urdf",
+        }[benchmark_version]
+        primary_metric = "ever_stable_2s"
         self.cfg["benchmark"] = dict(
             version=benchmark_version,
             variation=variation,
@@ -362,11 +374,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             policy_hz=agent_hz,
             control_hz=self.plant.control_hz,
             physics_hz=self.plant.physics_hz,
-            horizon_seconds=30,
+            horizon_seconds=60 if self.f9_real else 30,
             stable_samples=self.landing_metrics.required_samples,
             primary_metric=primary_metric,
             collision_asset_sha256=hashlib.sha256(model.read_bytes()).hexdigest(),
-            physics_and_success_predicate_modified=(benchmark_version == "v2"),
+            physics_and_success_predicate_modified=True,
             integration="native-main-v2",
             external_wind=self.cfg.get("wind"),
         )
@@ -443,6 +455,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         p_start = p_start.clone()
         vz_start = v_start[:, 2].clone()
         complete_start = self.complete.clone()
+        stable_start = self.landing_metrics.ever_stable.clone()
         terminated_start = self.terminated.clone()
         contact_any = self.terminated.clone().fill_(False)
         contact_vz = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
@@ -459,7 +472,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             # Upstream compute_base_term_trunc_reward: any contact other than
             # (rocket, pad) is a fatal collision, as is dropping below ground.
             collision = self.plant.ground_contact | (p[:, 2] < 0)
-            bounds = (p[:, :2].norm(dim=-1) > 200) | (p[:, 2] > 500)
+            if self.f9_real:
+                bounds = (p[:, :2].norm(dim=-1) > 1000) | (p[:, 2] > 3000)
+            else:
+                bounds = (p[:, :2].norm(dim=-1) > 200) | (p[:, 2] > 500)
             touch = self.plant.pad_contact & active
             speed0 = vb0.norm(dim=-1)
             spin0 = wb0.norm(dim=-1)
@@ -469,8 +485,13 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             # start of this inner step): >1.0 m/s or >0.35 rad/s is fatal;
             # <0.02/<0.02 with tilt<0.1 is a landed success; anything in between
             # keeps simulating (on-pad settling).
-            fatal = collision | (touch & ((speed0 > 1.0) | (spin0 > 0.35)))
-            complete = touch & ~fatal & (spin0 < 0.02) & (speed0 < 0.02) & (tilt0 < 0.1)
+            if self.f9_real:
+                hard_touch = (speed0 > 6.0) | (spin0 > 0.35) | (tilt0 > math.radians(15.0))
+                fatal = collision | (touch & hard_touch)
+                complete = torch.zeros_like(touch)
+            else:
+                fatal = collision | (touch & ((speed0 > 1.0) | (spin0 > 0.35)))
+                complete = touch & ~fatal & (spin0 < 0.02) & (speed0 < 0.02) & (tilt0 < 0.1)
             new_touch = touch & ~self.touch_flag
             self.touch_flag |= new_touch
             self.touch_speed.copy_(torch.where(new_touch, speed0, self.touch_speed))
@@ -493,9 +514,34 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             self.truncated |= trunc & active
             self.collision |= collision & active
             self.out_of_bounds |= bounds & active
-        # one dense reward per POLICY step over the whole-step state deltas
+        # the time limit is applied AFTER the full control step (all physics
+        # substeps) so the final control step is not cut short; accidents still
+        # terminate inside the substep loop above. This is the ONLY truncation:
+        # a landed rocket keeps simulating (and earning) until here.
+        active = ~(self.terminated | self.truncated)
+        self.truncated |= (self.count >= self.max_steps) & active
+        self.landing_metrics.update(
+            self.obs_pad.bool(), v, wb, rpy[:, :2].norm(dim=-1), self.terminated
+        )
+        if self.f9_real:
+            self.complete.copy_(self.landing_metrics.ever_stable)
+        newly_success = (
+            self.landing_metrics.ever_stable & ~stable_start
+            if self.f9_real
+            else self.complete & ~complete_start
+        )
+        shaping_cfg = self.reward_cfg
+        fuel = None
+        if self.f9_real:
+            shaping_cfg = dict(
+                shaping_cfg,
+                dry_mass=25600.0,
+                fuel_full=self.plant.params["propellant_params"]["total_fuel"],
+                max_thrust=self.plant.params["booster_params"]["max_thrust"],
+            )
+            fuel = self.plant.fuel
         shaping, comps = rocket_shaping(
-            self.reward_cfg,
+            shaping_cfg,
             p,
             p_start,
             v[:, 2],
@@ -504,18 +550,13 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             wb,
             contact_any,
             contact_vz,
-            self.complete & ~complete_start,
+            newly_success,
             self.terminated & ~terminated_start,
+            fuel=fuel,
         )
         self.reward.copy_(shaping)
         for k in comps:
             self.reward_components[k] += comps[k]
-        # the time limit is applied AFTER the full control step (all physics
-        # substeps) so the final control step is not cut short; accidents still
-        # terminate inside the substep loop above. This is the ONLY truncation:
-        # a landed rocket keeps simulating (and earning) until here.
-        active = ~(self.terminated | self.truncated)
-        self.truncated |= (self.count >= self.max_steps) & active
 
         self.reset_buf = self.terminated | self.truncated
         # update buffers
@@ -524,9 +565,6 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.returns += self.reward
         self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
         self.completed_episodes += self.reset_buf.to(torch.long)
-        self.landing_metrics.update(
-            self.obs_pad.bool(), v, wb, rpy[:, :2].norm(dim=-1), self.terminated
-        )
         metrics = self.landing_metrics.values(self.complete, self.terminated)
         primary = metrics["ever_stable_2s"]
         self.completed_successes += (self.reset_buf & primary).to(torch.long)
@@ -637,15 +675,29 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
                 self, self._domain_randomize, self._seed, self._dr_counter, mask
             )
         p, q, v, w = self.plant.state()
-        u = self.plant.rng.uniform(6, mask)
-        spawn = torch.zeros_like(p)
-        spawn[:, 0] = (u[:, 0] * 2.0 - 1.0) * self.ic_xy_half
-        spawn[:, 1] = (u[:, 1] * 2.0 - 1.0) * self.ic_xy_half
-        spawn[:, 2] = self.ic_z_min + u[:, 2] * (450.0 - self.ic_z_min)
-        rotation = quat_from_euler((u[:, 3:] * 2.0 - 1.0) * self.ic_euler_half)
-        velocity = torch.zeros_like(v)
-        velocity[:, 2] = -100.0
-        omega = torch.zeros_like(w)
+        if self.f9_real:
+            u = self.plant.rng.uniform(13, mask)
+            spawn = torch.zeros_like(p)
+            spawn[:, :2] = (u[:, :2] * 2.0 - 1.0) * 100.0
+            spawn[:, 2] = 0.65 + 800.0 + u[:, 2] * 700.0
+            rpy = torch.zeros_like(p)
+            rpy[:, :2] = (u[:, 3:5] * 2.0 - 1.0) * math.radians(3.0)
+            rpy[:, 2] = (u[:, 5] * 2.0 - 1.0) * math.pi
+            rotation = quat_from_euler(rpy)
+            velocity = torch.zeros_like(v)
+            velocity[:, :2] = (u[:, 6:8] * 2.0 - 1.0) * 5.0
+            velocity[:, 2] = -(60.0 + 60.0 * u[:, 8])
+            omega = (u[:, 9:12] * 2.0 - 1.0) * 0.02
+        else:
+            u = self.plant.rng.uniform(6, mask)
+            spawn = torch.zeros_like(p)
+            spawn[:, 0] = (u[:, 0] * 2.0 - 1.0) * self.ic_xy_half
+            spawn[:, 1] = (u[:, 1] * 2.0 - 1.0) * self.ic_xy_half
+            spawn[:, 2] = self.ic_z_min + u[:, 2] * (450.0 - self.ic_z_min)
+            rotation = quat_from_euler((u[:, 3:] * 2.0 - 1.0) * self.ic_euler_half)
+            velocity = torch.zeros_like(v)
+            velocity[:, 2] = -100.0
+            omega = torch.zeros_like(w)
         self.plant.set_state(
             torch.where(mask[:, None], spawn, p),
             torch.where(mask[:, None], rotation, q),
@@ -668,6 +720,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             buf.masked_fill_(mask, 0.0)
         self.action.masked_fill_(mask[:, None], 0)
         self.plant.zero(mask)
+        if self.f9_real:
+            low, high = self.plant.params["propellant_params"]["initial_range"]
+            sampled_fuel = (low + (high - low) * u[:, 12]) / self.plant.params["propellant_params"]["total_fuel"]
+            self.plant.fuel.copy_(torch.where(mask, sampled_fuel, self.plant.fuel))
         self.obs_pad.masked_fill_(mask, 0)
         if bool(mask.any()):
             self.plant.warmup(mask)

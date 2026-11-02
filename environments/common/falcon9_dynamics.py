@@ -593,8 +593,9 @@ def rotate_body_to_world(q_wxyz: Tensor, v_body: Tensor) -> Tensor:
     q = q_wxyz.to(v_body.dtype)
     w, x, y, z = q.unbind(-1)
     xyz = torch.stack([x, y, z], dim=-1)
-    t = 2 * torch.linalg.cross(v_body, xyz)
-    return v_body + q[:, :1] * t + torch.linalg.cross(t, xyz)
+    # v + 2w(q×v) + 2q×(q×v), with t = 2q×v and the last term q×t.
+    t = 2 * torch.linalg.cross(xyz, v_body)
+    return v_body + q[:, :1] * t + torch.linalg.cross(xyz, t)
 
 
 def rotate_world_to_body(q_wxyz: Tensor, v_world: Tensor) -> Tensor:
@@ -602,8 +603,9 @@ def rotate_world_to_body(q_wxyz: Tensor, v_world: Tensor) -> Tensor:
     q = q_wxyz.to(v_world.dtype)
     w, x, y, z = q.unbind(-1)
     xyz = torch.stack([x, y, z], dim=-1)
+    # v - 2w(q×v) + 2q×(q×v), with t = 2q×v and the last term q×t.
     t = 2 * torch.linalg.cross(xyz, v_world)
-    return v_world - q[:, :1] * t + torch.linalg.cross(t, xyz)
+    return v_world - q[:, :1] * t + torch.linalg.cross(xyz, t)
 
 
 # ---------------------------------------------------------------------------
@@ -859,7 +861,7 @@ def state_deriv(
     wdot_world = rotate_body_to_world(quat_wxyz, wdot_body)
 
     # Quaternion derivative: q̇ = 0.5·q⊙[0, ω_body]   (scalar-last, but our quat is wxyz)
-    # Our convention: dq = 0.5 * omega_body_body_frame * q (Hamilton product)
+    # Conventions: dq = 0.5 * q ⊗ [0, ω_body] (Hamilton product, body→world quat).
     w_body_col = torch.cat(
         [torch.zeros(N, 1, device=quat_wxyz.device, dtype=quat_wxyz.dtype), w_body], dim=-1
     )  # (N, 4)

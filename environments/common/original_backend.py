@@ -198,7 +198,9 @@ class GenesisBulletClient:
                         recompute_inertia=False,
                         **kwargs,
                     ),
-                    material=gs.materials.Rigid(friction=0.5),
+                    material=gs.materials.Rigid(
+                        friction=1.0 if name in ("rocket_falcon9_stage1.urdf", "f9_landing_pad.urdf") else 0.5
+                    ),
                 )
                 if name == "rocket_v2.urdf":
                     pad = Path(__file__).parent / "original_pyflyt/models/landing_pad.urdf"

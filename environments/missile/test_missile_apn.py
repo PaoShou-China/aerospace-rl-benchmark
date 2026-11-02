@@ -15,7 +15,7 @@ Covers
         straight-line subset separately
 
 Genesis allows one device type per process:
-    python test_missile_apn.py [gpu|cpu]      (default gpu)
+    python test_missile_apn.py [gpu|cpu]      (default cpu)
 """
 
 import sys

@@ -1,0 +1,9 @@
+{
+  "benchmark": "rocket-landing-v1-real-scale-f9",
+  "source": "Public-data engineering model; not SpaceX flight-data validated",
+  "files": {
+    "rocket_falcon9_stage1.urdf": "2e8c363fadfe68fed6ce731385d0afb8b6a57bb5196bdaa2d8ab420e028a7756",
+    "f9_real.yaml": "53d54b901a928c34459ab961b06c455d85b18b326637b4f1ade5ea78626a5626",
+    "../../f9_landing_pad.urdf": "a1ba4a738ba8cac5b72d250b74fcfeeb00f1d41ab4d963093aa38808548014b0"
+  }
+}

@@ -41,9 +41,14 @@ loss is
 \begin{equation}
 L = -\mathcal L_{\mathrm{clip}} + c_v\,L_V - c_e\,\mathcal H[\pi_\theta], \tag{4}
 \end{equation}
-with value coefficient $c_v = 1.0$ and entropy coefficient $c_e = 0.001$. The policy is a
-state-independent Gaussian (`GaussianDistribution`, `std_type='log'`) with initial standard
-deviation $\sigma_0 = 0.5$. One update performs $E=4$ epochs over $M=4$ mini-batches (16 gradient
+with value coefficient $c_v = 1.0$ and entropy coefficient $c_e = 0.001$. The default policy is
+the bounded, state-independent Beta distribution (`BetaDistribution`,
+`action_range=(-1.0, 1.0)`): the MLP emits $\alpha,\beta>1$ per action, a $Beta(\alpha,\beta)$
+sample is linearly rescaled to $[-1,1]$, and the log-probability carries the rescale Jacobian.
+`build_cfg` also accepts `distribution='gaussian'`, which selects an unbounded
+`GaussianDistribution` (`std_type='log'`) with initial standard deviation
+$\sigma_0 = $ `init_std`; the Beta branch ignores `init_std`, which is retained only for
+backward compatibility. One update performs $E=4$ epochs over $M=4$ mini-batches (16 gradient
 steps per iteration) of a single Adam optimizer ($\mathrm{lr}=10^{-3}$) over the joint actor+critic
 parameters, with per-module gradient-norm clipping at $1.0$ (rsl-rl default `max_grad_norm`).
 `build_cfg` fixes `schedule='fixed'` (the KL-adaptive rsl-rl schedule is available but disabled by
@@ -75,9 +80,12 @@ update ever runs at a learning rate the schedule never prescribes.
 ## 5. Fair-comparison protocol
 
 All arms of a task share `build_cfg`'s defaults; a per-task entry overrides exactly the variables
-under test (e.g. `train_quadx.py` pins lr $3\times10^{-4}$, entropy $0.01$, $\sigma_0=1.0$,
-`num_steps_per_env` 100, epochs 5; `train_docking.py` pins lr $3\times10^{-4}$, $\gamma=0.999$,
-entropy $0.005$). Unless pinned otherwise, runs use $N=1024$ replicas, seed 7, and a budget of
+under test (e.g. `train_quadx.py` pins lr $3\times10^{-4}$, entropy $0.01$,
+`num_steps_per_env` 100 and epochs 5; its `init_std=1.0` is inert under the default Beta policy;
+`train_docking.py` pins lr $3\times10^{-4}$, $\gamma=0.999$, entropy $0.005$). No shipped entry
+overrides `distribution`, so every current run uses the Beta policy (the Gaussian-era
+`sigma_pin` / `lr_sigma_coupling` knobs in `train_rendezvous.py` were retired on 2026-11-02
+and are no longer passed). Unless pinned otherwise, runs use $N=1024$ replicas, seed 7, and a budget of
 1000 updates, i.e. $1000\times32\times1024 \approx 3.28\times10^{7}$ transitions; `run.json`
 records `transitions`, `train_wall_seconds`, `train_throughput_steps_per_s` and `peak_vram_gib`
 alongside the episode counters, and comparisons are reported at equal interaction steps (sample
@@ -95,7 +103,7 @@ efficiency) and equal wall clock (throughput) per the frozen evaluation protocol
 | $\gamma$ / $\lambda$ / clip $\epsilon$ | 0.99 / 0.95 / 0.2 |
 | steps per env / epochs / mini-batches | 32 / 4 / 4 (mini-batch $8192$ at $N{=}1024$) |
 | learning rate / schedule / desired KL | $10^{-3}$ / `'fixed'` / 0.01 |
-| entropy coef $c_e$ / value coef $c_v$ / init $\sigma_0$ | 0.001 / 1.0 / 0.5 (log-std) |
+| entropy coef $c_e$ / value coef $c_v$ / policy distribution | 0.001 / 1.0 / `BetaDistribution` rescaled to $[-1,1]$ (`init_std` applies only to `distribution='gaussian'`) |
 | grad-norm clip / value clipping | 1.0 (rsl-rl default) / enabled |
 | network | 2x128 tanh MLP, running-stats `EmpiricalNormalization` |
 | cosine schedule | peak $=$ lr, floor $1.5\times10^{-4}$, $w=\max(1,\lfloor10^{-6}U\rfloor)$, chunk $\lfloor U/100\rfloor$ |

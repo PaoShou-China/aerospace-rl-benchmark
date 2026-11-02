@@ -96,8 +96,11 @@ class LandingMetrics:
     truncation does not. No reset/warmup sample contributes to the dwell.
     """
 
-    def __init__(self, n, device, agent_hz):
+    def __init__(self, n, device, agent_hz, velocity_limit=0.02, spin_limit=0.02, tilt_limit=0.1):
         self.required_samples = math.ceil(2.0 * agent_hz) + 1
+        self.velocity_limit = velocity_limit
+        self.spin_limit = spin_limit
+        self.tilt_limit = tilt_limit
         self.streak = torch.zeros(n, device=device, dtype=torch.long)
         self.ever_stable = torch.zeros(n, device=device, dtype=torch.bool)
         self.terminal_settled = self.ever_stable.clone()
@@ -107,9 +110,9 @@ class LandingMetrics:
         settled = (
             contact
             & ~failed
-            & (velocity.norm(dim=-1) < 0.02)
-            & (omega.norm(dim=-1) < 0.02)
-            & (tilt < 0.1)
+            & (velocity.norm(dim=-1) < self.velocity_limit)
+            & (omega.norm(dim=-1) < self.spin_limit)
+            & (tilt < self.tilt_limit)
         )
         self.terminal_settled.copy_(settled)
         self.streak.copy_(torch.where(settled, self.streak + 1, 0))

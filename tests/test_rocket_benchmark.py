@@ -180,6 +180,36 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(next_comps["fatal"].abs().sum().item(), 0.0)
 
+    def test_f9_real_tank_mass_inertia_and_flow(self):
+        import yaml
+        from environments.common.plant import f9_tank_properties
+
+        base = ROOT / "environments/common/original_pyflyt/models/vehicles/rocket"
+        params = yaml.safe_load((base / "f9_real.yaml").read_text())
+        fuel = torch.tensor([8500.0 / 410900.0, 6000.0 / 410900.0], dtype=torch.float64)
+        mass, inertia, com = f9_tank_properties(fuel, params)
+        torch.testing.assert_close(mass.sum(1), torch.tensor([8500.0, 6000.0], dtype=torch.float64))
+        self.assertTrue((inertia.diagonal(dim1=-2, dim2=-1) > 0).all())
+        self.assertTrue((com[..., 2] >= 0).all())
+        b = params["booster_params"]
+        self.assertAlmostEqual(b["max_fuel_rate"], b["max_thrust"] / (282.0 * 9.80665), places=9)
+        root = ET.fromstring((base / "rocket_falcon9_stage1.urdf").read_text())
+        dry = sum(
+            float(link.find("inertial/mass").get("value"))
+            for link in root.findall("link")
+            if link.get("name") not in ("fueltank_lox", "fueltank_rp1")
+        )
+        self.assertAlmostEqual(dry, 25600.01, places=6)
+        self.assertAlmostEqual(
+            params["finlet_params"]["chord"] * params["finlet_params"]["span"], 2.4, places=9
+        )
+        joints = {joint.get("name"): joint for joint in root.findall("joint")}
+        leg = joints["leg_1_joint"].find("origin").get("xyz").split()
+        foot = root.find("link[@name='leg_1']/collision/origin").get("xyz").split()
+        self.assertAlmostEqual(float(leg[0]) + float(foot[0]), 9.0, places=9)
+        self.assertEqual(joints["fin_pos_x_joint"].find("origin").get("xyz"), "1.83 0 45.0")
+        self.assertEqual(root.find("link[@name='fin_pos_x']/inertial/origin").get("xyz"), "0 0 0")
+
     def test_variation_uses_independent_masked_stream(self):
         from environments.common.plant import TensorRandom
 
