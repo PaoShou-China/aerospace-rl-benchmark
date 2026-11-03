@@ -42,3 +42,13 @@ python scripts/baseline_eval.py quadx
 - [实现细节 / Infrastructure](docs/technical-highlights.md)
 
 Physics uses float64; observations and rewards use float32. Baseline replica counts, seeds, windows and success definitions vary; consult the full technical details before comparing results.
+
+## Acknowledgments
+
+We thank Professors Lin Cheng (程林), Shengping Gong (龚胜平), and Peng Shi (师鹏), and fellow students Wang Han (王翰), Shi Yunhan (史运翰), Gong Yuxuan (龚钰轩), and Dai Yuhang (代雨航) for their support and help with this project.
+
+We also thank the following open-source projects and their contributors for simulation engines, tensor computation, training tools, model assets, and task references:
+
+[Genesis](https://github.com/Genesis-Embodied-AI/Genesis), [PyTorch](https://github.com/pytorch/pytorch), [rsl-rl](https://github.com/leggedrobotics/rsl_rl), [PyFlyt](https://github.com/jkuang421/PyFlyt), [TorchRL](https://github.com/pytorch/rl), [gym-satellite-trajectory](https://github.com/zampanteymedio/gym-satellite-trajectory).
+
+We also acknowledge SpaceGym and the authors of related research. Task provenance and citations are listed in the full technical details. Each upstream project retains its own license and citation requirements.
