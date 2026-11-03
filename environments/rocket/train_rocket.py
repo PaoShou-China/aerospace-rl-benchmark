@@ -135,24 +135,19 @@ INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == "__main__":
-    # num_steps_per_env=64 (documented deviation from the shared 32 default,
-    # user-sanctioned fallback knob, 2026-10-20): at 32 the batch holds only
-    # ~8 episodes, and the advantage signal that separates a 4 m/s touch from
-    # a 12 m/s touch (terminal delta ~+3) is estimated from so few episodes
-    # that touch-quality clusters keep regressing (measured: touch_speed
-    # bounces 4.2 <-> 14 across iterations while its mean grinds down).
-    # 64 doubles the batch (16 episodes/update), halving gradient noise.
-    # Web-alignment (2026-10-21): PPO values follow "Rocket Landing Control with
-    # Random Annealing Jump Start RL" (arXiv:2407.15083): lr 3e-4, gamma 0.995,
-    # lam 0.97, entropy 0.007, clip 0.2, target KL 0.01. The paper uses batch
-    # 20000 x 30 gradient steps; 64 steps/env x 1024 envs x 10 epochs gives
-    # 655k gradient samples/update, close to the paper's ~600k (10 epochs is
-    # the equivalent of its 30 gradient steps at this batch size).
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants.
+
+    Hyperparameters (2026-11-03 5-seed protocol, arXiv:2407.15083 alignment):
+    num_steps_per_env 64 doubles the batch vs the shared 32 (at 32 the batch
+    holds only ~8 episodes and touch-quality clusters keep regressing);
+    lr 3e-4, gamma 0.995, lam 0.97, entropy 0.007, clip 0.2, 10 epochs --
+    64 steps/env x 1024 envs x 10 epochs gives 655k gradient samples/update,
+    close to the paper's ~600k."""
     env_kwargs = dict(WIND, benchmark_version=BENCHMARK_VERSION)
-    run_training(
-        TASK,
-        RocketLandingEnv,
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -175,3 +170,9 @@ if __name__ == "__main__":
         env_kwargs=env_kwargs,
         bc_warmstart=BC_WARMSTART,
     )
+    kwargs.update(overrides)
+    run_training(TASK, RocketLandingEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

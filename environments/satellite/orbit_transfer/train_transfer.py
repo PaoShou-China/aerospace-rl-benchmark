@@ -37,25 +37,21 @@ CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
 ALGORITHM = "ppo"
 
 # Task-specific deviations from the shared fair-comparison PPO configuration.
-# lr pinned to the proven recipe (2026-10-20, 1000-update verification run:
-# mean_reward 0.14->1.55, success 100% from update 31, final ckpt 100% / +20.6
-# km): KL-adaptive 3e-4 is healthy on this short 166-step task (lr stayed
-# 4e-4..3e-3, no floor slam, std 0.5->0.10), so neither the adaptive pathology
-# nor the fixed-1e-3 default was ever beaten here; both are untested at the
-# new [128,128] network scale.
 # Web-alignment (2026-10-21): values follow "RL for Low-Thrust Trajectory Design
 # of Interplanetary Missions" (arXiv:2008.08501): gamma 0.9999, lam 0.99,
-# lr 2.5e-4, entropy 4.75e-8, 30 epochs, clip 0.3, vf_coef 0.5. The paper
-# linearly decays lr (2.5e-4 -> 0) and clip (0.3 -> 0); rsl-rl only supports
-# fixed/adaptive schedules, so the constant start values are used here.
+# lr 2.5e-4, entropy 4.75e-8, clip 0.2, vf_coef 0.5. 2026-11-03 5-seed
+# protocol: 10 learning epochs (shared convention) and the paper's lr decay
+# implemented as the warmup-cosine schedule 2.5e-4 -> 2.5e-5 (lr_cosine).
 PPO_OVERRIDES = {
     "gamma": 0.9999,
     "lr_schedule": "fixed",
     "learning_rate": 2.5e-4,
+    "lr_cosine": True,
+    "learning_rate_end": 2.5e-5,
     "lam": 0.99,
     "entropy_coef": 4.75e-8,
-    "num_learning_epochs": 30,
-    "clip_param": 0.3,
+    "num_learning_epochs": 10,
+    "clip_param": 0.2,
     "value_loss_coef": 0.5,
 }
 
@@ -63,10 +59,11 @@ PPO_OVERRIDES = {
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == "__main__":
-    run_training(
-        TASK,
-        LowThrustTransferEnv,
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -77,3 +74,9 @@ if __name__ == "__main__":
         bc_warmstart=BC_WARMSTART,
         **PPO_OVERRIDES,
     )
+    kwargs.update(overrides)
+    run_training(TASK, LowThrustTransferEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

@@ -62,16 +62,24 @@ VALUE_LOSS_COEF = 0.5
 WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
-# env's ``conventional_controller``, which for this task is still
-# QuadplaneHybridBaseline (26.6% standalone) rather than the default evaluated
-# baseline se3_pusher (87.5%); driven directly by the BC collector before PPO.
-# None = off.
+# env's ``conventional_controller`` before PPO. None = off.
+# 2026-11-03: the teacher is unified with the evaluated default baseline --
+# the env class attribute still names QuadplaneHybridBaseline (26.6%
+# standalone), so this entry re-points it at QuadplaneSE3PusherBaseline
+# (87.5% / 89.1% over the 3-seed protocol), the same controller the
+# residual-RL base uses. This changes ONLY the BC expert; the env itself,
+# its reward and the benchmark are untouched.
+from algorithms.baselines.variants_quadplane import QuadplaneSE3PusherBaseline  # noqa: E402
+
+QuadplaneWaypointsEnv.conventional_controller = QuadplaneSE3PusherBaseline
+
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == "__main__":
-    run_training(
-        TASK,
-        QuadplaneWaypointsEnv,
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -88,3 +96,9 @@ if __name__ == "__main__":
         env_kwargs=WIND,
         bc_warmstart=BC_WARMSTART,
     )
+    kwargs.update(overrides)
+    run_training(TASK, QuadplaneWaypointsEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

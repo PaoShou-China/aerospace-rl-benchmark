@@ -1,6 +1,10 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
 A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains ten aerospace tasks spanning atmospheric flight and spacecraft dynamics. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
+**Showcase page (rendered from this repository by GitHub Pages):**
+<https://paoshou-china.github.io/aerospace-rl-benchmark/> — task video wall,
+baseline reference success rates, design notes and quick start.
+
 Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly or used to generate behavior-cloning data for the warm-started learning pipeline.
 
 The six atmospheric vehicle tasks (`quadx`, `quadx_track`, `fixedwing`, `quadplane`, `rocket`, `missile`) use URDF-based rigid-body plants; four spacecraft tasks use explicit tensor dynamics. Genesis is the current rigid-body backend for the URDF tasks and is treated as an implementation dependency rather than the benchmark abstraction.

@@ -51,10 +51,11 @@ WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
 # PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == "__main__":
-    run_training(
-        TASK,
-        QuadXWaypointsEnv,
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -71,3 +72,9 @@ if __name__ == "__main__":
         env_kwargs=WIND,
         bc_warmstart=BC_WARMSTART,
     )
+    kwargs.update(overrides)
+    run_training(TASK, QuadXWaypointsEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

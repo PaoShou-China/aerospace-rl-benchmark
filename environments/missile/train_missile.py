@@ -114,10 +114,14 @@ ENV_KWARGS = {"reward_variant": REWARD_VARIANT}
 # brittle under PPO updates, so keep the standard 100-epoch recipe.)
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == "__main__":
-    run_training(
-        TASK,
-        MissileInterceptEnv,
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants.
+
+    2026-11-03 5-seed protocol hyperparameters: gamma 0.995, lam 0.95,
+    entropy 0.003, 5 learning epochs, nsp 64, lr 3e-4, clip 0.2, vf 1.0."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -131,32 +135,18 @@ if __name__ == "__main__":
         num_steps_per_env=64,
         lr_schedule="fixed",
         learning_rate=3e-4,
-        # 2026-10-28, adjustment 2 of 2 (root-cause reward rebalance in
-        # env.py: KILL_BONUS 50->100, K_ALIGN 0.02->0.01, K_CTRL
-        # 0.01->0.003; see constants there). Run 1 (gamma .995, ent
-        # .007): kills decayed 11%->1% as ctrl collapsed -26->-1.7 and
-        # std 0.46->0.21 -- the discounted kill bonus was too weak vs
-        # the constant ~24/ep shaping plateau. Run 2 (gamma .999, ent
-        # .015): std exploded 0.58->5.2, saturated noise. So: gamma back
-        # to 0.995 (stable advantages), entropy to the 0.010 midpoint,
-        # and the kill differential carried by the env weights instead.
-        # 2026-10-28 run 4: entropy 0.010->0.007 -- run 3 showed the std
-        # ratchet (0.57->160) under entropy 0.010 (clipped samples give
-        # zero std-gradient); 0.007 kept std bounded in run 1. Env
-        # reward rebalance kept as-is.
-        # All std values quoted above were measured under the Gaussian
-        # policy; the default BetaDistribution has no free std, so these
-        # observations are historical. `init_std` below is ignored unless
-        # the policy is switched to `distribution="gaussian"`.
-        # 2026-10-29 comparison arm: identical PPO hyperparameters and
-        # seed; only the env terminal-miss grading and ctrl-penalty
-        # removal change. Baseline remains in results/missile.
         gamma=0.995,
-        lam=0.97,
-        entropy_coef=0.007,
+        lam=0.95,
+        entropy_coef=0.003,
         init_std=0.5,
-        num_learning_epochs=10,
+        num_learning_epochs=5,
         clip_param=0.2,
         value_loss_coef=1.0,
         desired_kl=0.01,
     )
+    kwargs.update(overrides)
+    run_training(TASK, MissileInterceptEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

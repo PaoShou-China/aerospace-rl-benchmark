@@ -30,10 +30,9 @@ from environments.multirotor import QuadXTrackEnv  # noqa: E402
 TASK = "quadx_track"
 ALGORITHM = "ppo"
 NUM_ENVS = 1024
-# Shared vectorized-step budget (20.5M transitions at 1024 envs).
-# Sized so the run completes inside a bounded wall-clock on a shared, saturated
-# GPU while still giving PPO 200 updates.
-TRAIN_ENV_STEPS = 20_000
+# Shared vectorized-step budget: 500 updates x 100 steps x 1024 envs
+# (51.2M transitions) per the 2026-11-03 5-seed protocol.
+TRAIN_ENV_STEPS = 50_000
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False
@@ -55,18 +54,11 @@ BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=
 UPDATES = TRAIN_ENV_STEPS // NUM_STEPS_PER_ENV
 OUT_DIR = _ROOT / "results" / TASK / ALGORITHM
 
-if __name__ == "__main__":
-    extra = dict(
-        lr_schedule=LR_SCHEDULE,
-        learning_rate=LEARNING_RATE,
-        entropy_coef=ENTROPY_COEF,
-        init_std=INIT_STD,
-        num_steps_per_env=NUM_STEPS_PER_ENV,
-        num_learning_epochs=NUM_LEARNING_EPOCHS,
-    )
-    run_training(
-        TASK,
-        QuadXTrackEnv,
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -77,5 +69,16 @@ if __name__ == "__main__":
         algo=ALGORITHM,
         env_kwargs=WIND,
         bc_warmstart=BC_WARMSTART,
-        **extra,
+        lr_schedule=LR_SCHEDULE,
+        learning_rate=LEARNING_RATE,
+        entropy_coef=ENTROPY_COEF,
+        init_std=INIT_STD,
+        num_steps_per_env=NUM_STEPS_PER_ENV,
+        num_learning_epochs=NUM_LEARNING_EPOCHS,
     )
+    kwargs.update(overrides)
+    run_training(TASK, QuadXTrackEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

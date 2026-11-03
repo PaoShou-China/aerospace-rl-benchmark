@@ -90,6 +90,11 @@ def main():
         default=None,
         help="training dir holding checkpoint.pt (default results/<vehicle>)",
     )
+    parser.add_argument(
+        "--report-name",
+        default="eval.json",
+        help="report filename written into --out (the 5-seed protocol writes one per eval seed)",
+    )
     args = parser.parse_args()
 
     out = args.out or Path(__file__).resolve().parent.parent / "results" / args.vehicle
@@ -115,6 +120,26 @@ def main():
     wrapper = _eval_wrapper(cfg, args.vehicle)
     if wrapper is not None:
         env = wrapper(env)
+    residual_cfg = cfg.get("residual") or {}
+    if residual_cfg.get("controller"):
+        # Residual-RL run: rebuild the SAME wrapper used at training -- the
+        # checkpoint's actor emits the residual variable u_t, the classical
+        # base controller composes a_t = a0 + rho*tanh(u_t) inside the wrapper.
+        from algorithms.baselines.baselines import build_baseline
+        from algorithms.residual.residual_env import ResidualVecEnv
+
+        controller = build_baseline(
+            args.vehicle,
+            env,
+            residual_cfg.get("variant"),
+            design=residual_cfg.get("controller_design"),
+        )
+        env = ResidualVecEnv(
+            env,
+            controller,
+            residual_rho=float(cfg.get("residual_rho", 0.05)),
+            task=args.vehicle,
+        )
     if cfg.get("algo") == "flash_sac":
         raise RuntimeError(
             "flash_sac checkpoints are no longer supported (algorithm removed); "
@@ -159,7 +184,7 @@ def main():
     m = max(report["episodes_completed_total"], 1)
     report["task_metrics"].update({k: v / m for k, v in report["global_metric_counts"].items()})
     print(json.dumps(report, indent=2), flush=True)
-    (out / "eval.json").write_text(json.dumps(report, indent=2))
+    (out / args.report_name).write_text(json.dumps(report, indent=2))
     env.close()
     if not report["complete"]:
         raise RuntimeError("Incomplete first-episode cohort; partial report saved")

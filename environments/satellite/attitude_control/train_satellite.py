@@ -46,15 +46,14 @@ LEARNING_RATE = 3e-4
 INIT_STD = 1.0  # inert under the default Beta policy; Gaussian-only knob
 # Pure-RL entry (arXiv:2505.00165 alignment): gamma 0.999 because 1200-step
 # episodes make 0.99 blind to the settle bonus; nsp 150 matches the paper's
-# 150-step rollout; 5 mini-batches mirror its ~32-sample minibatches.
-# The fixed schedule replaces SB3's KL-adaptive schedule (adaptive is proven
-# to clamp to 1e-5 on this task). lr/sigma coupling and obs-norm freezing are
-# warm-start-specific and removed.
+# 150-step rollout. 2026-11-03 5-seed protocol: 10 mini-batches, 10 learning
+# epochs (the 40-epoch recipe was a warm-start refinement; the from-scratch
+# benchmark arms use the shared 10-epoch convention).
 PPO_OVERRIDES = dict(
     gamma=0.999,
     num_steps_per_env=150,
-    num_mini_batches=5,
-    num_learning_epochs=40,
+    num_mini_batches=10,
+    num_learning_epochs=10,
     entropy_coef=0.0,
     init_std=INIT_STD,
     clip_param=0.2,
@@ -176,10 +175,11 @@ LR_SCHEDULE = "fixed"
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == "__main__":
-    run_training(
-        TASK,
-        SatelliteAttitudeEnv,
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -192,3 +192,9 @@ if __name__ == "__main__":
         bc_warmstart=BC_WARMSTART,
         **PPO_OVERRIDES,
     )
+    kwargs.update(overrides)
+    run_training(TASK, SatelliteAttitudeEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

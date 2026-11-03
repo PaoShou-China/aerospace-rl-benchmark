@@ -107,7 +107,20 @@ ALGORITHM = "ppo"
 # (closer spawn + harder hover floor). New default = a2: the PPO constants
 # below are UNCHANGED, the env moves to (200,400) + time_penalty .02 (see
 # satellite/rendezvous_docking/env.py).
-PPO_OVERRIDES = dict(num_steps_per_env=250, gamma=0.999, num_mini_batches=1, entropy_coef=0.0)
+# 2026-11-03 5-seed protocol (final): num_steps_per_env 250, gamma 0.999,
+# lam 0.98, 8 mini-batches, entropy 0, warmup-cosine lr 3e-4 -> 3e-5 over
+# 1500 updates; FORMAL runs train at the BENCHMARK spawn (SpaceRendezvousEnv,
+# 1000-1500 m). _EasedSpawnEnv below is retained only for the near-field
+# curriculum ablation, not part of the benchmark protocol.
+PPO_OVERRIDES = dict(
+    num_steps_per_env=250,
+    gamma=0.999,
+    lam=0.98,
+    num_mini_batches=8,
+    entropy_coef=0.0,
+    lr_cosine=True,
+    learning_rate_end=3e-5,
+)
 UPDATES = 1500
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
@@ -121,17 +134,19 @@ UPDATES = 1500
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 
-# 2026-10-29: training-only spawn easing as a local subclass. The env default
-# stays at the benchmark (1000,1500) so scripts/eval.py (which rebuilds the env
-# from config.json env_kwargs, empty here) always evaluates benchmark spawn.
+# 2026-10-29: training-only spawn easing as a local subclass, kept for the
+# curriculum ablation. The formal 5-seed benchmark runs use SpaceRendezvousEnv
+# itself (benchmark spawn 1000-1500 m); scripts/eval.py always evaluates the
+# benchmark spawn.
 class _EasedSpawnEnv(SpaceRendezvousEnv):
     init_range = (200.0, 400.0)  # sweep winner a2 (see the sweep table above)
 
 
-if __name__ == "__main__":
-    run_training(
-        TASK,
-        _EasedSpawnEnv,
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / env_cls / ...) let the 5-seed orchestrator drive the same
+    constants. Formal runs use the benchmark-spawn SpaceRendezvousEnv."""
+    kwargs = dict(
         num_envs=NUM_ENVS,
         updates=UPDATES,
         seed=SEED,
@@ -142,3 +157,9 @@ if __name__ == "__main__":
         bc_warmstart=BC_WARMSTART,
         **PPO_OVERRIDES,
     )
+    kwargs.update(overrides)
+    run_training(TASK, SpaceRendezvousEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()
