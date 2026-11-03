@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="AerospaceRL benchmark mark">
+  <g fill="none" stroke="#8fd3e8" stroke-width="3.2" stroke-linejoin="round">
+    <path d="M32 8.5 55 51H9z"/>
+  </g>
+  <path d="M19.5 40.5h25" fill="none" stroke="#d5e2ee" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="32" cy="40.5" rx="27" ry="9" transform="rotate(-12 32 40.5)"
+           fill="none" stroke="#d5e2ee" stroke-opacity="0.55" stroke-width="1.6"/>
+  <circle cx="53.5" cy="33.5" r="2.6" fill="#d9a441"/>
+</svg>

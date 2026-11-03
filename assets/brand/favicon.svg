@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="AerospaceRL benchmark">
+  <rect width="64" height="64" rx="13" fill="#08131f"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="12.5" fill="none" stroke="#8fd3e8" stroke-opacity="0.22"/>
+  <path d="M32 11 52 49H12z" fill="none" stroke="#8fd3e8" stroke-width="3.4" stroke-linejoin="round"/>
+  <path d="m22 39 20 0" fill="none" stroke="#d5e2ee" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="51" cy="33" r="2.6" fill="#d9a441"/>
+</svg>

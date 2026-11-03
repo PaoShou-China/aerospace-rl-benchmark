@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 750" width="1200" height="750" role="img" aria-label="Brand illustration: a booster descending toward a lit planetary limb, with orbital arcs. Not a simulation capture.">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#04080d"/>
+      <stop offset="0.55" stop-color="#081321"/>
+      <stop offset="1" stop-color="#0a1826"/>
+    </linearGradient>
+    <radialGradient id="limb" cx="0.5" cy="0.18" r="0.75">
+      <stop offset="0" stop-color="#123049"/>
+      <stop offset="0.45" stop-color="#0b1b2b"/>
+      <stop offset="1" stop-color="#060d16"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8fd3e8" stop-opacity="0"/>
+      <stop offset="0.28" stop-color="#8fd3e8" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#d5e2ee" stop-opacity="0.8"/>
+      <stop offset="0.72" stop-color="#8fd3e8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#8fd3e8" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0c1a27"/>
+      <stop offset="0.5" stop-color="#122434"/>
+      <stop offset="1" stop-color="#0a1622"/>
+    </linearGradient>
+    <linearGradient id="plume" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fd3e8" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#8fd3e8" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="750" fill="url(#sky)"/>
+
+  <!-- starfield, sparse and quiet -->
+  <g fill="#d5e2ee">
+    <circle cx="118" cy="86" r="1.5" opacity="0.5"/>
+    <circle cx="214" cy="168" r="1.1" opacity="0.32"/>
+    <circle cx="286" cy="58" r="1.8" opacity="0.45"/>
+    <circle cx="392" cy="122" r="1" opacity="0.3"/>
+    <circle cx="470" cy="46" r="1.3" opacity="0.4"/>
+    <circle cx="520" cy="196" r="0.9" opacity="0.26"/>
+    <circle cx="706" cy="72" r="1.2" opacity="0.38"/>
+    <circle cx="812" cy="132" r="1.5" opacity="0.42"/>
+    <circle cx="902" cy="54" r="1" opacity="0.28"/>
+    <circle cx="1010" cy="104" r="1.7" opacity="0.46"/>
+    <circle cx="1094" cy="176" r="1" opacity="0.28"/>
+    <circle cx="1150" cy="78" r="1.2" opacity="0.34"/>
+    <circle cx="158" cy="268" r="1" opacity="0.24"/>
+    <circle cx="322" cy="232" r="1.3" opacity="0.3"/>
+    <circle cx="944" cy="214" r="0.9" opacity="0.22"/>
+    <circle cx="1072" cy="300" r="1.2" opacity="0.26"/>
+  </g>
+
+  <!-- orbital arcs -->
+  <g fill="none" stroke="#8fd3e8">
+    <ellipse cx="600" cy="344" rx="486" ry="156" transform="rotate(-15 600 344)" stroke-opacity="0.20" stroke-width="1.4"/>
+    <ellipse cx="600" cy="344" rx="352" ry="112" transform="rotate(-15 600 344)" stroke-opacity="0.13" stroke-width="1.2"/>
+    <path d="M118 392c86-96 226-152 348-142" stroke-opacity="0.22" stroke-width="1.2" stroke-dasharray="6 10"/>
+  </g>
+
+  <!-- small satellite riding the outer arc -->
+  <g transform="translate(1006 262) rotate(-15)">
+    <rect x="-9" y="-5" width="18" height="10" rx="1.6" fill="#0e1e2c" stroke="#d5e2ee" stroke-opacity="0.8" stroke-width="1.2"/>
+    <rect x="-22" y="-4" width="11" height="8" fill="#123049" stroke="#8fd3e8" stroke-opacity="0.55" stroke-width="1"/>
+    <rect x="11" y="-4" width="11" height="8" fill="#123049" stroke="#8fd3e8" stroke-opacity="0.55" stroke-width="1"/>
+    <circle cx="0" cy="0" r="1.4" fill="#d9a441"/>
+  </g>
+
+  <!-- planetary limb -->
+  <circle cx="600" cy="1288" r="856" fill="url(#limb)"/>
+  <path d="M-40 462a856 856 0 0 1 1280 0" fill="none" stroke="url(#rim)" stroke-width="1.8" transform="translate(0 -22)"/>
+
+  <!-- booster -->
+  <g>
+    <path d="M600 118 629 186v224H571V186z" fill="url(#body)" stroke="#d5e2ee" stroke-opacity="0.85" stroke-width="1.8"/>
+    <path d="M600 132v268" stroke="#8fd3e8" stroke-opacity="0.18" stroke-width="1"/>
+    <path d="M571 236h58M571 320h58" stroke="#d5e2ee" stroke-opacity="0.2" stroke-width="1"/>
+
+    <!-- grid fins -->
+    <g stroke="#d5e2ee" stroke-opacity="0.78" stroke-width="1.4" fill="#0e1e2c">
+      <path d="M629 242 668 252v34l-39-12z"/>
+      <path d="M571 242 532 252v34l39-12z"/>
+      <g stroke-opacity="0.4" stroke-width="1">
+        <path d="M629 250 668 260M629 258 668 268M629 266 668 276M629 274 668 284"/>
+        <path d="M571 250 532 260M571 258 532 268M571 266 532 276M571 274 532 284"/>
+      </g>
+    </g>
+
+    <!-- landing legs -->
+    <g stroke="#c9d6e2" stroke-opacity="0.65" stroke-width="2.4" fill="none" stroke-linecap="round">
+      <path d="M573 412 546 474"/>
+      <path d="M627 412 654 474"/>
+      <path d="M546 474h-12M654 474h12" stroke-width="1.6" stroke-opacity="0.5"/>
+    </g>
+
+    <!-- engine bell and plume -->
+    <path d="M589 410h22l6 22h-34z" fill="#0a1622" stroke="#d5e2ee" stroke-opacity="0.7" stroke-width="1.4"/>
+    <path d="M578 434h44l-8 96h-28z" fill="url(#plume)"/>
+    <g stroke="#8fd3e8" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 11">
+      <path d="M594 438v78M600 441v92M606 438v78"/>
+    </g>
+    <circle cx="629" cy="300" r="2.2" fill="#d9a441"/>
+  </g>
+
+  <!-- foreground vignette -->
+  <rect width="1200" height="750" fill="none"/>
+</svg>

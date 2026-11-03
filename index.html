@@ -1,539 +1,696 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AerospaceRL Benchmark · GPU 并行航空航天控制环境</title>
-<meta name="description" content="十个航空航天控制任务的 GPU 并行强化学习基准：统一批量张量接口、经典 GNC 基线、可复现评测协议。">
+<title>AerospaceRL Benchmark — GPU-parallel aerospace control environments</title>
+<meta name="description" content="Ten aerospace control tasks behind one batched device-tensor interface: six atmospheric vehicles, four spacecraft missions, and a classical GNC baseline for each task.">
+<meta name="theme-color" content="#060c14">
 <meta property="og:title" content="AerospaceRL Benchmark">
-<meta property="og:description" content="GPU-parallel aerospace control environments for reinforcement learning.">
+<meta property="og:description" content="Ten aerospace control tasks behind one batched device-tensor interface.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://paoshou-china.github.io/aerospace-rl-benchmark/">
+<link rel="icon" type="image/svg+xml" href="assets/brand/favicon.svg">
 <style>
   :root{
-    --bg:#05080c;
-    --bg-2:#080e15;
-    --surface:rgba(14,22,31,.82);
-    --surface-2:#111b26;
-    --line:rgba(120,190,220,.16);
-    --line-strong:rgba(120,220,255,.32);
-    --text:#e8f2f8;
-    --text-2:#9db3c2;
-    --text-3:#6d8493;
-    --accent:#4ee1ff;
-    --accent-2:#7dffc4;
-    --accent-3:#ffd166;
-    --warn:#ffb86b;
-    --bad:#ff6b81;
-    --good:#5dffa8;
-    --radius:14px;
-    --radius-sm:10px;
-    --font-sans:"Inter","Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-    --font-mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace;
-    --max:1180px;
+    --bg:#060c14;
+    --bg-soft:#081320;
+    --panel:#0a1622;
+    --line:rgba(160,190,214,.16);
+    --line-soft:rgba(160,190,214,.09);
+    --text:#dfe8f0;
+    --text-2:#a7b9c9;
+    --text-3:#8298aa;
+    --ice:#8fd3e8;
+    --ice-strong:#bfe7f4;
+    --amber:#d9a441;
+    --radius:10px;
+    --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+    --max:1160px;
+    --gutter:28px;
+    --space-1:8px;
+    --space-2:14px;
+    --space-3:22px;
+    --space-4:34px;
+    --space-5:56px;
+    --space-6:84px;
   }
   *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
+  html{scroll-behavior:smooth;scroll-padding-top:78px}
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+  }
   body{
-    margin:0;background:
-      radial-gradient(1200px 600px at 12% -10%,rgba(78,225,255,.10),transparent 60%),
-      radial-gradient(900px 500px at 90% 0%,rgba(125,255,196,.06),transparent 55%),
-      var(--bg);
-    color:var(--text);font-family:var(--font-sans);line-height:1.6;
-    -webkit-font-smoothing:antialiased;
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:var(--sans);font-size:16px;line-height:1.62;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   }
-  a{color:var(--accent);text-decoration:none}
+  html[lang="zh-CN"] body{letter-spacing:.01em}
+  img,svg,video{display:block;max-width:100%}
+  a{color:var(--ice);text-decoration:none}
   a:hover{text-decoration:underline}
-  .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
-  .mono{font-family:var(--font-mono)}
-
-  /* ---------- top bar ---------- */
-  header.top{
-    position:sticky;top:0;z-index:40;
-    backdrop-filter:blur(14px);
-    background:rgba(5,8,12,.72);
-    border-bottom:1px solid var(--line);
+  code{font-family:var(--mono);font-size:.92em;color:var(--ice-strong)}
+  h1,h2,h3{font-weight:600;line-height:1.16;margin:0}
+  html[lang="en"] h1,html[lang="en"] h2{letter-spacing:-.015em}
+  p{margin:0 0 1em}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gutter)}
+  .mono{font-family:var(--mono)}
+  .skip{
+    position:absolute;left:-9999px;top:8px;z-index:60;
+    background:var(--panel);color:var(--text);padding:10px 16px;border:1px solid var(--ice);
   }
-  .top-inner{display:flex;align-items:center;gap:22px;height:62px}
-  .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;color:var(--text)}
-  .brand:hover{text-decoration:none}
-  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 14px var(--accent)}
-  nav.links{display:flex;gap:18px;margin-left:auto;font-size:13px}
-  nav.links a{color:var(--text-2)}
-  nav.links a:hover{color:var(--accent);text-decoration:none}
-  @media(max-width:760px){nav.links{display:none}}
+  .skip:focus{left:16px}
+  :focus-visible{outline:2px solid var(--ice);outline-offset:3px}
+
+  /* ---------- header ---------- */
+  header.top{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--line-soft)}
+  .top-inner{display:flex;align-items:center;gap:var(--space-3);height:62px}
+  .brand{display:inline-flex;align-items:center;gap:10px;color:var(--text);font-size:16px;font-weight:600;white-space:nowrap}
+  .brand:hover{text-decoration:none;color:var(--ice-strong)}
+  .brand img{width:26px;height:26px}
+  .brand em{font-style:normal;color:var(--text-2);font-weight:400}
+  .nav{display:flex;gap:24px;margin-left:auto;font-size:14px}
+  .nav a{color:var(--text-2)}
+  .nav a:hover{color:var(--text);text-decoration:none}
+  .header-actions{display:flex;align-items:center;gap:14px;margin-left:auto}
+  .nav + .header-actions{margin-left:0}
+  .ghost-link{
+    display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border:1px solid var(--line);
+    border-radius:7px;color:var(--text);font-size:13px;font-weight:500;
+  }
+  .ghost-link:hover{border-color:rgba(160,190,214,.38);text-decoration:none}
+  .lang{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;flex:none}
+  .lang button{
+    appearance:none;border:0;background:transparent;color:var(--text-3);
+    font:inherit;font-size:12.5px;padding:7px 10px;cursor:pointer;line-height:1;white-space:nowrap;
+  }
+  .lang button + button{border-left:1px solid var(--line)}
+  .lang button[aria-pressed="true"]{background:rgba(143,211,232,.12);color:var(--ice-strong)}
+  .menu{display:none;appearance:none;background:transparent;border:1px solid var(--line);border-radius:7px;color:var(--text);padding:7px 9px;cursor:pointer}
+  .menu svg{width:16px;height:16px}
+  @media (max-width:920px){
+    .nav{
+      display:none;position:absolute;top:62px;left:0;right:0;
+      background:var(--bg-soft);border-bottom:1px solid var(--line);
+      flex-direction:column;gap:0;padding:8px 24px 16px;margin:0;
+    }
+    .nav.open{display:flex}
+    .nav a{padding:12px 0;border-bottom:1px solid var(--line-soft);font-size:15px}
+    .nav a:last-child{border-bottom:0}
+    .menu{display:inline-flex}
+    .header-actions{flex:none}
+    .header-actions .ghost-link{display:none}
+  }
+  @media (max-width:600px){
+    .brand{font-size:15px;gap:8px}
+    .brand em{display:none}
+    .top-inner{gap:12px}
+    .header-actions{gap:10px}
+  }
 
   /* ---------- hero ---------- */
-  .hero{padding:76px 0 40px;position:relative;overflow:hidden}
-  .hero::after{
-    content:"";position:absolute;inset:0;pointer-events:none;
-    background:linear-gradient(180deg,transparent 55%,var(--bg) 100%);
-  }
+  .hero{padding:var(--space-5) 0 var(--space-5);border-bottom:1px solid var(--line-soft)}
+  .hero-grid{display:grid;grid-template-columns:minmax(0,1.04fr) minmax(0,.96fr);gap:var(--space-5);align-items:center}
   .eyebrow{
-    display:inline-flex;align-items:center;gap:8px;
-    font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
-    color:var(--accent);border:1px solid var(--line-strong);border-radius:999px;
-    padding:6px 12px;background:rgba(78,225,255,.06);
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ice);margin:0 0 18px;
   }
-  h1{
-    font-size:clamp(32px,5.6vw,64px);line-height:1.08;letter-spacing:-.02em;
-    margin:20px 0 16px;max-width:15ch;
-  }
-  h1 .grad{
-    background:linear-gradient(100deg,var(--accent) 0%,var(--accent-2) 55%,var(--accent-3) 100%);
-    -webkit-background-clip:text;background-clip:text;color:transparent;
-  }
-  .lede{font-size:clamp(15px,1.5vw,18px);color:var(--text-2);max-width:64ch;margin:0 0 26px}
-  .lede b{color:var(--text);font-weight:600}
-  .badges{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:30px}
-  .badge{
-    font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);
-    border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:rgba(17,27,38,.6);
-  }
-  .badge b{color:var(--accent);font-weight:600}
-  .cta{display:flex;flex-wrap:wrap;gap:12px}
+  html[lang="zh-CN"] .eyebrow{letter-spacing:.08em}
+  h1{font-size:clamp(32px,3.9vw,50px);line-height:1.1;color:var(--text)}
+  h1 .line-2{color:var(--ice-strong)}
+  .lede{color:var(--text-2);font-size:17px;max-width:56ch;margin:20px 0 26px}
+  .cta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px}
   .btn{
-    display:inline-flex;align-items:center;gap:9px;padding:11px 18px;border-radius:10px;
-    font-size:14px;font-weight:600;border:1px solid var(--line-strong);
-    background:rgba(78,225,255,.08);color:var(--text);
-    transition:transform .15s ease,background .15s ease,border-color .15s ease;
+    display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:8px;
+    border:1px solid var(--ice);background:var(--ice-strong);color:#06121c;
+    font-size:14.5px;font-weight:600;line-height:1;
   }
-  .btn:hover{transform:translateY(-1px);background:rgba(78,225,255,.16);border-color:var(--accent);text-decoration:none}
-  .btn.ghost{background:transparent;border-color:var(--line);color:var(--text-2)}
-  .btn.ghost:hover{color:var(--text);border-color:var(--line-strong)}
-
-  /* ---------- stats strip ---------- */
-  .stats{
-    display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
-    background:var(--line);border:1px solid var(--line);border-radius:var(--radius);
-    overflow:hidden;margin:12px 0 0;
+  .btn:hover{background:#dff3fa;text-decoration:none}
+  .btn.ghost{background:transparent;border-color:var(--line);color:var(--text)}
+  .btn.ghost:hover{border-color:rgba(160,190,214,.4);background:rgba(143,211,232,.06)}
+  .hero-meta{font-family:var(--mono);font-size:12.5px;color:var(--text-3);margin:0}
+  .hero-art{margin:0}
+  .hero-art img{width:100%;height:auto;border-radius:4px;background:#04080d}
+  .hero-art figcaption{margin-top:10px;font-size:12.5px;color:var(--text-3)}
+  @media (max-width:900px){
+    .hero-grid{grid-template-columns:1fr;gap:var(--space-4)}
+    .hero-art{order:-1}
+    .hero-art img{aspect-ratio:16/9;object-fit:cover;object-position:center 42%}
   }
-  .stat{background:rgba(10,16,23,.9);padding:20px 22px}
-  .stat .v{font-family:var(--font-mono);font-size:26px;color:var(--text);letter-spacing:-.02em}
-  .stat .v span{color:var(--accent);font-size:14px;margin-left:4px}
-  .stat .k{font-size:11.5px;color:var(--text-3);letter-spacing:.12em;text-transform:uppercase;margin-top:4px}
-  @media(max-width:800px){.stats{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:520px){
+    .hero{padding:var(--space-4) 0}
+    .lede{font-size:16px}
+    .hero-art figcaption{font-size:12px}
+  }
 
   /* ---------- sections ---------- */
-  section{padding:64px 0}
-  .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:9px}
-  .sec-kicker{font-family:var(--font-mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent)}
-  h2{font-size:clamp(24px,3vw,34px);letter-spacing:-.01em;margin:8px 0 0}
-  .sec-sub{color:var(--text-2);font-size:14.5px;max-width:70ch;margin:10px 0 30px}
-  hr.rule{border:0;border-top:1px solid var(--line);margin:0}
-
-  /* ---------- video wall ---------- */
-  .wall{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-  @media(max-width:1000px){.wall{grid-template-columns:repeat(2,1fr)}}
-  @media(max-width:640px){.wall{grid-template-columns:1fr}}
-  .card{
-    display:flex;flex-direction:column;background:var(--surface);
-    border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
-    transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;
+  .section{padding:var(--space-6) 0;border-bottom:1px solid var(--line-soft)}
+  .section:last-of-type{border-bottom:0}
+  .kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ice);margin:0 0 12px}
+  html[lang="zh-CN"] .kicker{letter-spacing:.06em}
+  .sec-head{max-width:760px;margin-bottom:var(--space-4)}
+  h2{font-size:clamp(25px,3vw,36px);color:var(--text)}
+  .sec-intro{color:var(--text-2);margin-top:14px;max-width:70ch}
+  .group-title{
+    display:flex;align-items:baseline;gap:10px;font-size:15px;font-weight:600;
+    color:var(--text-2);padding-bottom:12px;border-bottom:1px solid var(--line);
+    margin:var(--space-4) 0 0;
   }
-  .card:hover{transform:translateY(-3px);border-color:var(--line-strong);box-shadow:0 14px 40px -22px rgba(78,225,255,.45)}
-  .media{position:relative;background:#02060a}
-  .media video{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
-  .score{
-    position:absolute;left:10px;top:10px;font-family:var(--font-mono);font-size:12px;
-    padding:3px 9px;border-radius:6px;background:rgba(5,10,14,.82);
-    border:1px solid rgba(93,255,168,.34);color:var(--good);letter-spacing:.03em;
+  .group-title .count{font-family:var(--mono);font-size:12px;color:var(--text-3)}
+  .group-title:first-of-type{margin-top:0}
+
+  /* ---------- task gallery ---------- */
+  .gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:var(--space-5);row-gap:0;margin-top:6px}
+  .task{display:grid;grid-template-columns:minmax(0,42%) 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line-soft);align-items:start}
+  .task:last-child,.gallery > .task:nth-last-child(-n+2){border-bottom:0}
+  .media{position:relative;aspect-ratio:16/9;background:#04080d;border:1px solid var(--line-soft);border-radius:6px;overflow:hidden}
+  .poster{
+    position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:#04080d;
+    cursor:pointer;color:var(--text);display:block;
   }
-  .score.warn{border-color:rgba(255,184,107,.4);color:var(--warn)}
-  .body{padding:15px 16px 17px;display:flex;flex-direction:column;gap:7px;flex:1}
-  .kicker{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3)}
-  .body h3{font-size:17px;margin:0;letter-spacing:-.01em}
-  .body p{font-size:12.5px;color:var(--text-2);margin:0}
-  .spec{display:flex;flex-wrap:wrap;gap:6px;margin:auto 0 0;padding:0;list-style:none}
-  .spec li{font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);border:1px solid var(--line);border-radius:5px;padding:2px 6px}
+  .poster img{width:100%;height:100%;object-fit:cover}
+  .poster::after{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(180deg,transparent 55%,rgba(3,7,12,.62));
+  }
+  .poster:hover .play{background:var(--ice-strong);border-color:var(--ice-strong)}
+  .play{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
+    width:44px;height:44px;border-radius:50%;border:1px solid rgba(223,232,240,.55);
+    background:rgba(6,18,28,.55);display:grid;place-items:center;transition:background .15s ease,border-color .15s ease;
+  }
+  .play::before{
+    content:"";width:0;height:0;margin-left:3px;
+    border-top:7px solid transparent;border-bottom:7px solid transparent;border-left:11px solid var(--text);
+  }
+  .media video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain;z-index:3}
+  .task-body{padding-top:2px;min-width:0}
+  .cat{font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;color:var(--text-3);margin:0 0 5px}
+  .task h3{font-size:17px;color:var(--text);margin:0 0 7px}
+  .task .desc{color:var(--text-2);font-size:14.5px;line-height:1.55;margin:0 0 9px}
+  .spec{font-family:var(--mono);font-size:12px;color:var(--text-3);margin:0;letter-spacing:.01em}
+  .spec span{white-space:nowrap}
+  .spec span + span::before{content:" · ";color:rgba(160,190,214,.35)}
+  @media (max-width:1024px){
+    .gallery{column-gap:var(--space-4)}
+    .task{column-gap:14px}
+    .task h3{font-size:16px}
+  }
+  @media (max-width:840px){
+    .gallery{grid-template-columns:1fr}
+    .task,.gallery > .task:nth-last-child(-n+2){border-bottom:1px solid var(--line-soft)}
+    .task:last-child{border-bottom:0}
+  }
+  @media (max-width:620px){
+    .task{grid-template-columns:1fr;gap:11px;padding:18px 0}
+    .media{aspect-ratio:16/9}
+    .task h3{font-size:17px}
+  }
 
-  /* ---------- highlights ---------- */
-  .triple{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-  @media(max-width:900px){.triple{grid-template-columns:1fr}}
-  .wide{padding:0}
-  .wide video{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
-  .wide .cap{padding:13px 16px;border-top:1px solid var(--line)}
-  .wide .cap h3{margin:0;font-size:15px}
-  .wide .cap p{margin:2px 0 0;font-size:12px;color:var(--text-2)}
+  .note{
+    margin:var(--space-4) 0 0;padding:14px 16px;border-left:2px solid var(--ice);
+    background:rgba(143,211,232,.045);color:var(--text-2);font-size:14px;
+  }
+  .note b{color:var(--text);font-weight:600}
 
-  /* ---------- features ---------- */
-  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-  @media(max-width:900px){.grid-3{grid-template-columns:1fr}}
-  .feat{padding:22px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
-  .feat .n{font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:.14em}
-  .feat h3{font-size:16px;margin:10px 0 8px}
-  .feat p{font-size:12.8px;color:var(--text-2);margin:0}
-  .feat code{font-family:var(--font-mono);font-size:11.5px;color:var(--accent-2)}
+  /* ---------- close-ups ---------- */
+  .closeups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-3);margin-top:var(--space-4)}
+  .closeup{margin:0}
+  .closeup .media{aspect-ratio:16/9}
+  .closeup h3{font-size:15px;margin:11px 0 4px}
+  .closeup p{font-size:13px;color:var(--text-3);margin:0}
+  @media (max-width:840px){.closeups{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:560px){.closeups{grid-template-columns:1fr}}
 
-  /* ---------- table ---------- */
-  .table-wrap{border:1px solid var(--line);border-radius:var(--radius);overflow:auto;background:var(--surface)}
-  table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
-  th,td{padding:12px 15px;text-align:left;border-bottom:1px solid var(--line)}
-  th{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--text-3);background:rgba(8,14,20,.75)}
-  tr:last-child td{border-bottom:0}
-  td.num{font-family:var(--font-mono);color:var(--text-2);white-space:nowrap}
-  .good{color:var(--good)}
-  .warn{color:var(--warn)}
-  .bad{color:var(--bad)}
-  .note{margin-top:12px;font-size:12px;color:var(--text-3)}
-  .note b{color:var(--text-2)}
+  /* ---------- principles ---------- */
+  .principles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4);margin-top:var(--space-4)}
+  .principle{border-top:1px solid var(--line);padding-top:16px}
+  .principle .n{font-family:var(--mono);font-size:12px;color:var(--ice);margin:0 0 10px}
+  .principle h3{font-size:17px;margin:0 0 8px}
+  .principle p{font-size:14.5px;color:var(--text-2);margin:0}
+  @media (max-width:840px){.principles{grid-template-columns:1fr;gap:var(--space-3)}
+    .principle{display:grid;grid-template-columns:52px 1fr;column-gap:8px}
+    .principle .n{grid-row:1/3;margin:2px 0 0}
+  }
+
+  /* ---------- baselines ---------- */
+  .table-scroll{overflow-x:auto;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:var(--space-3)}
+  table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+  caption{text-align:left;font-size:12.5px;color:var(--text-3);padding:0 0 8px}
+  th,td{text-align:left;vertical-align:top;padding:13px 16px 13px 0;border-bottom:1px solid var(--line-soft)}
+  thead th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);font-weight:500;border-bottom:1px solid var(--line)}
+  tbody tr:last-child td{border-bottom:0}
+  th.num,td.num{text-align:right;padding-right:22px;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  td:first-child{color:var(--text);white-space:nowrap}
+  td.ctrl{color:var(--text-2);min-width:220px}
+  td.cond{color:var(--text-3);font-size:12.5px;min-width:250px}
+  .table-hint{display:none;font-family:var(--mono);font-size:12px;color:var(--text-3);margin:8px 0 0}
+  @media (max-width:760px){.table-hint{display:block}}
+  .notes{margin-top:var(--space-2);font-size:13.5px;color:var(--text-3);max-width:80ch}
+  .notes p{margin:0 0 .5em}
+  .notes b{color:var(--text-2);font-weight:600}
 
   /* ---------- quick start ---------- */
-  .split{display:grid;grid-template-columns:1.15fr .85fr;gap:22px}
-  @media(max-width:900px){.split{grid-template-columns:1fr}}
+  .start-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:var(--space-5);margin-top:var(--space-4);align-items:start}
   pre{
-    margin:0;padding:18px 20px;border-radius:var(--radius);
-    background:#060b11;border:1px solid var(--line);overflow:auto;
-    font-family:var(--font-mono);font-size:12.5px;line-height:1.75;color:var(--text-2);
+    margin:0;padding:18px 20px;background:#040b12;border:1px solid var(--line);
+    border-radius:8px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.75;color:#cfdde8;
   }
   pre .c{color:var(--text-3)}
-  pre .p{color:var(--accent-2)}
-  pre .a{color:var(--accent)}
-  .links-list{padding:22px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
-  .links-list h3{margin:0 0 12px;font-size:15px}
-  .links-list ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
-  .links-list li{display:flex;justify-content:space-between;gap:12px;font-size:13px;border-bottom:1px dashed var(--line);padding-bottom:8px}
-  .links-list li:last-child{border-bottom:0;padding-bottom:0}
-  .links-list li span{color:var(--text-3);font-size:11.5px;font-family:var(--font-mono);white-space:nowrap}
+  pre .p{color:var(--ice)}
+  .docs h3{font-size:15px;margin:0 0 12px;color:var(--text-2);font-weight:600}
+  .docs ul{list-style:none;margin:0;padding:0}
+  .docs li{border-top:1px solid var(--line-soft);padding:9px 0}
+  .docs li:last-child{border-bottom:1px solid var(--line-soft)}
+  .docs a{display:flex;justify-content:space-between;gap:14px;color:var(--text);font-size:14px}
+  .docs a:hover{text-decoration:none;color:var(--ice-strong)}
+  .docs .d{font-family:var(--mono);font-size:12px;color:var(--text-3);white-space:nowrap}
+  @media (max-width:860px){.start-grid{grid-template-columns:1fr;gap:var(--space-4)}}
+
+  /* ---------- acknowledgments ---------- */
+  .ack-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4);margin-top:var(--space-4)}
+  .ack-grid h3{font-size:13px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:500;margin:0 0 10px}
+  .ack-grid ul{list-style:none;margin:0;padding:0;font-size:14.5px;color:var(--text-2)}
+  .ack-grid li{padding:3px 0}
+  .ack-grid a{color:var(--text-2)}
+  .ack-grid a:hover{color:var(--ice-strong)}
+  @media (max-width:760px){.ack-grid{grid-template-columns:1fr;gap:var(--space-3)}}
 
   /* ---------- footer ---------- */
-  footer{border-top:1px solid var(--line);padding:34px 0 44px;color:var(--text-3);font-size:12.5px}
-  .foot-inner{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}
+  footer{padding:var(--space-4) 0 var(--space-4);color:var(--text-3);font-size:13px}
+  .foot-inner{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;align-items:center}
   footer a{color:var(--text-2)}
-  footer .mono{font-size:11px}
-
-  /* ---------- motion ---------- */
-  @media(prefers-reduced-motion:no-preference){
-    .reveal{opacity:0;transform:translateY(14px);transition:opacity .6s ease,transform .6s ease}
-    .reveal.in{opacity:1;transform:none}
-  }
-  @media(prefers-reduced-motion:reduce){
-    .media video{display:none}
-    .media{min-height:150px;background:linear-gradient(135deg,#0a141c,#05080c)}
-    .media::after{content:"video";position:absolute;inset:0;display:grid;place-items:center;color:var(--text-3);font-family:var(--font-mono);font-size:11px;letter-spacing:.2em}
-  }
-  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+  footer .mono{font-size:12px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 </style>
 </head>
 <body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
 
 <header class="top">
   <div class="wrap top-inner">
-    <a class="brand" href="#top"><span class="dot"></span>AEROSPACERL / BENCHMARK</a>
-    <nav class="links">
-      <a href="#tasks">控制效果</a>
-      <a href="#features">设计</a>
-      <a href="#baselines">基线</a>
-      <a href="#start">快速开始</a>
-      <a href="https://github.com/PaoShou-China/aerospace-rl-benchmark">GitHub ↗</a>
+    <a class="brand" href="#top">
+      <img src="assets/brand/mark.svg" alt="" width="26" height="26">
+      <span>AerospaceRL <em>Benchmark</em></span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="Main navigation">
+      <a href="#tasks" data-i18n="nav.tasks">Tasks</a>
+      <a href="#design" data-i18n="nav.design">Design</a>
+      <a href="#baselines" data-i18n="nav.baselines">Baselines</a>
+      <a href="#start" data-i18n="nav.start">Quick start</a>
+      <a href="#acknowledgments" data-i18n="nav.ack">Acknowledgments</a>
     </nav>
+    <div class="header-actions">
+      <a class="ghost-link" href="https://github.com/PaoShou-China/aerospace-rl-benchmark" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+      <div class="lang" role="group" aria-label="Language" data-i18n-aria="lang.label">
+        <button type="button" data-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+      </div>
+      <button class="menu" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M1 3h14v1.6H1zM1 7.2h14v1.6H1zM1 11.4h14v1.6H1z"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 
-<main id="top">
-  <div class="wrap hero">
-    <div class="eyebrow">GPU-PARALLEL · AEROSPACE CONTROL · RL</div>
-    <h1>十个飞行任务，<br><span class="grad">同一张量接口。</span></h1>
-    <p class="lede">
-      一个面向航空航天控制的轻量强化学习基准：<b>6 个大气飞行任务 + 4 个航天器任务</b>，
-      全部以批量设备张量实现，<b>没有 Gym/Gymnasium 包装、没有逐副本 Python 循环</b>。
-      每个任务都配有一个与学习策略共享动作约定的经典 GNC 基线，可直接评测，
-      也可作为行为克隆或残差 RL 的控制器先验。
-    </p>
-    <div class="badges">
-      <span class="badge"><b>10</b> tasks</span>
-      <span class="badge"><b>6</b> atmospheric · <b>4</b> spacecraft</span>
-      <span class="badge">no gym / no gymnasium</span>
-      <span class="badge"><b>1</b> host sync per step</span>
-      <span class="badge">URDF + Genesis backend</span>
+<main id="main">
+  <section class="hero" id="top">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow" data-i18n="hero.eyebrow">Aerospace control · reinforcement learning</p>
+        <h1>
+          <span data-i18n="hero.title1">Ten aerospace tasks.</span><br>
+          <span class="line-2" data-i18n="hero.title2">One tensor interface.</span>
+        </h1>
+        <p class="lede" data-i18n="hero.lede">A lightweight reinforcement-learning benchmark built on batched device tensors: six atmospheric vehicles and four spacecraft missions, each paired with a classical GNC baseline that speaks the same action language.</p>
+        <div class="cta">
+          <a class="btn" href="#start" data-i18n="hero.cta1">Get started</a>
+          <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark" target="_blank" rel="noopener" data-i18n="hero.cta2">GitHub repository</a>
+        </div>
+        <p class="hero-meta" data-i18n="hero.meta">10 tasks · 6 atmospheric · 4 spacecraft · no Gym dependency</p>
+      </div>
+      <figure class="hero-art">
+        <img src="assets/brand/hero.svg" width="1200" height="750" alt="Brand illustration: a booster descending toward a lit planetary limb, framed by orbital arcs." data-i18n-alt="hero.artAlt" fetchpriority="high">
+        <figcaption data-i18n="hero.artCap">Brand illustration — not a simulation capture.</figcaption>
+      </figure>
     </div>
-    <div class="cta">
-      <a class="btn" href="https://github.com/PaoShou-China/aerospace-rl-benchmark">GitHub 仓库</a>
-      <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md">README</a>
-      <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md">技术说明</a>
-      <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/tree/main/experiments/controller_priors">控制器先验实验</a>
-    </div>
-    <div class="stats">
-      <div class="stat"><div class="v">10<span>tasks</span></div><div class="k">atmospheric + orbital</div></div>
-      <div class="stat"><div class="v">1024<span>envs</span></div><div class="k">default batched evaluation</div></div>
-      <div class="stat"><div class="v">0<span>gym</span></div><div class="k">pure device-tensor kernels</div></div>
-      <div class="stat"><div class="v">1<span>sync</span></div><div class="k">host round-trip per step</div></div>
-    </div>
-  </div>
+  </section>
 
-  <section id="tasks">
+  <section class="section" id="tasks">
     <div class="wrap">
       <div class="sec-head">
-        <div>
-          <div class="sec-kicker">01 / Control wall</div>
-          <h2>十个控制器，谁真的能打？</h2>
-        </div>
+        <p class="kicker">01 / <span data-i18n="nav.tasks">Tasks</span></p>
+        <h2 data-i18n="tasks.title">Ten environments, one contract</h2>
+        <p class="sec-intro" data-i18n="tasks.intro">Every environment exposes the same step / reset / buffer contract and the same batched tensor API. The replay clips are exported from the repository's visualization scripts and show task dynamics, not benchmark scores.</p>
       </div>
-      <p class="sec-sub">
-        下方每一格都是仓库内实际渲染的回合回放（静音循环）。角标是<b>经典基线的参考成功率</b>，
-        取自各任务随仓库发布的 <span class="mono">baseline_eval</span> 结果；黄字表示基线仍有残留失败——
-        这些失败正是学习策略要攻击的靶点，而不是被掩盖的 strawman。
-      </p>
 
-      <div class="wall">
-        <article class="card">
-          <div class="media"><span class="score good">99.2%</span>
-            <video src="showcase/assets/videos/quadx.mp4" autoplay muted loop playsinline preload="metadata" aria-label="QuadX waypoint flight replay"></video>
+      <h3 class="group-title"><span data-i18n="tasks.groupAtmo">Atmospheric flight</span><span class="count">06</span></h3>
+      <div class="gallery">
+
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/quadx.mp4" data-task="QuadX-Waypoints" aria-label="Play QuadX-Waypoints replay">
+              <img src="showcase/assets/posters/quadx.jpg" alt="QuadX-Waypoints replay frame" data-i18n-alt="alt.quadx" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Quadrotor · URDF rigid body</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.quadx.cat">Atmospheric · multirotor</p>
             <h3>QuadX-Waypoints</h3>
-            <p>Crazyflie 2.x 四旋翼穿越 4 个航点，位置级联 + 速率内环。</p>
-            <ul class="spec"><li>obs 37 → act 4</li><li>40 Hz</li><li>800 steps / 20 s</li><li>waypoints &lt; 0.2 m</li></ul>
+            <p class="desc" data-i18n="task.quadx.desc">Crazyflie-scale quadrotor capturing four waypoints inside a 5 m dome.</p>
+            <p class="spec" data-i18n="task.quadx.spec"><span>obs 37</span> <span>act 4</span> <span>40 Hz</span> <span>800 steps / 20 s</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score warn">82.8%</span>
-            <video src="showcase/assets/videos/quadx_track.mp4" autoplay muted loop playsinline preload="metadata" aria-label="QuadX target tracking replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/quadx_track.mp4" data-task="QuadX-Track" aria-label="Play QuadX-Track replay">
+              <img src="showcase/assets/posters/quadx_track.jpg" alt="QuadX-Track replay frame" data-i18n-alt="alt.quadx_track" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Quadrotor · visual tracking</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.quadx_track.cat">Atmospheric · tracking</p>
             <h3>QuadX-Track</h3>
-            <p>几何相机跟踪地面运动目标，KF + SE(3) 保持固定偏移。</p>
-            <ul class="spec"><li>obs 25 → act 4</li><li>40 Hz</li><li>1200 steps / 30 s</li><li>visible ≥ 0.85</li></ul>
+            <p class="desc" data-i18n="task.quadx_track.desc">Ground-target tracking with a geometric camera; success needs 85% visibility without a crash.</p>
+            <p class="spec" data-i18n="task.quadx_track.spec"><span>obs 25</span> <span>act 4</span> <span>40 Hz</span> <span>1200 steps / 30 s</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score warn">97.0%</span>
-            <video src="showcase/assets/videos/fixedwing.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Fixed-wing waypoint replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/fixedwing.mp4" data-task="Fixedwing-Waypoints" aria-label="Play Fixedwing-Waypoints replay">
+              <img src="showcase/assets/posters/fixedwing.jpg" alt="Fixedwing-Waypoints replay frame" data-i18n-alt="alt.fixedwing" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Fixed wing · blade-element aero</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.fixedwing.cat">Atmospheric · fixed wing</p>
             <h3>Fixedwing-Waypoints</h3>
-            <p>2.35 kg 固定翼在 20–65 m 壳层内捕获 4 个航点，含失速气动。</p>
-            <ul class="spec"><li>obs 39 → act 4</li><li>30 Hz</li><li>3600 steps / 120 s</li><li>waypoints &lt; 10 m</li></ul>
+            <p class="desc" data-i18n="task.fixedwing.desc">2.35 kg UAV with blade-element aerodynamics, capturing four waypoints across a 20–65 m shell.</p>
+            <p class="spec" data-i18n="task.fixedwing.spec"><span>obs 39</span> <span>act 4</span> <span>30 Hz</span> <span>3600 steps / 120 s</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score warn">89.1%</span>
-            <video src="showcase/assets/videos/quadplane.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Quadplane VTOL replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/quadplane.mp4" data-task="Quadplane-VTOL" aria-label="Play Quadplane-VTOL replay">
+              <img src="showcase/assets/posters/quadplane.jpg" alt="Quadplane-VTOL replay frame" data-i18n-alt="alt.quadplane" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Hybrid VTOL · rotor ↔ aero</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.quadplane.cat">Atmospheric · hybrid VTOL</p>
             <h3>Quadplane-VTOL</h3>
-            <p>四旋翼 + 固定翼翼面 + 前推电机，控制权随空速在旋翼与气动面之间自然转移。</p>
-            <ul class="spec"><li>obs 47 → act 8</li><li>40 Hz</li><li>1200 steps / 30 s</li><li>waypoints &lt; 15 m</li></ul>
+            <p class="desc" data-i18n="task.quadplane.desc">Four rotors, fixed-wing surfaces and a forward pusher, with a natural rotor-to-aero authority transition.</p>
+            <p class="spec" data-i18n="task.quadplane.spec"><span>obs 47</span> <span>act 8</span> <span>40 Hz</span> <span>1200 steps / 30 s</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="showcase/assets/videos/rocket.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Rocket landing replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/rocket.mp4" data-task="Rocket-Landing" aria-label="Play Rocket-Landing replay">
+              <img src="showcase/assets/posters/rocket.jpg" alt="Rocket-Landing replay frame" data-i18n-alt="alt.rocket" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Booster · propulsive landing</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.rocket.cat">Atmospheric · propulsive landing</p>
             <h3>Rocket-Landing</h3>
-            <p>F9 级助推器动力下降：栅格舵 + 万向节 + 可复燃发动机，v2 判据要求连续停稳 2 秒。</p>
-            <ul class="spec"><li>obs 30 → act 7</li><li>40 Hz</li><li>1200 steps / 30 s</li><li>settled 2 s</li></ul>
+            <p class="desc" data-i18n="task.rocket.desc">F9-class booster landing under grid-fin and gimbal control; benchmark v2 asks for two settled seconds on the pad.</p>
+            <p class="spec" data-i18n="task.rocket.spec"><span>obs 30</span> <span>act 7</span> <span>40 Hz</span> <span>1200 steps / 30 s</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score warn">71.1%</span>
-            <video src="showcase/assets/videos/missile.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Missile intercept replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/missile.mp4" data-task="Missile-Intercept" aria-label="Play Missile-Intercept replay">
+              <img src="showcase/assets/posters/missile.jpg" alt="Missile-Intercept replay frame" data-i18n-alt="alt.missile" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Missile · 6-DOF intercept</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.missile.cat">Atmospheric · intercept</p>
             <h3>Missile-Intercept</h3>
-            <p>150 kg 导弹尾翼气动 + 助推-滑翔发动机，拦截三维机动目标。</p>
-            <ul class="spec"><li>obs 34 → act 3</li><li>60 Hz</li><li>900 steps / 15 s</li><li>miss &lt; 15 m</li></ul>
+            <p class="desc" data-i18n="task.missile.desc">6-DOF tail-controlled missile intercepting a kinematic manoeuvring target with a proximity fuse.</p>
+            <p class="spec" data-i18n="task.missile.spec"><span>obs 34</span> <span>act 3</span> <span>60 Hz</span> <span>900 steps / 15 s</span></p>
           </div>
         </article>
+      </div>
 
-        <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="showcase/assets/videos/satellite.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Satellite attitude replay"></video>
+      <h3 class="group-title"><span data-i18n="tasks.groupSpace">Spacecraft</span><span class="count">04</span></h3>
+      <div class="gallery">
+
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/satellite.mp4" data-task="Satellite Attitude" aria-label="Play Satellite Attitude replay">
+              <img src="showcase/assets/posters/satellite.jpg" alt="Satellite attitude replay frame" data-i18n-alt="alt.satellite" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Spacecraft · CMG cluster</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.satellite.cat">Spacecraft · CMG attitude</p>
             <h3>Satellite Attitude</h3>
-            <p>4/6 个 CMG 的姿态机动，四元数 PD + 阻尼伪逆控制分配。</p>
-            <ul class="spec"><li>obs 26/32 → act 4/6</li><li>40 Hz</li><li>1200 steps / 30 s</li><li>att &lt; 0.05 rad</li></ul>
+            <p class="desc" data-i18n="task.satellite.desc">Attitude control with 4 or 6 control moment gyros and a singularity-aware allocator.</p>
+            <p class="spec" data-i18n="task.satellite.spec"><span>obs 26 / 32</span> <span>act 4 / 6</span> <span>40 Hz</span> <span>1200 steps / 30 s</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="showcase/assets/videos/transfer.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Low-thrust transfer replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/transfer.mp4" data-task="Low-Thrust Transfer" aria-label="Play Low-Thrust Transfer replay">
+              <img src="showcase/assets/posters/transfer.jpg" alt="Low-thrust transfer replay frame" data-i18n-alt="alt.transfer" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Spacecraft · low thrust</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.transfer.cat">Spacecraft · low thrust</p>
             <h3>Low-Thrust Transfer</h3>
-            <p>二体引力 + 三轴 10 mN 电推进，约 5 圈内完成轨道要素转移。</p>
-            <ul class="spec"><li>obs 8 → act 3</li><li>300 s / step</li><li>166 steps</li><li>terminal R &gt; 0</li></ul>
+            <p class="desc" data-i18n="task.transfer.desc">Perigee raising with 10 mN electric propulsion; 166 steps cover roughly five revolutions.</p>
+            <p class="spec" data-i18n="task.transfer.spec"><span>obs 8</span> <span>act 3</span> <span>300 s / step</span> <span>166 steps</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="showcase/assets/videos/docking.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Space docking replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/docking.mp4" data-task="Space Docking" aria-label="Play Space Docking replay">
+              <img src="showcase/assets/posters/docking.jpg" alt="Space docking replay frame" data-i18n-alt="alt.docking" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Spacecraft · CWH dynamics</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.docking.cat">Spacecraft · final approach</p>
             <h3>Space Docking</h3>
-            <p>Clohessy–Wiltshire–Hill 动力学下的近场对接，含燃料约束与安全盾。</p>
-            <ul class="spec"><li>obs 6 → act 3</li><li>1 s / step</li><li>500 steps / 8.3 min</li><li>range &lt; 1 m</li></ul>
+            <p class="desc" data-i18n="task.docking.desc">CWH final approach from 60–120 m with fuel derating and a safety shield.</p>
+            <p class="spec" data-i18n="task.docking.spec"><span>obs 6</span> <span>act 3</span> <span>1 s / step</span> <span>500 steps / 8.3 min</span></p>
           </div>
         </article>
 
-        <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="showcase/assets/videos/rendezvous.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Space rendezvous replay"></video>
+        <article class="task">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/rendezvous.mp4" data-task="Space Rendezvous" aria-label="Play Space Rendezvous replay">
+              <img src="showcase/assets/posters/rendezvous.jpg" alt="Space rendezvous replay frame" data-i18n-alt="alt.rendezvous" width="640" height="360" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
           </div>
-          <div class="body">
-            <div class="kicker">Spacecraft · two-impulse</div>
+          <div class="task-body">
+            <p class="cat" data-i18n="task.rendezvous.cat">Spacecraft · medium approach</p>
             <h3>Space Rendezvous</h3>
-            <p>远场接近与保持，CWH 双脉冲 ZEM/PN 递归重解，需满足禁飞区约束。</p>
-            <ul class="spec"><li>obs 6 → act 3</li><li>1 s / step</li><li>1000 steps / 16.7 min</li><li>range &lt; 10 m</li></ul>
+            <p class="desc" data-i18n="task.rendezvous.desc">CWH approach from 1000–1500 m while respecting a 5 m keep-out sphere.</p>
+            <p class="spec" data-i18n="task.rendezvous.spec"><span>obs 6</span> <span>act 3</span> <span>1 s / step</span> <span>1000 steps / 16.7 min</span></p>
           </div>
         </article>
       </div>
-    </div>
-  </section>
 
-  <section>
-    <div class="wrap">
-      <div class="sec-head">
-        <div>
-          <div class="sec-kicker">02 / Close-ups</div>
-          <h2>把失败与瞬态放大看</h2>
-        </div>
-      </div>
-      <p class="sec-sub">
-        三段特写回放：四旋翼轨迹、对接接近段、火箭着陆末段。视频由仓库内检查点回放导出，
-        与上方基线成功率使用同一套环境与判据。
-      </p>
-      <div class="triple">
-        <article class="card wide">
-          <video src="showcase/assets/videos/quadx_vis.mp4" autoplay muted loop playsinline preload="metadata" aria-label="QuadX trajectory close-up"></video>
-          <div class="cap"><h3>QuadX · 轨迹与姿态</h3><p>航点序列、速度包线与机体姿态同步回放。</p></div>
-        </article>
-        <article class="card wide">
-          <video src="showcase/assets/videos/docking_vis.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Docking approach close-up"></video>
-          <div class="cap"><h3>Docking · 接近段</h3><p>相对距离、接近速度与对接轴对齐的末段过程。</p></div>
-        </article>
-        <article class="card wide">
-          <video src="showcase/assets/videos/rocket_vis.mp4" autoplay muted loop playsinline preload="metadata" aria-label="Rocket landing close-up"></video>
-          <div class="cap"><h3>Rocket · 着陆末段</h3><p>点火、制动、触垫与 2 秒停稳窗口。</p></div>
-        </article>
-      </div>
-    </div>
-  </section>
+      <p class="note" data-i18n="tasks.note">Replays were rendered offline with the repository's visualization tools. The footage shows each task's dynamics and framing; it is not tied to any baseline score listed below.</p>
 
-  <section id="features">
-    <div class="wrap">
-      <div class="sec-head">
-        <div>
-          <div class="sec-kicker">03 / Why this benchmark</div>
-          <h2>不是把 Gym 换皮</h2>
-        </div>
-      </div>
-      <p class="sec-sub">
-        设计目标是把“环境”做成一个可被审阅的张量内核，而不是一组 Python 对象。
-        所有物理、接触、奖励、重置与随机数都作用在同一个设备上的掩码张量；
-        失活的副本被冻结，不消耗随机数，也不参与任何归约。
-      </p>
-      <div class="grid-3">
-        <div class="feat reveal">
-          <div class="n">01 / KERNEL</div>
-          <h3>批量张量，零逐副本循环</h3>
-          <p>没有 per-replica 引擎往返，也没有 <code>gym.Env</code> 包装。每个 <code>step()</code> 只有一次主机同步用于回合边界记账。</p>
-        </div>
-        <div class="feat reveal">
-          <div class="n">02 / BASELINES</div>
-          <h3>同动作约定的经典 GNC</h3>
-          <p>SE(3)、L1+TECS、PDG、CWH-LQR、双脉冲制导等基线直接输出与策略相同的动作，可独立评测或作为 BC 示范。</p>
-        </div>
-        <div class="feat reveal">
-          <div class="n">03 / PRIORS</div>
-          <h3>控制器先验实验</h3>
-          <p>仓库内提供 <code>experiments/controller_priors</code>：BC 热启动、残差 RL、增益调度的可复现对比，含 DAgger 采集与检查点选择。</p>
-        </div>
+      <h3 class="group-title"><span data-i18n="tasks.groupClose">Close-up replays</span><span class="count">03</span></h3>
+      <p class="sec-intro" data-i18n="tasks.closeIntro">Longer exports of three tasks, adding the live state card and a second camera. Same environments, different framing.</p>
+      <div class="closeups">
+        <figure class="closeup">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/quadx_vis.mp4" data-task="QuadX close-up" aria-label="Play QuadX close-up replay">
+              <img src="showcase/assets/posters/quadx_vis.jpg" alt="QuadX close-up replay frame" data-i18n-alt="alt.quadx_vis" width="960" height="540" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
+          </div>
+          <figcaption>
+            <h3 data-i18n="close.quadx.title">QuadX · trajectory and attitude</h3>
+            <p data-i18n="close.quadx.desc">Waypoint sequence with the live state card and close-up camera.</p>
+          </figcaption>
+        </figure>
+        <figure class="closeup">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/docking_vis.mp4" data-task="Docking close-up" aria-label="Play Docking close-up replay">
+              <img src="showcase/assets/posters/docking_vis.jpg" alt="Docking close-up replay frame" data-i18n-alt="alt.docking_vis" width="960" height="540" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
+          </div>
+          <figcaption>
+            <h3 data-i18n="close.docking.title">Docking · final approach</h3>
+            <p data-i18n="close.docking.desc">Relative range, closing speed and docking-axis alignment.</p>
+          </figcaption>
+        </figure>
+        <figure class="closeup">
+          <div class="media">
+            <button class="poster" type="button" data-video="showcase/assets/videos/rocket_vis.mp4" data-task="Rocket close-up" aria-label="Play Rocket close-up replay">
+              <img src="showcase/assets/posters/rocket_vis.jpg" alt="Rocket close-up replay frame" data-i18n-alt="alt.rocket_vis" width="960" height="540" loading="lazy" decoding="async">
+              <span class="play" aria-hidden="true"></span>
+            </button>
+          </div>
+          <figcaption>
+            <h3 data-i18n="close.rocket.title">Rocket · terminal descent</h3>
+            <p data-i18n="close.rocket.desc">Ignition, braking, touchdown and the two-second settle window.</p>
+          </figcaption>
+        </figure>
       </div>
     </div>
   </section>
 
-  <section id="baselines">
+  <section class="section" id="design">
     <div class="wrap">
       <div class="sec-head">
-        <div>
-          <div class="sec-kicker">04 / Honest references</div>
-          <h2>基线不是稻草人</h2>
-        </div>
+        <p class="kicker">02 / <span data-i18n="nav.design">Design</span></p>
+        <h2 data-i18n="design.title">A kernel, not a wrapper</h2>
+        <p class="sec-intro" data-i18n="design.intro">Physics, contacts, rewards, resets and RNG are masked tensor kernels on a single device. Inactive replicas are frozen, consume no random numbers, and never enter a per-replica Python loop.</p>
       </div>
-      <p class="sec-sub">
-        下表为仓库随附的参考结果（单种子、首回合口径，具体窗口见各任务 <span class="mono">results/&lt;task&gt;/baseline.json</span>）。
-        保留的失败率是公开的攻击面：学习策略若不能超过这些基线，就没有故事可讲。
-      </p>
-      <div class="table-wrap">
+      <div class="principles">
+        <article class="principle">
+          <p class="n">01</p>
+          <h3 data-i18n="design.p1t">Batched tensor core</h3>
+          <p data-i18n="design.p1d">No engine round-trip per replica and no Gym wrapper. Each <code>step()</code> performs exactly one host sync, used only for episode-boundary bookkeeping.</p>
+        </article>
+        <article class="principle">
+          <p class="n">02</p>
+          <h3 data-i18n="design.p2t">Baselines in the same action space</h3>
+          <p data-i18n="design.p2d">SE(3), L1 + TECS, PDG, CWH-LQR and two-impulse guidance emit the same action vector as the policy, so they can be evaluated, cloned, or used as a residual base.</p>
+        </article>
+        <article class="principle">
+          <p class="n">03</p>
+          <h3 data-i18n="design.p3t">Controller priors, studied</h3>
+          <p data-i18n="design.p3d"><code>experiments/controller_priors</code> ships behavior-cloning warm starts, residual RL and gain scheduling, including DAgger collection and checkpoint selection.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="baselines">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="kicker">03 / <span data-i18n="nav.baselines">Baselines</span></p>
+        <h2 data-i18n="baselines.title">Reference points, not a leaderboard</h2>
+        <p class="sec-intro" data-i18n="baselines.intro">Each task ships one default classical controller, evaluated on the same environment, reward and success criterion as the learned policy. Replica counts, seeds and windows come from the recorded <code>results/&lt;task&gt;/baseline.json</code> artifacts.</p>
+      </div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Baseline success rates by task" data-i18n-aria="baselines.tableAria">
         <table>
-          <thead><tr><th>任务</th><th>经典基线</th><th>参考成功率</th><th>备注</th></tr></thead>
+          <caption data-i18n="baselines.caption">Default classical controller per task, with the evaluation window recorded in the repository.</caption>
+          <thead>
+            <tr>
+              <th scope="col" data-i18n="baselines.thTask">Task</th>
+              <th scope="col" data-i18n="baselines.thCtrl">Classical baseline</th>
+              <th scope="col" class="num" data-i18n="baselines.thSuccess">Success</th>
+              <th scope="col" data-i18n="baselines.thCond">Evaluation window &amp; notes</th>
+            </tr>
+          </thead>
           <tbody>
-            <tr><td>QuadX-Waypoints</td><td class="num">SE(3) geometric control</td><td class="num good">90.6%</td><td>级联 PID 参照 99.2%</td></tr>
-            <tr><td>QuadX-Track</td><td class="num">KF + fixed-offset SE(3)</td><td class="num warn">82.8%</td><td>可见时间 90.2%，偏移误差 0.258 m</td></tr>
-            <tr><td>Fixedwing-Waypoints</td><td class="num">L1 lateral + TECS</td><td class="num warn">97.0%</td><td>out-of-bound 末端极限环</td></tr>
-            <tr><td>Quadplane-VTOL</td><td class="num">SE(3) + forward pusher</td><td class="num warn">89.1%</td><td>混合级联 / L1-wing 臂 26.6% / 49.6%</td></tr>
-            <tr><td>Rocket-Landing</td><td class="num">ZEM/PN PDG + pulse servo</td><td class="num good">100%</td><td>v2：40 Hz，连续停稳 2 s</td></tr>
-            <tr><td>Missile-Intercept</td><td class="num">Augmented PN (N=15)</td><td class="num warn">71.1%</td><td>体轴角速率指令</td></tr>
-            <tr><td>Satellite (CMG)</td><td class="num">quaternion PD + damped pinv</td><td class="num good">100%</td><td>普通 Moore–Penrose 臂同样 100%</td></tr>
-            <tr><td>Low-Thrust Transfer</td><td class="num">Gauss one-step greedy</td><td class="num good">100%</td><td>166 步，终端返回 0.0067</td></tr>
-            <tr><td>Space Docking</td><td class="num">CWH discrete LQR + shield</td><td class="num good">100%</td><td>263 步窗口</td></tr>
-            <tr><td>Space Rendezvous</td><td class="num">two-impulse CWH ZEM/PN</td><td class="num good">100%</td><td>581 步窗口，平均返回 184.9</td></tr>
+            <tr><td>QuadX-Waypoints</td><td class="ctrl">SE(3) geometric control + integral trim</td><td class="num">90.6%</td><td class="cond" data-i18n="cond.quadx">32 replicas, seed 7 · cascade PID arm 99.2%</td></tr>
+            <tr><td>QuadX-Track</td><td class="ctrl">CV Kalman filter + fixed-offset SE(3)</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx_track">128 replicas, seed 21 · visible-time fraction 90.2%</td></tr>
+            <tr><td>Fixedwing-Waypoints</td><td class="ctrl">L1 lateral + TECS longitudinal autopilot</td><td class="num">97.0%</td><td class="cond" data-i18n="cond.fixedwing">128 replicas, seed 13 · window ends before the 120 s limit</td></tr>
+            <tr><td>Quadplane-VTOL</td><td class="ctrl">SE(3) + forward pusher</td><td class="num">89.1%</td><td class="cond" data-i18n="cond.quadplane">128 replicas, seed 13</td></tr>
+            <tr><td>Rocket-Landing</td><td class="ctrl">ZEM/PN PDG + virtual pad + pulse servo</td><td class="num">100%</td><td class="cond" data-i18n="cond.rocket">v2 criterion · 40 Hz · settled for 2 s</td></tr>
+            <tr><td>Missile-Intercept</td><td class="ctrl">Augmented PN (N = 15) → body-rate commands</td><td class="num">71.1%</td><td class="cond" data-i18n="cond.missile">128 replicas, seed 13</td></tr>
+            <tr><td>Satellite Attitude</td><td class="ctrl">Quaternion PD + Schaub–Junkins damped pseudo-inverse</td><td class="num">100%</td><td class="cond" data-i18n="cond.satellite">128 replicas, seed 13</td></tr>
+            <tr><td>Low-Thrust Transfer</td><td class="ctrl">Gauss one-step greedy tangential guidance</td><td class="num">100%</td><td class="cond" data-i18n="cond.transfer">128 replicas, seed 13 · terminal return 0.0067</td></tr>
+            <tr><td>Space Docking</td><td class="ctrl">CWH discrete LQR + shield / fuel derating</td><td class="num">100%</td><td class="cond" data-i18n="cond.docking">128 replicas, seed 13 · 263-step window</td></tr>
+            <tr><td>Space Rendezvous</td><td class="ctrl">Two-impulse CWH ZEM/PN, recursive re-solve</td><td class="num">100%</td><td class="cond" data-i18n="cond.rendezvous">128 replicas, seed 13 · 581-step window</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="note">
-        <b>口径提醒：</b>火箭 v2 判据（40 Hz + 连续 2 秒停稳）与旧的 v1 瞬时成功率不可直接比较；
-        旧笔记中的 82.8% / 84.1% 属于 v1 瞬时口径。
-      </p>
+      <p class="table-hint" data-i18n="baselines.hint">Scroll horizontally to see all columns →</p>
+      <div class="notes">
+        <p data-i18n="baselines.note1">Within one task, a higher rate is better. Across tasks these numbers are not a unified ranking: the environments, horizons and success criteria differ.</p>
+        <p data-i18n="baselines.note2"><b>Version note.</b> The rocket v1 instantaneous rates quoted in older notes (82.8% / 84.1%) are not comparable with the v2 settled criterion: 40 Hz and two continuous seconds of pad contact, low speed and low spin.</p>
+      </div>
     </div>
   </section>
 
-  <section id="start">
+  <section class="section" id="start">
     <div class="wrap">
       <div class="sec-head">
-        <div>
-          <div class="sec-kicker">05 / Quick start</div>
-          <h2>一条命令复现一个任务</h2>
-        </div>
+        <p class="kicker">04 / <span data-i18n="nav.start">Quick start</span></p>
+        <h2 data-i18n="start.title">Run one task in a few commands</h2>
+        <p class="sec-intro" data-i18n="start.intro">Training entries are self-contained: constants live in the file and there are no CLI arguments. Evaluation and baseline scripts restore the recorded configuration.</p>
       </div>
-      <p class="sec-sub">
-        每个任务都有自包含的训练入口（参数硬编码在文件里，无 CLI 参数），
-        以及统一的基线评测与检查点评测脚本。
-      </p>
-      <div class="split">
-        <pre><code><span class="c"># 1. clone &amp; install</span>
+      <div class="start-grid">
+        <pre><code><span class="c"># clone &amp; install</span>
 git clone https://github.com/PaoShou-China/aerospace-rl-benchmark
 cd aerospace-rl-benchmark
 pip install -r requirements.txt
 
-<span class="c"># 2. train a task (per-task, self-contained constants)</span>
+<span class="c"># train: one self-contained entry per task</span>
 python environments/multirotor/train_quadx.py
 python environments/vtol/train_quadplane.py
 
-<span class="c"># 3. evaluate a checkpoint</span>
+<span class="c"># evaluate a checkpoint, then the classical baseline</span>
 python scripts/eval.py quadx
-
-<span class="c"># 4. evaluate the classical baseline</span>
-python scripts/baseline_eval.py quadx
-
-<span class="c"># 5. controller-prior study (BC / residual / gain scheduling)</span>
-ls experiments/controller_priors</code></pre>
-        <div class="links-list">
-          <h3>仓库入口</h3>
+python scripts/baseline_eval.py quadx</code></pre>
+        <div class="docs">
+          <h3 data-i18n="docs.title">Documentation</h3>
           <ul>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md">README</a><span>overview</span></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md">technical-highlights</a><span>reviewer notes</span></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/evaluation_protocol.md">evaluation_protocol</a><span>protocol</span></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/tree/main/docs/method">docs/method</a><span>per-task</span></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/benchmark_report.md">benchmark_report</a><span>zh report</span></li>
+            <li><a data-doc="readme" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md"><span>README</span><span class="d" data-i18n="docs.overview">overview</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/tasks.md"><span>docs/tasks</span><span class="d" data-i18n="docs.tasks">task table</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baselines.md"><span>docs/baselines</span><span class="d" data-i18n="docs.baselines">baseline results</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md"><span>technical-highlights</span><span class="d" data-i18n="docs.reviewer">infrastructure claims</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/evaluation_protocol.md"><span>evaluation_protocol</span><span class="d" data-i18n="docs.protocol">protocol</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/tree/main/docs/method"><span>docs/method</span><span class="d" data-i18n="docs.method">per-task methods</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baseline_test_report.md"><span>baseline_test_report</span><span class="d" data-i18n="docs.baseline">multi-seed</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/benchmark_report.md"><span>benchmark_report (中文)</span><span class="d" data-i18n="docs.report">full report</span></a></li>
+            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/rocket_benchmark_v2_zh.md"><span>rocket_benchmark_v2 (中文)</span><span class="d" data-i18n="docs.rocket">criterion</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="acknowledgments">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="kicker">05 / <span data-i18n="nav.ack">Acknowledgments</span></p>
+        <h2 data-i18n="ack.title">Thanks</h2>
+      </div>
+      <div class="ack-grid">
+        <div>
+          <h3 data-i18n="ack.teachers">Teachers</h3>
+          <ul>
+            <li>Lin Cheng</li>
+            <li>Shengping Gong</li>
+            <li>Peng Shi</li>
+          </ul>
+        </div>
+        <div>
+          <h3 data-i18n="ack.students">Fellow students</h3>
+          <ul>
+            <li>Wang Han</li>
+            <li>Shi Yunhan</li>
+            <li>Gong Yuxuan</li>
+            <li>Dai Yuhang</li>
+          </ul>
+        </div>
+        <div>
+          <h3 data-i18n="ack.projects">Related projects</h3>
+          <ul>
+            <li><a href="https://github.com/Genesis-Embodied-AI/Genesis" target="_blank" rel="noopener">Genesis</a></li>
+            <li><a href="https://pytorch.org" target="_blank" rel="noopener">PyTorch</a></li>
+            <li><a href="https://github.com/leggedrobotics/rsl_rl" target="_blank" rel="noopener">rsl-rl</a></li>
+            <li><a href="https://github.com/jbpalmer/PyFlyt" target="_blank" rel="noopener">PyFlyt</a></li>
+            <li><a href="https://github.com/pytorch/rl" target="_blank" rel="noopener">TorchRL</a></li>
+            <li>gym-satellite-trajectory</li>
+            <li>SpaceGym (CVPR 2026 Workshop, AI4Space)</li>
           </ul>
         </div>
       </div>
@@ -544,30 +701,347 @@ ls experiments/controller_priors</code></pre>
 <footer>
   <div class="wrap foot-inner">
     <div>
-      AerospaceRL Benchmark · PaoShou-China ·
       <a href="https://github.com/PaoShou-China/aerospace-rl-benchmark">github.com/PaoShou-China/aerospace-rl-benchmark</a>
+      · <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">paoshou-china.github.io/aerospace-rl-benchmark</a>
     </div>
-    <div class="mono">videos: checkpoint / baseline replay · rendered offline</div>
+    <div class="mono" data-i18n="footer.note">Replays rendered offline from repository checkpoints · brand illustration is not a capture</div>
   </div>
 </footer>
 
 <script>
-  // reveal on scroll (no-op when reduced motion is requested)
-  const io = 'IntersectionObserver' in window
-    ? new IntersectionObserver(es => es.forEach(e => {
-        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-      }), {threshold: .15})
-    : null;
-  document.querySelectorAll('.reveal').forEach(el => io ? io.observe(el) : el.classList.add('in'));
+(() => {
+  const DOCS = {
+    en: "https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md",
+    zh: "https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.zh-CN.md"
+  };
 
-  // pause off-screen videos to keep the page light
-  if ('IntersectionObserver' in window) {
-    const vo = new IntersectionObserver(es => es.forEach(e => {
-      const v = e.target;
-      if (e.isIntersecting) { v.play().catch(() => {}); } else { v.pause(); }
-    }), {rootMargin: '120px'});
-    document.querySelectorAll('video').forEach(v => vo.observe(v));
+  const I18N = {
+    en: {
+      "skip": "Skip to content",
+      "nav.tasks": "Tasks", "nav.design": "Design", "nav.baselines": "Baselines",
+      "nav.start": "Quick start", "nav.ack": "Acknowledgments",
+      "hero.eyebrow": "Aerospace control · reinforcement learning",
+      "hero.title1": "Ten aerospace tasks.",
+      "hero.title2": "One tensor interface.",
+      "hero.lede": "A lightweight reinforcement-learning benchmark built on batched device tensors: six atmospheric vehicles and four spacecraft missions, each paired with a classical GNC baseline that speaks the same action language.",
+      "hero.cta1": "Get started", "hero.cta2": "GitHub repository",
+      "hero.meta": "10 tasks · 6 atmospheric · 4 spacecraft · no Gym dependency",
+      "hero.artAlt": "Brand illustration: a booster descending toward a lit planetary limb, framed by orbital arcs.",
+      "hero.artCap": "Brand illustration — not a simulation capture.",
+      "tasks.title": "Ten environments, one contract",
+      "tasks.intro": "Every environment exposes the same step / reset / buffer contract and the same batched tensor API. The replay clips are exported from the repository's visualization scripts and show task dynamics, not benchmark scores.",
+      "tasks.groupAtmo": "Atmospheric flight", "tasks.groupSpace": "Spacecraft",
+      "tasks.groupClose": "Close-up replays",
+      "tasks.closeIntro": "Longer exports of three tasks, adding the live state card and a second camera. Same environments, different framing.",
+      "tasks.note": "Replays were rendered offline with the repository's visualization tools. The footage shows each task's dynamics and framing; it is not tied to any baseline score listed below.",
+      "task.quadx.cat": "Atmospheric · multirotor",
+      "task.quadx.desc": "Crazyflie-scale quadrotor capturing four waypoints inside a 5 m dome.",
+      "task.quadx.spec": "<span>obs 37</span> <span>act 4</span> <span>40 Hz</span> <span>800 steps / 20 s</span>",
+      "task.quadx_track.cat": "Atmospheric · tracking",
+      "task.quadx_track.desc": "Ground-target tracking with a geometric camera; success needs 85% visibility without a crash.",
+      "task.quadx_track.spec": "<span>obs 25</span> <span>act 4</span> <span>40 Hz</span> <span>1200 steps / 30 s</span>",
+      "task.fixedwing.cat": "Atmospheric · fixed wing",
+      "task.fixedwing.desc": "2.35 kg UAV with blade-element aerodynamics, capturing four waypoints across a 20–65 m shell.",
+      "task.fixedwing.spec": "<span>obs 39</span> <span>act 4</span> <span>30 Hz</span> <span>3600 steps / 120 s</span>",
+      "task.quadplane.cat": "Atmospheric · hybrid VTOL",
+      "task.quadplane.desc": "Four rotors, fixed-wing surfaces and a forward pusher, with a natural rotor-to-aero authority transition.",
+      "task.quadplane.spec": "<span>obs 47</span> <span>act 8</span> <span>40 Hz</span> <span>1200 steps / 30 s</span>",
+      "task.rocket.cat": "Atmospheric · propulsive landing",
+      "task.rocket.desc": "F9-class booster landing under grid-fin and gimbal control; benchmark v2 asks for two settled seconds on the pad.",
+      "task.rocket.spec": "<span>obs 30</span> <span>act 7</span> <span>40 Hz</span> <span>1200 steps / 30 s</span>",
+      "task.missile.cat": "Atmospheric · intercept",
+      "task.missile.desc": "6-DOF tail-controlled missile intercepting a kinematic manoeuvring target with a proximity fuse.",
+      "task.missile.spec": "<span>obs 34</span> <span>act 3</span> <span>60 Hz</span> <span>900 steps / 15 s</span>",
+      "task.satellite.cat": "Spacecraft · CMG attitude",
+      "task.satellite.desc": "Attitude control with 4 or 6 control moment gyros and a singularity-aware allocator.",
+      "task.satellite.spec": "<span>obs 26 / 32</span> <span>act 4 / 6</span> <span>40 Hz</span> <span>1200 steps / 30 s</span>",
+      "task.transfer.cat": "Spacecraft · low thrust",
+      "task.transfer.desc": "Perigee raising with 10 mN electric propulsion; 166 steps cover roughly five revolutions.",
+      "task.transfer.spec": "<span>obs 8</span> <span>act 3</span> <span>300 s / step</span> <span>166 steps</span>",
+      "task.docking.cat": "Spacecraft · final approach",
+      "task.docking.desc": "CWH final approach from 60–120 m with fuel derating and a safety shield.",
+      "task.docking.spec": "<span>obs 6</span> <span>act 3</span> <span>1 s / step</span> <span>500 steps / 8.3 min</span>",
+      "task.rendezvous.cat": "Spacecraft · medium approach",
+      "task.rendezvous.desc": "CWH approach from 1000–1500 m while respecting a 5 m keep-out sphere.",
+      "task.rendezvous.spec": "<span>obs 6</span> <span>act 3</span> <span>1 s / step</span> <span>1000 steps / 16.7 min</span>",
+      "alt.quadx": "QuadX-Waypoints replay frame", "alt.quadx_track": "QuadX-Track replay frame",
+      "alt.fixedwing": "Fixedwing-Waypoints replay frame", "alt.quadplane": "Quadplane-VTOL replay frame",
+      "alt.rocket": "Rocket-Landing replay frame", "alt.missile": "Missile-Intercept replay frame",
+      "alt.satellite": "Satellite attitude replay frame", "alt.transfer": "Low-thrust transfer replay frame",
+      "alt.docking": "Space docking replay frame", "alt.rendezvous": "Space rendezvous replay frame",
+      "alt.quadx_vis": "QuadX close-up replay frame", "alt.docking_vis": "Docking close-up replay frame",
+      "alt.rocket_vis": "Rocket close-up replay frame",
+      "close.quadx.title": "QuadX · trajectory and attitude",
+      "close.quadx.desc": "Waypoint sequence with the live state card and close-up camera.",
+      "close.docking.title": "Docking · final approach",
+      "close.docking.desc": "Relative range, closing speed and docking-axis alignment.",
+      "close.rocket.title": "Rocket · terminal descent",
+      "close.rocket.desc": "Ignition, braking, touchdown and the two-second settle window.",
+      "design.title": "A kernel, not a wrapper",
+      "design.intro": "Physics, contacts, rewards, resets and RNG are masked tensor kernels on a single device. Inactive replicas are frozen, consume no random numbers, and never enter a per-replica Python loop.",
+      "design.p1t": "Batched tensor core",
+      "design.p1d": "No engine round-trip per replica and no Gym wrapper. Each <code>step()</code> performs exactly one host sync, used only for episode-boundary bookkeeping.",
+      "design.p2t": "Baselines in the same action space",
+      "design.p2d": "SE(3), L1 + TECS, PDG, CWH-LQR and two-impulse guidance emit the same action vector as the policy, so they can be evaluated, cloned, or used as a residual base.",
+      "design.p3t": "Controller priors, studied",
+      "design.p3d": "<code>experiments/controller_priors</code> ships behavior-cloning warm starts, residual RL and gain scheduling, including DAgger collection and checkpoint selection.",
+      "baselines.title": "Reference points, not a leaderboard",
+      "baselines.intro": "Each task ships one default classical controller, evaluated on the same environment, reward and success criterion as the learned policy. Replica counts, seeds and windows come from the recorded <code>results/&lt;task&gt;/baseline.json</code> artifacts.",
+      "baselines.tableAria": "Baseline success rates by task",
+      "baselines.caption": "Default classical controller per task, with the evaluation window recorded in the repository.",
+      "baselines.thTask": "Task", "baselines.thCtrl": "Classical baseline",
+      "baselines.thSuccess": "Success", "baselines.thCond": "Evaluation window & notes",
+      "cond.quadx": "32 replicas, seed 7 · cascade PID arm 99.2%",
+      "cond.quadx_track": "128 replicas, seed 21 · visible-time fraction 90.2%",
+      "cond.fixedwing": "128 replicas, seed 13 · window ends before the 120 s limit",
+      "cond.quadplane": "128 replicas, seed 13",
+      "cond.rocket": "v2 criterion · 40 Hz · settled for 2 s",
+      "cond.missile": "128 replicas, seed 13",
+      "cond.satellite": "128 replicas, seed 13",
+      "cond.transfer": "128 replicas, seed 13 · terminal return 0.0067",
+      "cond.docking": "128 replicas, seed 13 · 263-step window",
+      "cond.rendezvous": "128 replicas, seed 13 · 581-step window",
+      "baselines.hint": "Scroll horizontally to see all columns →",
+      "baselines.note1": "Within one task, a higher rate is better. Across tasks these numbers are not a unified ranking: the environments, horizons and success criteria differ.",
+      "baselines.note2": "<b>Version note.</b> The rocket v1 instantaneous rates quoted in older notes (82.8% / 84.1%) are not comparable with the v2 settled criterion: 40 Hz and two continuous seconds of pad contact, low speed and low spin.",
+      "start.title": "Run one task in a few commands",
+      "start.intro": "Training entries are self-contained: constants live in the file and there are no CLI arguments. Evaluation and baseline scripts restore the recorded configuration.",
+      "docs.title": "Documentation",
+      "docs.overview": "overview", "docs.reviewer": "infrastructure claims", "docs.protocol": "protocol",
+      "docs.method": "per-task methods", "docs.baseline": "multi-seed",
+      "docs.report": "full report", "docs.rocket": "criterion",
+      "docs.tasks": "task table", "docs.baselines": "baseline results",
+      "ack.title": "Thanks", "ack.teachers": "Teachers", "ack.students": "Fellow students", "ack.projects": "Related projects",
+      "footer.note": "Replays rendered offline from repository checkpoints · brand illustration is not a capture",
+      "video.play": "Play replay: {task}",
+      "menu.open": "Open navigation", "menu.close": "Close navigation",
+      "lang.label": "Language",
+      "meta.title": "AerospaceRL Benchmark — GPU-parallel aerospace control environments",
+      "meta.desc": "Ten aerospace control tasks behind one batched device-tensor interface: six atmospheric vehicles, four spacecraft missions, and a classical GNC baseline for each task."
+    },
+    zh: {
+      "skip": "跳到正文",
+      "nav.tasks": "任务", "nav.design": "设计", "nav.baselines": "基线",
+      "nav.start": "快速开始", "nav.ack": "致谢",
+      "hero.eyebrow": "航空航天控制 · 强化学习",
+      "hero.title1": "十个飞行任务，",
+      "hero.title2": "同一张量接口。",
+      "hero.lede": "面向航空航天控制的轻量强化学习基准：6 个大气飞行任务与 4 个航天器任务，全部运行在同一设备上的批量张量内核；每个任务都配有同动作约定的经典 GNC 基线。",
+      "hero.cta1": "快速开始", "hero.cta2": "GitHub 仓库",
+      "hero.meta": "10 个任务 · 6 个大气 · 4 个航天 · 不依赖 Gym",
+      "hero.artAlt": "品牌插画：助推器朝向被照亮的行星地平线下降，背景为轨道弧线。",
+      "hero.artCap": "品牌插画，不是仿真截图。",
+      "tasks.title": "十个环境，一套契约",
+      "tasks.intro": "所有环境共享同一套 step / reset / 缓冲区契约与批量张量接口。回放片段由仓库内的可视化脚本导出，用于展示任务动力学，不代表基准得分。",
+      "tasks.groupAtmo": "大气飞行", "tasks.groupSpace": "航天器",
+      "tasks.groupClose": "特写回放",
+      "tasks.closeIntro": "三个任务更长的导出片段，增加了实时状态卡片与第二机位。环境相同，只是取景不同。",
+      "tasks.note": "回放由仓库内的可视化工具离线渲染，展示各任务的动力学与取景方式，不与下方任何基线成功率绑定。",
+      "task.quadx.cat": "大气 · 多旋翼",
+      "task.quadx.desc": "Crazyflie 级四旋翼在 5 m 穹顶内依次捕获 4 个航点。",
+      "task.quadx.spec": "<span>观测 37</span> <span>动作 4</span> <span>40 Hz</span> <span>800 步 / 20 s</span>",
+      "task.quadx_track.cat": "大气 · 目标跟踪",
+      "task.quadx_track.desc": "借助几何相机持续跟踪地面目标；成功率要求可见时间占比达到 85% 且不坠机。",
+      "task.quadx_track.spec": "<span>观测 25</span> <span>动作 4</span> <span>40 Hz</span> <span>1200 步 / 30 s</span>",
+      "task.fixedwing.cat": "大气 · 固定翼",
+      "task.fixedwing.desc": "2.35 kg 固定翼无人机，采用叶素气动模型，在 20–65 m 空域内捕获 4 个航点。",
+      "task.fixedwing.spec": "<span>观测 39</span> <span>动作 4</span> <span>30 Hz</span> <span>3600 步 / 120 s</span>",
+      "task.quadplane.cat": "大气 · 混合 VTOL",
+      "task.quadplane.desc": "四个旋翼、固定翼翼面与前推电机，控制权随空速在旋翼与气动面之间自然转移。",
+      "task.quadplane.spec": "<span>观测 47</span> <span>动作 8</span> <span>40 Hz</span> <span>1200 步 / 30 s</span>",
+      "task.rocket.cat": "大气 · 动力着陆",
+      "task.rocket.desc": "F9 级助推器在栅格舵与万向节控制下着陆；v2 判据要求在着陆台上连续停稳 2 秒。",
+      "task.rocket.spec": "<span>观测 30</span> <span>动作 7</span> <span>40 Hz</span> <span>1200 步 / 30 s</span>",
+      "task.missile.cat": "大气 · 拦截",
+      "task.missile.desc": "6 自由度尾翼控制导弹，以近炸引信拦截三维机动目标。",
+      "task.missile.spec": "<span>观测 34</span> <span>动作 3</span> <span>60 Hz</span> <span>900 步 / 15 s</span>",
+      "task.satellite.cat": "航天 · CMG 姿态",
+      "task.satellite.desc": "采用 4 或 6 个控制力矩陀螺的姿态控制，并带奇异性感知的分配器。",
+      "task.satellite.spec": "<span>观测 26 / 32</span> <span>动作 4 / 6</span> <span>40 Hz</span> <span>1200 步 / 30 s</span>",
+      "task.transfer.cat": "航天 · 低推力",
+      "task.transfer.desc": "以 10 mN 电推进抬升近地点；166 步约覆盖 5 圈轨道。",
+      "task.transfer.spec": "<span>观测 8</span> <span>动作 3</span> <span>300 s / 步</span> <span>166 步</span>",
+      "task.docking.cat": "航天 · 末段接近",
+      "task.docking.desc": "CWH 动力学下的 60–120 m 末段接近，含燃料降额与安全盾。",
+      "task.docking.spec": "<span>观测 6</span> <span>动作 3</span> <span>1 s / 步</span> <span>500 步 / 8.3 min</span>",
+      "task.rendezvous.cat": "航天 · 中距接近",
+      "task.rendezvous.desc": "CWH 动力学下从 1000–1500 m 接近，并保持 5 m 禁飞球约束。",
+      "task.rendezvous.spec": "<span>观测 6</span> <span>动作 3</span> <span>1 s / 步</span> <span>1000 步 / 16.7 min</span>",
+      "alt.quadx": "QuadX-Waypoints 回放画面", "alt.quadx_track": "QuadX-Track 回放画面",
+      "alt.fixedwing": "Fixedwing-Waypoints 回放画面", "alt.quadplane": "Quadplane-VTOL 回放画面",
+      "alt.rocket": "Rocket-Landing 回放画面", "alt.missile": "Missile-Intercept 回放画面",
+      "alt.satellite": "卫星姿态回放画面", "alt.transfer": "低推力转移回放画面",
+      "alt.docking": "空间对接回放画面", "alt.rendezvous": "空间交会回放画面",
+      "alt.quadx_vis": "QuadX 特写回放画面", "alt.docking_vis": "对接特写回放画面",
+      "alt.rocket_vis": "火箭特写回放画面",
+      "close.quadx.title": "QuadX · 轨迹与姿态",
+      "close.quadx.desc": "航点序列、实时状态卡片与特写机位。",
+      "close.docking.title": "Docking · 末段接近",
+      "close.docking.desc": "相对距离、接近速度与对接轴对齐。",
+      "close.rocket.title": "Rocket · 着陆末段",
+      "close.rocket.desc": "点火、制动、触垫与 2 秒停稳窗口。",
+      "design.title": "做成内核，而不是包装",
+      "design.intro": "物理、接触、奖励、重置与随机数都是同一设备上的掩码张量内核。失活副本被冻结，不消耗随机数，也不会进入逐副本的 Python 循环。",
+      "design.p1t": "批量张量内核",
+      "design.p1d": "没有逐副本的引擎往返，也没有 Gym 包装。每次 <code>step()</code> 只做一次主机同步，且仅用于回合边界记账。",
+      "design.p2t": "同动作空间的经典基线",
+      "design.p2d": "SE(3)、L1 + TECS、PDG、CWH-LQR 与双脉冲制导输出与策略相同的动作向量，可直接评测、克隆，或作为残差控制的基底。",
+      "design.p3t": "系统研究控制器先验",
+      "design.p3d": "<code>experiments/controller_priors</code> 提供行为克隆热启动、残差强化学习与增益调度，包含 DAgger 采集与检查点选择。",
+      "baselines.title": "参考点，不是排行榜",
+      "baselines.intro": "每个任务随附一个默认经典控制器，在与策略相同的环境、奖励和成功判据下评测。副本数、随机种子与评测窗口来自仓库记录的 <code>results/&lt;task&gt;/baseline.json</code>。",
+      "baselines.tableAria": "各任务基线成功率",
+      "baselines.caption": "每个任务的默认经典控制器，以及仓库中记录的评测窗口。",
+      "baselines.thTask": "任务", "baselines.thCtrl": "经典基线",
+      "baselines.thSuccess": "参考成功率", "baselines.thCond": "评测窗口与备注",
+      "cond.quadx": "32 个副本，seed 7 · 级联 PID 臂 99.2%",
+      "cond.quadx_track": "128 个副本，seed 21 · 可见时间占比 90.2%",
+      "cond.fixedwing": "128 个副本，seed 13 · 窗口在 120 s 上限前结束",
+      "cond.quadplane": "128 个副本，seed 13",
+      "cond.rocket": "v2 判据 · 40 Hz · 连续停稳 2 s",
+      "cond.missile": "128 个副本，seed 13",
+      "cond.satellite": "128 个副本，seed 13",
+      "cond.transfer": "128 个副本，seed 13 · 终端返回 0.0067",
+      "cond.docking": "128 个副本，seed 13 · 263 步窗口",
+      "cond.rendezvous": "128 个副本，seed 13 · 581 步窗口",
+      "baselines.hint": "左右滑动查看全部列 →",
+      "baselines.note1": "同一任务内，成功率越高越好。跨任务之间这些数字不构成统一排名：环境、时间尺度与成功判据都不同。",
+      "baselines.note2": "<b>版本说明。</b>旧笔记中的火箭 v1 瞬时成功率（82.8% / 84.1%）不能与 v2 停稳判据直接比较：v2 要求 40 Hz 采样下连续 2 秒满足触垫、低速与低角速率。",
+      "start.title": "几条命令跑通一个任务",
+      "start.intro": "训练入口是自包含的：参数写在文件里，不提供 CLI 参数。评测与基线脚本会恢复记录中的配置。",
+      "docs.title": "文档入口",
+      "docs.overview": "总览", "docs.reviewer": "基础设施说明", "docs.protocol": "评测协议",
+      "docs.method": "逐任务方法", "docs.baseline": "多种子复分析",
+      "docs.report": "完整报告", "docs.rocket": "判据说明",
+      "docs.tasks": "任务表", "docs.baselines": "基线结果",
+      "ack.title": "致谢", "ack.teachers": "导师", "ack.students": "同学", "ack.projects": "相关项目",
+      "footer.note": "回放由仓库检查点离线渲染 · 品牌插画不是仿真截图",
+      "video.play": "播放回放：{task}",
+      "menu.open": "展开导航", "menu.close": "收起导航",
+      "lang.label": "语言",
+      "meta.title": "AerospaceRL Benchmark · GPU 并行航空航天控制基准",
+      "meta.desc": "十个航空航天控制任务，统一批量张量接口：6 个大气飞行任务、4 个航天器任务，每个任务都配有经典 GNC 基线。"
+    }
+  };
+
+  const htmlEl = document.documentElement;
+  const langButtons = Array.from(document.querySelectorAll('.lang button'));
+  const menuBtn = document.querySelector('.menu');
+  const nav = document.getElementById('site-nav');
+  const metaDesc = document.querySelector('meta[name="description"]');
+  const ogTitle = document.querySelector('meta[property="og:title"]');
+  const ogDesc = document.querySelector('meta[property="og:description"]');
+  let currentLang = 'en';
+
+  function safeStore(value) {
+    try { localStorage.setItem('arl-lang', value); } catch (e) {}
   }
+  function safeRead() {
+    try { return localStorage.getItem('arl-lang'); } catch (e) { return null; }
+  }
+
+  function applyLang(lang, persist) {
+    const dict = I18N[lang] || I18N.en;
+    currentLang = lang;
+    htmlEl.lang = lang === 'zh' ? 'zh-CN' : 'en';
+
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.dataset.i18n;
+      if (!dict[key]) return;
+      if (/<[a-z][\s\S]*>/i.test(dict[key])) el.innerHTML = dict[key];
+      else el.textContent = dict[key];
+    });
+    document.querySelectorAll('[data-i18n-alt]').forEach(el => {
+      const key = el.dataset.i18nAlt;
+      if (dict[key]) el.alt = dict[key];
+    });
+    document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+      const key = el.dataset.i18nAria;
+      if (dict[key]) el.setAttribute('aria-label', dict[key]);
+    });
+    document.querySelectorAll('.poster').forEach(btn => {
+      const task = btn.dataset.task || '';
+      btn.setAttribute('aria-label', dict['video.play'].replace('{task}', task));
+    });
+    document.querySelectorAll('.media video').forEach(v => {
+      if (v.dataset.task) v.setAttribute('aria-label', dict['video.play'].replace('{task}', v.dataset.task));
+    });
+
+    langButtons.forEach(b => {
+      b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
+    });
+    document.querySelectorAll('[data-doc="readme"]').forEach(a => { a.href = DOCS[lang]; });
+    if (menuBtn) menuBtn.setAttribute('aria-label', nav.classList.contains('open') ? dict['menu.close'] : dict['menu.open']);
+
+    document.title = dict['meta.title'];
+    if (metaDesc) metaDesc.content = dict['meta.desc'];
+    if (ogTitle) ogTitle.content = dict['meta.title'];
+    if (ogDesc) ogDesc.content = dict['meta.desc'];
+
+    if (persist) safeStore(lang);
+  }
+
+  langButtons.forEach(b => {
+    b.addEventListener('click', () => applyLang(b.dataset.lang, true));
+  });
+
+  const stored = safeRead();
+  const initial = stored === 'zh' || stored === 'en' ? stored
+    : (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  applyLang(initial, false);
+
+  // mobile navigation
+  if (menuBtn) {
+    menuBtn.addEventListener('click', () => {
+      const open = nav.classList.toggle('open');
+      menuBtn.setAttribute('aria-expanded', String(open));
+      menuBtn.setAttribute('aria-label', I18N[currentLang][open ? 'menu.close' : 'menu.open']);
+    });
+    nav.addEventListener('click', e => {
+      if (e.target.closest('a')) {
+        nav.classList.remove('open');
+        menuBtn.setAttribute('aria-expanded', 'false');
+        menuBtn.setAttribute('aria-label', I18N[currentLang]['menu.open']);
+      }
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && nav.classList.contains('open')) {
+        nav.classList.remove('open');
+        menuBtn.setAttribute('aria-expanded', 'false');
+        menuBtn.focus();
+      }
+    });
+  }
+
+  // click-to-play replays: posters load first, media only on request
+  const players = new Set();
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.poster');
+    if (!btn) return;
+    const media = btn.closest('.media');
+    const src = btn.dataset.video;
+    if (!media || !src) return;
+
+    const video = document.createElement('video');
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.poster = btn.querySelector('img')?.currentSrc || '';
+    video.src = src;
+    video.setAttribute('aria-label', btn.getAttribute('aria-label') || btn.dataset.task || 'Replay');
+    video.dataset.task = btn.dataset.task || '';
+    media.appendChild(video);
+    btn.hidden = true;
+
+    video.addEventListener('play', () => {
+      players.forEach(other => { if (other !== video && !other.paused) other.pause(); });
+    });
+    players.add(video);
+    const p = video.play();
+    if (p && p.catch) p.catch(() => {});
+    video.focus({ preventScroll: true });
+  });
+})();
 </script>
 </body>
 </html>
