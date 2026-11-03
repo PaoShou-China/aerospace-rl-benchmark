@@ -1,16 +1,8 @@
-<p align="center">
-  <img src="assets/brand/aerospacerl-icon.png" width="88" alt="AerospaceRL logo">
-</p>
-
-<h1 align="center">AerospaceRL Benchmark</h1>
-
-<p align="center">GPU-Parallel Aerospace Control Environments</p>
-
-![AerospaceRL project cover](assets/brand/aerospacerl-cover.webp)
+![AerospaceRL project cover](assets/brand/aerospacerl-cover-v2.webp)
 
 Ten GPU-parallel aerospace control tasks with a unified tensor interface, classical GNC baselines and reproducible evaluation.
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [Website / 项目网页](https://paoshou-china.github.io/aerospace-rl-benchmark/)
+<p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">Project website</a> · <a href="docs/method/README.md">Documentation</a></p>
 
 ## Quick start
 

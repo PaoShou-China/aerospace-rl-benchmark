@@ -1,16 +1,8 @@
-<p align="center">
-  <img src="assets/brand/aerospacerl-icon.png" width="88" alt="AerospaceRL logo">
-</p>
-
-<h1 align="center">AerospaceRL Benchmark</h1>
-
-<p align="center">GPU 并行航空航天控制环境</p>
-
-![AerospaceRL project cover](assets/brand/aerospacerl-cover.webp)
+![AerospaceRL project cover](assets/brand/aerospacerl-cover-v2.webp)
 
 十个 GPU 并行航空航天控制任务，统一张量接口、经典 GNC 基线与可复现评测。
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [Website / 项目网页](https://paoshou-china.github.io/aerospace-rl-benchmark/)
+<p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">项目主页</a> · <a href="docs/method/README.md">方法文档</a></p>
 
 ## 快速开始
 
