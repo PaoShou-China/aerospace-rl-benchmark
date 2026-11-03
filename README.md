@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">
-    <img src="docs/assets/banner.svg" alt="AerospaceRL Benchmark — 十个飞行任务，同一张量接口。 Ten single-agent aerospace control tasks behind one batched device-tensor interface" width="100%">
+    <img src="docs/assets/aerospacerl-cover.webp" alt="AerospaceRL Benchmark — aerospace control project cover" width="100%">
   </a><br>
   <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/"><b>https://paoshou-china.github.io/aerospace-rl-benchmark/</b></a>
 </p>
