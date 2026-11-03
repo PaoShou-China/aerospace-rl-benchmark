@@ -1,9 +1,13 @@
 # AerospaceRL Benchmark: GPU-Parallel Aerospace Control Environments
+
+**English** | [简体中文](README.zh-CN.md) | [Project website](https://paoshou-china.github.io/aerospace-rl-benchmark/)
+
 A lightweight benchmark for GPU-parallel reinforcement learning in aerospace control. The repository contains ten aerospace tasks spanning atmospheric flight and spacecraft dynamics. All environments expose the same batched device-tensor interface without Gym or Gymnasium wrappers.
 
 **Showcase page (rendered from this repository by GitHub Pages):**
 <https://paoshou-china.github.io/aerospace-rl-benchmark/> — task video wall,
-baseline reference success rates, design notes and quick start.
+baseline reference success rates, design notes and quick start. The page supports
+English / Chinese switching and remembers the selected language.
 
 Each aerospace task includes a conventional guidance, navigation, or control baseline expressed in the same action convention as the learned policy. The controller can be evaluated directly or used to generate behavior-cloning data for the warm-started learning pipeline.
 
@@ -419,21 +423,25 @@ Batch 1 (parallel, independent): missile Intercept + Droneship Landing +
 Docking-Fault. Batch 2: Autoland + Slung Payload. Later batches follow the
 priority order above as infrastructure lands.
 
-### Rocket benchmark v2（2026-10-26）
+### Rocket benchmark v2 (2026-10-26)
 
-Rocket 使用独立版本的六球形脚垫接触资产，主指标为连续停稳 2 秒。
-原始 `rocket.urdf` 保留为哈希锁定的对照资产；历史 v1 成绩仅作历史参考。
-背景、结构性问题证据、物理扰动范围及复现命令见
-[benchmark-v2 中文说明](docs/rocket_benchmark_v2_zh.md)。
-当前 main 保留 40 Hz 策略、120 Hz 控制、240 Hz 物理步长及已有 Dryden 风配置
-（2026-10-27 起，与研究冻结快照同款策略频率；50 Hz 因不能整除 120 Hz 控制环不可用）。
-Claude 已完成的 v2 评估采用 40 Hz 冻结快照；版本、频率和源码哈希随结果一同保留。
+Rocket uses a separate six-spherical-footpad contact asset. The main success
+criterion requires two continuous seconds of settling. The original
+`rocket.urdf` remains a hash-locked reference asset; historical v1 results
+are retained for reference and are not directly comparable to v2.
+See the [v2 Chinese technical note](docs/rocket_benchmark_v2_zh.md) for the
+rationale, evidence, perturbation ranges and reproduction commands.
+
+Current main uses a 40 Hz policy, 120 Hz controller and 240 Hz physics loop,
+with the existing Dryden configuration. A 50 Hz policy cannot evenly divide
+the 120 Hz control loop. The completed v2 evaluation uses the frozen 40 Hz
+snapshot; version, frequencies and source hashes are retained with results.
 
 ```bash
-# 每个环境的完整首回合，4 x 128，保留逐回合记录
+# Complete first episodes, 4 x 128 replicas, retaining episode records
 python scripts/rocket_benchmark_eval.py --backend gpu --variation nominal --out results/rocket-v2-nominal
 python scripts/rocket_benchmark_eval.py --backend gpu --variation shifted --out results/rocket-v2-shifted
-# 无策略、关发动机的接触因果诊断（不计为策略成功率）
+# Engine-off passive contact diagnostics (not policy success rates)
 python scripts/rocket_passive_contact.py --out results/passive-v2.json
 python -m unittest discover -s tests -v
 ```
