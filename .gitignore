@@ -27,3 +27,6 @@ trash/
 .idea/
 .vscode/
 .trae/
+
+# Local-only group meeting deck (not published)
+group-meeting-2026-11/
