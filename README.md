@@ -1,12 +1,16 @@
-# AerospaceRL Benchmark
+<p align="center">
+  <img src="assets/brand/aerospacerl-icon.png" width="88" alt="AerospaceRL logo">
+</p>
+
+<h1 align="center">AerospaceRL Benchmark</h1>
+
+<p align="center">GPU-Parallel Aerospace Control Environments</p>
+
+![AerospaceRL project cover](assets/brand/aerospacerl-cover.webp)
 
 Ten GPU-parallel aerospace control tasks with a unified tensor interface, classical GNC baselines and reproducible evaluation.
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [Website / 项目网页](https://paoshou-china.github.io/aerospace-rl-benchmark/)
-
-| QuadX | Rocket | Satellite | Docking |
-|---|---|---|---|
-|![quadx](assets/posters/quadx.jpg)|![rocket](assets/posters/rocket.jpg)|![satellite](assets/posters/satellite.jpg)|![docking](assets/posters/docking.jpg)|
 
 ## Quick start
 

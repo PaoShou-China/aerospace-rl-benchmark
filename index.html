@@ -238,13 +238,21 @@
 
 
 .hero{display:grid;grid-template-columns:1fr 1fr;gap:42px;align-items:center;padding-top:54px;padding-bottom:54px}.hero h1{font-size:clamp(34px,4vw,54px);letter-spacing:-.025em}.hero .lede{font-size:16px}.hero-gallery{display:grid;grid-template-columns:1fr 1fr;gap:12px}.hero-gallery figure{margin:0;background:white;border:1px solid var(--line);border-radius:12px;overflow:hidden}.hero-gallery img{width:100%;height:auto;display:block}.hero-gallery figcaption{padding:8px 12px;font-size:12px;font-weight:600}.space-wall{grid-template-columns:repeat(2,1fr)}.group-title{margin:30px 0 18px;font-size:16px;color:var(--text-2)}.body p{min-height:5.4em}.body .spec{margin-top:auto}.body .kicker{min-height:2em}td.num:nth-child(3),th:nth-child(3){text-align:right;font-variant-numeric:tabular-nums}td.num:nth-child(2){font-family:var(--font-sans);white-space:normal}html[lang=zh-CN] h1{letter-spacing:0}html[lang=en] .body h3{font-size:18px}.score{z-index:1;pointer-events:none} @media(max-width:900px){.hero{grid-template-columns:1fr}.hero-gallery{max-width:650px}.hero h1{font-size:44px}}@media(max-width:640px){.space-wall{grid-template-columns:1fr}.hero{gap:24px;padding-top:32px}.hero h1{font-size:36px}.body p{min-height:0}}
+
+/* AerospaceRL visual identity */
+:root{--bg:#f7f9fc;--accent:#1768aa;--radius:16px;--max:1280px}body{background:var(--bg)}.brand{font-family:var(--font-sans);font-size:17px;letter-spacing:-.025em;gap:10px}.brand img{object-fit:contain}.brand-tag{font:500 9px var(--font-mono);letter-spacing:.12em;color:var(--text-3);padding-left:4px}header.top{background:rgba(247,249,252,.95)}.brand-hero{padding-top:28px;padding-bottom:26px}.brand-cover{display:block;width:100%;height:auto;border-radius:20px;box-shadow:0 16px 45px #0a21301c;background:#03111e}.hero-caption{display:flex;align-items:center;justify-content:space-between;gap:32px;padding:30px 8px 26px}.hero-caption h1{font-size:clamp(25px,2.8vw,37px);line-height:1.35;max-width:unset;margin:10px 0;letter-spacing:-.025em}.hero-caption .lede{font-size:15px;margin:0;max-width:730px;line-height:1.8}.hero-caption .eyebrow{font-size:10px}.hero-caption .cta{flex-shrink:0}.btn{border-radius:999px;min-height:46px}.mission-strip{display:flex;justify-content:space-between;gap:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:18px 8px;color:var(--text-2);font-size:12px;letter-spacing:.04em}.sec-head h2{font-size:clamp(25px,3vw,33px)}.sec-kicker{color:var(--accent)}.card{box-shadow:none}.card:hover{box-shadow:0 12px 32px #102b4010}.media{border-bottom:1px solid var(--line)}.body h3{font-weight:650}.body p{color:#52647b}.table-wrap{box-shadow:none}.feat{box-shadow:none}.language-switch{border-radius:999px}.language-switch button{border-radius:999px}section#acknowledgments{background:#edf2f8;margin-top:36px}footer{margin-top:0}.foot-inner{align-items:center}a.badge:hover{background:#e6eff9;text-decoration:none}
+@media(max-width:1000px){.hero-caption{align-items:flex-start;flex-direction:column;gap:18px}.brand-tag{display:none}.brand{font-size:16px}}@media(max-width:640px){.brand-hero{padding-top:18px}.brand-cover{border-radius:12px}.hero-caption{padding:22px 0;gap:18px}.hero-caption h1{font-size:26px}.hero-caption .lede{font-size:14px}.mission-strip{display:grid;grid-template-columns:1fr 1fr;gap:13px;font-size:11px}.brand{font-size:15px}.brand img{width:32px;height:32px}}
+
 </style>
+<link rel="icon" type="image/png" href="assets/brand/aerospacerl-icon.png">
+<meta property="og:image" content="https://paoshou-china.github.io/aerospace-rl-benchmark/assets/brand/aerospacerl-cover.webp">
+<meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
 
 <header class="top">
   <div class="wrap top-inner">
-    <a class="brand" href="#top"><span class="dot"></span>AEROSPACERL / BENCHMARK</a>
+    <a class="brand" href="#top"><img src="assets/brand/aerospacerl-icon.png" width="38" height="38" alt="">AerospaceRL <span class="brand-tag">BENCHMARK</span></a>
     <nav class="links">
       <a href="#tasks"><span data-zh="控制效果" data-en="Task gallery">控制效果</span></a>
       <a href="#features"><span data-zh="设计" data-en="Design">设计</span></a>
@@ -257,14 +265,10 @@
 </header>
 
 <main id="top">
-  <div class="wrap hero">
-    <div class="hero-copy"><div class="eyebrow">GPU-PARALLEL · AEROSPACE CONTROL · RL</div>
-    <h1><span data-zh="十个飞行任务，" data-en="Ten flight tasks,">十个飞行任务，</span><br><span class="grad"><span data-zh="同一张量接口。" data-en="one tensor interface.">同一张量接口。</span></span></h1>
-    <p class="lede"><span data-zh="面向大气飞行与轨道控制的十个 GPU 并行任务，提供统一张量接口、经典控制基线与可复现评测。" data-en="Ten GPU-parallel tasks for atmospheric flight and orbital control, with a unified tensor interface, classical baselines and reproducible evaluation.">面向大气飞行与轨道控制的十个 GPU 并行任务，提供统一张量接口、经典控制基线与可复现评测。</span></p>
-
-    <div class="cta"><a class="btn" href="#start"><span data-zh="快速开始" data-en="Quick start">快速开始</span></a><a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark">GitHub ↗</a></div>
-
-    </div><div class="hero-gallery"><figure><img src="assets/posters/quadx.jpg" alt="QuadX simulation" width="960" height="540"><figcaption>QuadX</figcaption></figure><figure><img src="assets/posters/rocket.jpg" alt="Rocket simulation" width="960" height="540"><figcaption>Rocket</figcaption></figure><figure><img src="assets/posters/satellite.jpg" alt="Satellite simulation" width="960" height="540"><figcaption>Satellite</figcaption></figure><figure><img src="assets/posters/docking.jpg" alt="Docking simulation" width="960" height="540"><figcaption>Docking</figcaption></figure></div>
+  <div class="brand-hero wrap">
+    <img class="brand-cover" src="assets/brand/aerospacerl-cover.webp" width="1774" height="887" alt="AerospaceRL Benchmark — GPU-parallel aerospace control; illustrated aerospace vehicles above Earth" fetchpriority="high">
+    <div class="hero-caption"><div><span class="eyebrow">FLIGHT · ORBIT · CONTROL</span><h1 data-zh="从飞行到轨道，统一控制与学习。" data-en="From flight to orbit. Control meets learning.">从飞行到轨道，统一控制与学习。</h1><p class="lede" data-zh="十个 GPU 并行任务、经典 GNC 基线与可复现评测，面向航空航天控制研究。" data-en="Ten GPU-parallel tasks, classical GNC baselines and reproducible evaluation for aerospace control research.">十个 GPU 并行任务、经典 GNC 基线与可复现评测，面向航空航天控制研究。</p></div><div class="cta"><a class="btn" href="#start"><span data-zh="快速开始" data-en="Get started">快速开始</span><span aria-hidden="true">↗</span></a><a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark">GitHub ↗</a></div></div>
+    <div class="mission-strip"><span data-zh="06 大气飞行任务" data-en="06 Atmospheric tasks">06 大气飞行任务</span><span data-zh="04 航天器任务" data-en="04 Spacecraft tasks">04 航天器任务</span><span data-zh="统一张量接口" data-en="One tensor interface">统一张量接口</span><span data-zh="经典控制基线" data-en="Classical control baselines">经典控制基线</span></div>
   </div>
 
   <section id="tasks">
@@ -276,7 +280,7 @@
         </div>
       </div>
       <p class="sec-sub">
-        <span data-zh="下方每一格都是仓库内实际渲染的回合回放（静音循环）。角标是" data-en="Each panel shows an episode replay rendered from this repository (muted and looped). Badges report">下方每一格都是仓库内实际渲染的回合回放（静音循环）。角标是</span><b><span data-zh="经典基线的参考成功率" data-en="reference success rates of classical baselines">经典基线的参考成功率</span></b><span data-zh="，
+        <span data-zh="下方每一格都是仓库内实际渲染的回合回放（点击播放）。角标是" data-en="Each panel shows an episode replay rendered from this repository (click to play). Badges report">下方每一格都是仓库内实际渲染的回合回放（点击播放）。角标是</span><b><span data-zh="经典基线的参考成功率" data-en="reference success rates of classical baselines">经典基线的参考成功率</span></b><span data-zh="，
         取自各任务随仓库发布的" data-en=", drawn from the shipped per-task">，
         取自各任务随仓库发布的</span> <span class="mono">baseline_eval</span> <span data-zh="结果。黄色标注用于提示未达到 100% 的参考结果；各任务的评测窗口和副本数不同，不能直接横向排名。" data-en="results. Amber marks reference results below 100%. Replica counts and evaluation windows differ between tasks; these values are not a cross-task ranking.">结果。黄色标注用于提示未达到 100% 的参考结果；各任务的评测窗口和副本数不同，不能直接横向排名。</span>
       </p>
