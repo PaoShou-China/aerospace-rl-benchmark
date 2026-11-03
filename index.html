@@ -236,6 +236,8 @@
   @media(max-width:760px){.wrap{padding-left:20px;padding-right:20px}.hero{padding-top:48px}.hero h1{font-size:40px}.top-inner{flex-wrap:wrap}.brand{font-size:11px}nav.links{display:flex;order:3;width:100%;overflow-x:auto;gap:22px;padding-bottom:4px}nav.links a{white-space:nowrap}.language-switch{margin-left:auto}.lede{font-size:15px}.stat{padding:18px}.stat .k{font-size:10px}.cta{gap:8px}.btn{font-size:12px;padding:10px 13px}section{padding:36px 0;scroll-margin-top:140px}.body p{font-size:14px}}
   @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.media video{display:block}.media::after{display:none}.card,.btn{transition:none}.card:hover,.btn:hover{transform:none}}
 
+
+.hero{display:grid;grid-template-columns:1fr 1fr;gap:42px;align-items:center;padding-top:54px;padding-bottom:54px}.hero h1{font-size:clamp(34px,4vw,54px);letter-spacing:-.025em}.hero .lede{font-size:16px}.hero-gallery{display:grid;grid-template-columns:1fr 1fr;gap:12px}.hero-gallery figure{margin:0;background:white;border:1px solid var(--line);border-radius:12px;overflow:hidden}.hero-gallery img{width:100%;height:auto;display:block}.hero-gallery figcaption{padding:8px 12px;font-size:12px;font-weight:600}.space-wall{grid-template-columns:repeat(2,1fr)}.group-title{margin:30px 0 18px;font-size:16px;color:var(--text-2)}.body p{min-height:5.4em}.body .spec{margin-top:auto}.body .kicker{min-height:2em}td.num:nth-child(3),th:nth-child(3){text-align:right;font-variant-numeric:tabular-nums}td.num:nth-child(2){font-family:var(--font-sans);white-space:normal}html[lang=zh-CN] h1{letter-spacing:0}html[lang=en] .body h3{font-size:18px}.score{z-index:1;pointer-events:none} @media(max-width:900px){.hero{grid-template-columns:1fr}.hero-gallery{max-width:650px}.hero h1{font-size:44px}}@media(max-width:640px){.space-wall{grid-template-columns:1fr}.hero{gap:24px;padding-top:32px}.hero h1{font-size:36px}.body p{min-height:0}}
 </style>
 </head>
 <body>
@@ -256,36 +258,13 @@
 
 <main id="top">
   <div class="wrap hero">
-    <div class="eyebrow">GPU-PARALLEL · AEROSPACE CONTROL · RL</div>
+    <div class="hero-copy"><div class="eyebrow">GPU-PARALLEL · AEROSPACE CONTROL · RL</div>
     <h1><span data-zh="十个飞行任务，" data-en="Ten flight tasks,">十个飞行任务，</span><br><span class="grad"><span data-zh="同一张量接口。" data-en="one tensor interface.">同一张量接口。</span></span></h1>
-    <p class="lede">
-      <span data-zh="一个面向航空航天控制的轻量强化学习基准：" data-en="A lightweight reinforcement learning benchmark for aerospace control:">一个面向航空航天控制的轻量强化学习基准：</span><b><span data-zh="6 个大气飞行任务 + 4 个航天器任务" data-en="6 atmospheric tasks + 4 spacecraft tasks">6 个大气飞行任务 + 4 个航天器任务</span></b><span data-zh="，
-      全部以批量设备张量实现，" data-en=", implemented with batched device tensors:">，
-      全部以批量设备张量实现，</span><b><span data-zh="没有 Gym/Gymnasium 包装、没有逐副本 Python 循环" data-en="no Gym/Gymnasium wrappers or per-replica Python loops">没有 Gym/Gymnasium 包装、没有逐副本 Python 循环</span></b><span data-zh="。
-      每个任务都配有一个与学习策略共享动作约定的经典 GNC 基线，可直接评测，
-      也可作为行为克隆或残差 RL 的控制器先验。" data-en=". Each task includes a classical GNC baseline using the same action convention as the learned policy, for direct evaluation or controller priors in behavior cloning and residual RL.">。
-      每个任务都配有一个与学习策略共享动作约定的经典 GNC 基线，可直接评测，
-      也可作为行为克隆或残差 RL 的控制器先验。</span>
-    </p>
-    <div class="badges">
-      <span class="badge"><b>10</b> tasks</span>
-      <span class="badge"><b>6</b> atmospheric · <b>4</b> spacecraft</span>
-      <span class="badge">no gym / no gymnasium</span>
-      <span class="badge"><b>1</b> host sync per step</span>
-      <span class="badge">URDF + Genesis backend</span>
-    </div>
-    <div class="cta">
-      <a class="btn" href="https://github.com/PaoShou-China/aerospace-rl-benchmark"><span data-zh="GitHub 仓库" data-en="GitHub repository">GitHub 仓库</span></a>
-      <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md">README</a>
-      <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md"><span data-zh="技术说明" data-en="Technical notes">技术说明</span></a>
-      <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/tree/main/experiments/controller_priors"><span data-zh="控制器先验实验" data-en="Controller-prior experiments">控制器先验实验</span></a>
-    </div>
-    <div class="stats">
-      <div class="stat"><div class="v">10<span>tasks</span></div><div class="k"><span data-en="atmospheric + orbital" data-zh="大气飞行与轨道任务">大气飞行与轨道任务</span></div></div>
-      <div class="stat"><div class="v">1024<span>envs</span></div><div class="k"><span data-en="default batched evaluation" data-zh="默认批量评测副本数">默认批量评测副本数</span></div></div>
-      <div class="stat"><div class="v">0<span>gym</span></div><div class="k"><span data-en="pure device-tensor kernels" data-zh="设备张量计算内核">设备张量计算内核</span></div></div>
-      <div class="stat"><div class="v">1<span>sync</span></div><div class="k"><span data-en="host round-trip per step" data-zh="每步主机同步次数">每步主机同步次数</span></div></div>
-    </div>
+    <p class="lede"><span data-zh="面向大气飞行与轨道控制的十个 GPU 并行任务，提供统一张量接口、经典控制基线与可复现评测。" data-en="Ten GPU-parallel tasks for atmospheric flight and orbital control, with a unified tensor interface, classical baselines and reproducible evaluation.">面向大气飞行与轨道控制的十个 GPU 并行任务，提供统一张量接口、经典控制基线与可复现评测。</span></p>
+
+    <div class="cta"><a class="btn" href="#start"><span data-zh="快速开始" data-en="Quick start">快速开始</span></a><a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark">GitHub ↗</a></div>
+
+    </div><div class="hero-gallery"><figure><img src="assets/posters/quadx.jpg" alt="QuadX simulation" width="960" height="540"><figcaption>QuadX</figcaption></figure><figure><img src="assets/posters/rocket.jpg" alt="Rocket simulation" width="960" height="540"><figcaption>Rocket</figcaption></figure><figure><img src="assets/posters/satellite.jpg" alt="Satellite simulation" width="960" height="540"><figcaption>Satellite</figcaption></figure><figure><img src="assets/posters/docking.jpg" alt="Docking simulation" width="960" height="540"><figcaption>Docking</figcaption></figure></div>
   </div>
 
   <section id="tasks">
@@ -302,10 +281,10 @@
         取自各任务随仓库发布的</span> <span class="mono">baseline_eval</span> <span data-zh="结果。黄色标注用于提示未达到 100% 的参考结果；各任务的评测窗口和副本数不同，不能直接横向排名。" data-en="results. Amber marks reference results below 100%. Replica counts and evaluation windows differ between tasks; these values are not a cross-task ranking.">结果。黄色标注用于提示未达到 100% 的参考结果；各任务的评测窗口和副本数不同，不能直接横向排名。</span>
       </p>
 
-      <div class="wall">
+      <h3 class="group-title" data-zh="大气飞行 · 6 个任务" data-en="Atmospheric flight · 6 tasks">大气飞行 · 6 个任务</h3><div class="wall">
         <article class="card">
-          <div class="media"><span class="score good">99.2%</span>
-            <video src="group-meeting-2026-11/assets/videos/quadx.mp4" muted loop playsinline controls preload="metadata" aria-label="QuadX waypoint flight replay"></video>
+          <div class="media"><span class="score good"><span data-zh="经典基线 99.2%" data-en="Baseline 99.2%">经典基线 99.2%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/quadx.mp4" poster="assets/posters/quadx.jpg" muted loop playsinline controls preload="none" aria-label="QuadX waypoint flight replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Quadrotor · URDF rigid body</div>
@@ -316,8 +295,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score warn">82.8%</span>
-            <video src="group-meeting-2026-11/assets/videos/quadx_track.mp4" muted loop playsinline controls preload="metadata" aria-label="QuadX target tracking replay"></video>
+          <div class="media"><span class="score warn"><span data-zh="经典基线 82.8%" data-en="Baseline 82.8%">经典基线 82.8%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/quadx_track.mp4" poster="assets/posters/quadx_track.jpg" muted loop playsinline controls preload="none" aria-label="QuadX target tracking replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Quadrotor · visual tracking</div>
@@ -328,8 +307,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score warn">97.0%</span>
-            <video src="group-meeting-2026-11/assets/videos/fixedwing.mp4" muted loop playsinline controls preload="metadata" aria-label="Fixed-wing waypoint replay"></video>
+          <div class="media"><span class="score warn"><span data-zh="经典基线 97.0%" data-en="Baseline 97.0%">经典基线 97.0%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/fixedwing.mp4" poster="assets/posters/fixedwing.jpg" muted loop playsinline controls preload="none" aria-label="Fixed-wing waypoint replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Fixed wing · blade-element aero</div>
@@ -340,8 +319,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score warn">89.1%</span>
-            <video src="group-meeting-2026-11/assets/videos/quadplane.mp4" muted loop playsinline controls preload="metadata" aria-label="Quadplane VTOL replay"></video>
+          <div class="media"><span class="score warn"><span data-zh="经典基线 89.1%" data-en="Baseline 89.1%">经典基线 89.1%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/quadplane.mp4" poster="assets/posters/quadplane.jpg" muted loop playsinline controls preload="none" aria-label="Quadplane VTOL replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Hybrid VTOL · rotor ↔ aero</div>
@@ -352,8 +331,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="group-meeting-2026-11/assets/videos/rocket.mp4" muted loop playsinline controls preload="metadata" aria-label="Rocket landing replay"></video>
+          <div class="media"><span class="score good"><span data-zh="经典基线 100%" data-en="Baseline 100%">经典基线 100%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/rocket.mp4" poster="assets/posters/rocket.jpg" muted loop playsinline controls preload="none" aria-label="Rocket landing replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Booster · propulsive landing</div>
@@ -364,8 +343,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score warn">71.1%</span>
-            <video src="group-meeting-2026-11/assets/videos/missile.mp4" muted loop playsinline controls preload="metadata" aria-label="Missile intercept replay"></video>
+          <div class="media"><span class="score warn"><span data-zh="经典基线 71.1%" data-en="Baseline 71.1%">经典基线 71.1%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/missile.mp4" poster="assets/posters/missile.jpg" muted loop playsinline controls preload="none" aria-label="Missile intercept replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Missile · 6-DOF intercept</div>
@@ -375,9 +354,10 @@
           </div>
         </article>
 
+      </div><h3 class="group-title" data-zh="航天器 · 4 个任务" data-en="Spacecraft · 4 tasks">航天器 · 4 个任务</h3><div class="wall space-wall">
         <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="group-meeting-2026-11/assets/videos/satellite.mp4" muted loop playsinline controls preload="metadata" aria-label="Satellite attitude replay"></video>
+          <div class="media"><span class="score good"><span data-zh="经典基线 100%" data-en="Baseline 100%">经典基线 100%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/satellite.mp4" poster="assets/posters/satellite.jpg" muted loop playsinline controls preload="none" aria-label="Satellite attitude replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Spacecraft · CMG cluster</div>
@@ -388,8 +368,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="group-meeting-2026-11/assets/videos/transfer.mp4" muted loop playsinline controls preload="metadata" aria-label="Low-thrust transfer replay"></video>
+          <div class="media"><span class="score good"><span data-zh="经典基线 100%" data-en="Baseline 100%">经典基线 100%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/transfer.mp4" poster="assets/posters/transfer.jpg" muted loop playsinline controls preload="none" aria-label="Low-thrust transfer replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Spacecraft · low thrust</div>
@@ -400,8 +380,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="group-meeting-2026-11/assets/videos/docking.mp4" muted loop playsinline controls preload="metadata" aria-label="Space docking replay"></video>
+          <div class="media"><span class="score good"><span data-zh="经典基线 100%" data-en="Baseline 100%">经典基线 100%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/docking.mp4" poster="assets/posters/docking.jpg" muted loop playsinline controls preload="none" aria-label="Space docking replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Spacecraft · CWH dynamics</div>
@@ -412,8 +392,8 @@
         </article>
 
         <article class="card">
-          <div class="media"><span class="score good">100%</span>
-            <video src="group-meeting-2026-11/assets/videos/rendezvous.mp4" muted loop playsinline controls preload="metadata" aria-label="Space rendezvous replay"></video>
+          <div class="media"><span class="score good"><span data-zh="经典基线 100%" data-en="Baseline 100%">经典基线 100%</span></span>
+            <video src="group-meeting-2026-11/assets/videos/rendezvous.mp4" poster="assets/posters/rendezvous.jpg" muted loop playsinline controls preload="none" aria-label="Space rendezvous replay"></video>
           </div>
           <div class="body">
             <div class="kicker">Spacecraft · two-impulse</div>
@@ -441,15 +421,15 @@
       </p>
       <div class="triple">
         <article class="card wide">
-          <video src="group-meeting-2026-11/assets/quadx_vis.mp4" muted loop playsinline controls preload="metadata" aria-label="QuadX trajectory close-up"></video>
+          <video src="group-meeting-2026-11/assets/quadx_vis.mp4" poster="assets/posters/quadx_vis.jpg" muted loop playsinline controls preload="none" aria-label="QuadX trajectory close-up"></video>
           <div class="cap"><h3><span data-zh="QuadX · 轨迹与姿态" data-en="QuadX · trajectory and attitude">QuadX · 轨迹与姿态</span></h3><p><span data-zh="航点序列、速度包线与机体姿态同步回放。" data-en="Synchronized waypoint sequence, speed envelope and body attitude.">航点序列、速度包线与机体姿态同步回放。</span></p></div>
         </article>
         <article class="card wide">
-          <video src="group-meeting-2026-11/assets/docking_vis.mp4" muted loop playsinline controls preload="metadata" aria-label="Docking approach close-up"></video>
+          <video src="group-meeting-2026-11/assets/docking_vis.mp4" poster="assets/posters/docking_vis.jpg" muted loop playsinline controls preload="none" aria-label="Docking approach close-up"></video>
           <div class="cap"><h3><span data-zh="Docking · 接近段" data-en="Docking · final approach">Docking · 接近段</span></h3><p><span data-zh="相对距离、接近速度与对接轴对齐的末段过程。" data-en="Relative range, closing speed and alignment during final approach.">相对距离、接近速度与对接轴对齐的末段过程。</span></p></div>
         </article>
         <article class="card wide">
-          <video src="group-meeting-2026-11/assets/rocket_vis.mp4" muted loop playsinline controls preload="metadata" aria-label="Rocket landing close-up"></video>
+          <video src="group-meeting-2026-11/assets/rocket_vis.mp4" poster="assets/posters/rocket_vis.jpg" muted loop playsinline controls preload="none" aria-label="Rocket landing close-up"></video>
           <div class="cap"><h3><span data-zh="Rocket · 着陆末段" data-en="Rocket · terminal landing">Rocket · 着陆末段</span></h3><p><span data-zh="点火、制动、触垫与 2 秒停稳窗口。" data-en="Ignition, braking, pad contact and the two-second settling window.">点火、制动、触垫与 2 秒停稳窗口。</span></p></div>
         </article>
       </div>
@@ -595,15 +575,6 @@ ls experiments/controller_priors</code></pre>
 
   const userPaused = new WeakSet();
   document.querySelectorAll('video').forEach(v => v.addEventListener('pause', () => { if (v.matches(':hover') || v === document.activeElement) userPaused.add(v); }));
-  // pause off-screen videos to keep the page light
-  if ('IntersectionObserver' in window) {
-    const vo = new IntersectionObserver(es => es.forEach(e => {
-      const v = e.target;
-      if (e.isIntersecting && !window.matchMedia('(prefers-reduced-motion: reduce)').matches && !userPaused.has(v)) { v.play().catch(() => {}); } else { v.pause(); }
-    }), {rootMargin: '120px'});
-    document.querySelectorAll('video').forEach(v => vo.observe(v));
-  }
-
   function setLanguage(lang) {
     lang = lang === 'en' ? 'en' : 'zh';
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
