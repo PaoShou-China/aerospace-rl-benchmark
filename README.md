@@ -1,5 +1,11 @@
 # AerospaceRL Benchmark
 
+<p align="center">
+  <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">
+    <img src="docs/assets/banner.svg" alt="AerospaceRL Benchmark — ten single-agent aerospace control tasks behind one batched device-tensor interface" width="100%">
+  </a>
+</p>
+
 **GPU-parallel reinforcement learning environments for aerospace control.**
 Ten single-agent tasks — six atmospheric vehicles on a URDF rigid-body backend,
 four spacecraft missions on explicit tensor dynamics — behind one batched
