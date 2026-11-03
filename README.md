@@ -2,8 +2,9 @@
 
 <p align="center">
   <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">
-    <img src="docs/assets/banner.svg" alt="AerospaceRL Benchmark — ten single-agent aerospace control tasks behind one batched device-tensor interface" width="100%">
-  </a>
+    <img src="docs/assets/banner.svg" alt="AerospaceRL Benchmark — 十个飞行任务，同一张量接口。 Ten single-agent aerospace control tasks behind one batched device-tensor interface" width="100%">
+  </a><br>
+  <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/"><b>https://paoshou-china.github.io/aerospace-rl-benchmark/</b></a>
 </p>
 
 **GPU-parallel reinforcement learning environments for aerospace control.**
