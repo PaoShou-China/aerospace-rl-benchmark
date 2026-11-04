@@ -1,106 +1,191 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 750" width="1200" height="750" role="img" aria-label="Brand illustration: a booster descending toward a lit planetary limb, with orbital arcs. Not a simulation capture.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 750" width="1200" height="750" role="img" aria-label="Brand illustration: a reusable booster, an aircraft, a quadrotor and a satellite above a lit planetary limb. Not a simulation capture.">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#04080d"/>
-      <stop offset="0.55" stop-color="#081321"/>
-      <stop offset="1" stop-color="#0a1826"/>
+      <stop offset="0" stop-color="#02040a"/>
+      <stop offset="0.45" stop-color="#050b14"/>
+      <stop offset="1" stop-color="#071626"/>
     </linearGradient>
-    <radialGradient id="limb" cx="0.5" cy="0.18" r="0.75">
-      <stop offset="0" stop-color="#123049"/>
-      <stop offset="0.45" stop-color="#0b1b2b"/>
-      <stop offset="1" stop-color="#060d16"/>
+    <radialGradient id="nebula" cx="0.66" cy="0.24" r="0.6">
+      <stop offset="0" stop-color="#1d5f8c" stop-opacity="0.34"/>
+      <stop offset="0.55" stop-color="#0b2a44" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#02040a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="earth" cx="0.42" cy="0.16" r="0.86">
+      <stop offset="0" stop-color="#15537f"/>
+      <stop offset="0.4" stop-color="#0a2b45"/>
+      <stop offset="0.78" stop-color="#05131f"/>
+      <stop offset="1" stop-color="#030910"/>
     </radialGradient>
     <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#8fd3e8" stop-opacity="0"/>
-      <stop offset="0.28" stop-color="#8fd3e8" stop-opacity="0.55"/>
-      <stop offset="0.5" stop-color="#d5e2ee" stop-opacity="0.8"/>
-      <stop offset="0.72" stop-color="#8fd3e8" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#8fd3e8" stop-opacity="0"/>
+      <stop offset="0" stop-color="#2997ff" stop-opacity="0"/>
+      <stop offset="0.22" stop-color="#2997ff" stop-opacity="0.5"/>
+      <stop offset="0.5" stop-color="#a8e9f8" stop-opacity="0.95"/>
+      <stop offset="0.76" stop-color="#67d7f2" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#67d7f2" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#0c1a27"/>
-      <stop offset="0.5" stop-color="#122434"/>
-      <stop offset="1" stop-color="#0a1622"/>
+    <linearGradient id="hull" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8494a5"/>
+      <stop offset="0.16" stop-color="#e8eff5"/>
+      <stop offset="0.44" stop-color="#f8fbfe"/>
+      <stop offset="0.76" stop-color="#bcc9d6"/>
+      <stop offset="1" stop-color="#6d7f91"/>
     </linearGradient>
-    <linearGradient id="plume" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#8fd3e8" stop-opacity="0.35"/>
-      <stop offset="1" stop-color="#8fd3e8" stop-opacity="0"/>
+    <radialGradient id="flame" cx="0.5" cy="0.1" r="0.8">
+      <stop offset="0" stop-color="#fffbe9" stop-opacity="1"/>
+      <stop offset="0.22" stop-color="#ffd089" stop-opacity="0.98"/>
+      <stop offset="0.5" stop-color="#ff9d3e" stop-opacity="0.8"/>
+      <stop offset="0.8" stop-color="#f06a1c" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#ff7a18" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffbd6b" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#ff9d3e" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ff9d3e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b4f92"/>
+      <stop offset="0.5" stop-color="#0d2f5e"/>
+      <stop offset="1" stop-color="#1d63b3"/>
     </linearGradient>
   </defs>
 
   <rect width="1200" height="750" fill="url(#sky)"/>
+  <rect width="1200" height="750" fill="url(#nebula)"/>
 
-  <!-- starfield, sparse and quiet -->
-  <g fill="#d5e2ee">
-    <circle cx="118" cy="86" r="1.5" opacity="0.5"/>
-    <circle cx="214" cy="168" r="1.1" opacity="0.32"/>
-    <circle cx="286" cy="58" r="1.8" opacity="0.45"/>
-    <circle cx="392" cy="122" r="1" opacity="0.3"/>
-    <circle cx="470" cy="46" r="1.3" opacity="0.4"/>
-    <circle cx="520" cy="196" r="0.9" opacity="0.26"/>
-    <circle cx="706" cy="72" r="1.2" opacity="0.38"/>
-    <circle cx="812" cy="132" r="1.5" opacity="0.42"/>
-    <circle cx="902" cy="54" r="1" opacity="0.28"/>
-    <circle cx="1010" cy="104" r="1.7" opacity="0.46"/>
-    <circle cx="1094" cy="176" r="1" opacity="0.28"/>
-    <circle cx="1150" cy="78" r="1.2" opacity="0.34"/>
-    <circle cx="158" cy="268" r="1" opacity="0.24"/>
-    <circle cx="322" cy="232" r="1.3" opacity="0.3"/>
-    <circle cx="944" cy="214" r="0.9" opacity="0.22"/>
-    <circle cx="1072" cy="300" r="1.2" opacity="0.26"/>
-  </g>
-
-  <!-- orbital arcs -->
-  <g fill="none" stroke="#8fd3e8">
-    <ellipse cx="600" cy="344" rx="486" ry="156" transform="rotate(-15 600 344)" stroke-opacity="0.20" stroke-width="1.4"/>
-    <ellipse cx="600" cy="344" rx="352" ry="112" transform="rotate(-15 600 344)" stroke-opacity="0.13" stroke-width="1.2"/>
-    <path d="M118 392c86-96 226-152 348-142" stroke-opacity="0.22" stroke-width="1.2" stroke-dasharray="6 10"/>
-  </g>
-
-  <!-- small satellite riding the outer arc -->
-  <g transform="translate(1006 262) rotate(-15)">
-    <rect x="-9" y="-5" width="18" height="10" rx="1.6" fill="#0e1e2c" stroke="#d5e2ee" stroke-opacity="0.8" stroke-width="1.2"/>
-    <rect x="-22" y="-4" width="11" height="8" fill="#123049" stroke="#8fd3e8" stroke-opacity="0.55" stroke-width="1"/>
-    <rect x="11" y="-4" width="11" height="8" fill="#123049" stroke="#8fd3e8" stroke-opacity="0.55" stroke-width="1"/>
-    <circle cx="0" cy="0" r="1.4" fill="#d9a441"/>
+  <!-- sparse starfield -->
+  <g fill="#dff3fb">
+    <circle cx="92" cy="92" r="1.4" opacity="0.55"/>
+    <circle cx="176" cy="186" r="1" opacity="0.3"/>
+    <circle cx="246" cy="54" r="1.6" opacity="0.5"/>
+    <circle cx="320" cy="140" r="1" opacity="0.28"/>
+    <circle cx="398" cy="88" r="1.2" opacity="0.4"/>
+    <circle cx="466" cy="190" r="0.9" opacity="0.24"/>
+    <circle cx="538" cy="46" r="1.1" opacity="0.36"/>
+    <circle cx="676" cy="64" r="1.3" opacity="0.4"/>
+    <circle cx="742" cy="122" r="0.9" opacity="0.26"/>
+    <circle cx="826" cy="46" r="1.5" opacity="0.44"/>
+    <circle cx="886" cy="176" r="1" opacity="0.3"/>
+    <circle cx="962" cy="72" r="1.2" opacity="0.38"/>
+    <circle cx="1046" cy="152" r="1.7" opacity="0.46"/>
+    <circle cx="1124" cy="62" r="1" opacity="0.3"/>
+    <circle cx="1164" cy="204" r="1.2" opacity="0.32"/>
+    <circle cx="152" cy="292" r="1" opacity="0.22"/>
+    <circle cx="354" cy="246" r="1.3" opacity="0.28"/>
+    <circle cx="612" cy="230" r="0.9" opacity="0.2"/>
+    <circle cx="1092" cy="300" r="1" opacity="0.24"/>
   </g>
 
   <!-- planetary limb -->
-  <circle cx="600" cy="1288" r="856" fill="url(#limb)"/>
-  <path d="M-40 462a856 856 0 0 1 1280 0" fill="none" stroke="url(#rim)" stroke-width="1.8" transform="translate(0 -22)"/>
+  <circle cx="1150" cy="1220" r="900" fill="url(#earth)"/>
+  <circle cx="1150" cy="1220" r="900" fill="none" stroke="url(#rim)" stroke-width="34" stroke-opacity="0.22"/>
+  <circle cx="1150" cy="1220" r="900" fill="none" stroke="url(#rim)" stroke-width="12" stroke-opacity="0.55"/>
+  <circle cx="1150" cy="1220" r="900" fill="none" stroke="url(#rim)" stroke-width="3.4"/>
+  <path d="M372 750c120-96 250-152 500-186" fill="none" stroke="#a8e9f8" stroke-opacity="0.22" stroke-width="1.4"/>
 
-  <!-- booster -->
-  <g>
-    <path d="M600 118 629 186v224H571V186z" fill="url(#body)" stroke="#d5e2ee" stroke-opacity="0.85" stroke-width="1.8"/>
-    <path d="M600 132v268" stroke="#8fd3e8" stroke-opacity="0.18" stroke-width="1"/>
-    <path d="M571 236h58M571 320h58" stroke="#d5e2ee" stroke-opacity="0.2" stroke-width="1"/>
+  <!-- orbital network -->
+  <g fill="none" stroke="#67d7f2">
+    <ellipse cx="610" cy="352" rx="640" ry="206" transform="rotate(-13 610 352)" stroke-opacity="0.24" stroke-width="1.6"/>
+    <ellipse cx="610" cy="352" rx="488" ry="150" transform="rotate(-13 610 352)" stroke-opacity="0.16" stroke-width="1.2"/>
+    <path d="M78 438c128-142 276-204 428-186" stroke-opacity="0.28" stroke-width="1.4" stroke-dasharray="7 12"/>
+    <path d="M980 118c88 40 144 102 176 190" stroke-opacity="0.24" stroke-width="1.4"/>
+  </g>
+  <g fill="#a8e9f8">
+    <circle cx="214" cy="332" r="2.4" opacity="0.85"/>
+    <circle cx="456" cy="238" r="2" opacity="0.7"/>
+    <circle cx="1054" cy="250" r="2.4" opacity="0.8"/>
+    <circle cx="876" cy="424" r="1.8" opacity="0.6"/>
+    <circle cx="1120" cy="470" r="2" opacity="0.65"/>
+    <circle cx="978" cy="460" r="2.2" opacity="0.75"/>
+  </g>
+
+  <!-- satellite -->
+  <g transform="translate(1064 96) rotate(-14) scale(0.92)">
+    <rect x="-18" y="-15" width="36" height="30" rx="2.5" fill="#c9a24a" stroke="#f0d18a" stroke-width="1"/>
+    <rect x="-14" y="-11" width="28" height="22" rx="1" fill="#8a6a28" stroke="#f0d18a" stroke-opacity="0.5" stroke-width="0.7"/>
+    <path d="M-18 0h36" stroke="#f0d18a" stroke-opacity="0.45"/>
+    <g fill="url(#panel)" stroke="#67d7f2" stroke-opacity="0.7" stroke-width="1">
+      <rect x="-76" y="-14" width="52" height="28"/>
+      <rect x="24" y="-14" width="52" height="28"/>
+    </g>
+    <g stroke="#67d7f2" stroke-opacity="0.35">
+      <path d="M-76-4.7h52M-76 4.7h52M-58.7-14v28M-41.3-14v28"/>
+      <path d="M24-4.7h52M24 4.7h52M41.3-14v28M58.7-14v28"/>
+    </g>
+    <path d="M0-15 0-28" stroke="#dfe8f0" stroke-width="1.2"/>
+    <ellipse cx="0" cy="-31" rx="8" ry="3.2" fill="#dfe8f0" fill-opacity="0.85"/>
+    <circle cx="0" cy="-36" r="1.7" fill="#67d7f2"/>
+  </g>
+
+  <!-- aircraft (pointing left) -->
+  <g transform="translate(872 172) rotate(8) scale(-1.32 1.32)">
+    <g fill="#e7eef5" stroke="#9fb0c2" stroke-width="0.9">
+      <path d="M-96 2c20-7 52-11 104-11 24 0 40 2 52 6l10 4-10 4c-12 4-28 6-52 6-52 0-84-4-104-9z"/>
+      <path d="M6-4 44-42 62-42 34-5z"/>
+      <path d="M6 5 44 43 62 43 34 6z"/>
+      <path d="M-64 0-92-24-78-24-50-2z"/>
+      <path d="M-64 1-92 25-78 25-50 3z"/>
+    </g>
+    <g fill="#aab8c6" stroke="#8496a8" stroke-width="0.8">
+      <ellipse cx="-6" cy="-19" rx="15" ry="4.4" transform="rotate(-28 -6 -19)"/>
+      <ellipse cx="-6" cy="20" rx="15" ry="4.4" transform="rotate(28 -6 20)"/>
+    </g>
+    <path d="M72-2 86-5 90-1 86 2 72 3z" fill="#dfe8f0" stroke="#9fb0c2" stroke-width="0.8"/>
+    <circle cx="84" cy="-1" r="2.2" fill="#67d7f2"/>
+    <path d="M-96 2 96 2" stroke="#67d7f2" stroke-opacity="0.24" stroke-width="1"/>
+  </g>
+
+  <!-- quadrotor -->
+  <g transform="translate(786 300) rotate(-8) scale(0.94)">
+    <g stroke="#8496a8" stroke-width="2" stroke-linecap="round">
+      <path d="M-8-4-42-20M8-4 42-20M-8 4-42 20M8 4 42 20"/>
+    </g>
+    <g fill="none" stroke="#67d7f2" stroke-opacity="0.45" stroke-width="1">
+      <ellipse cx="-42" cy="-20" rx="22" ry="5" transform="rotate(-8 -42 -20)"/>
+      <ellipse cx="42" cy="-20" rx="22" ry="5" transform="rotate(8 42 -20)"/>
+      <ellipse cx="-42" cy="20" rx="22" ry="5" transform="rotate(8 -42 20)"/>
+      <ellipse cx="42" cy="20" rx="22" ry="5" transform="rotate(-8 42 20)"/>
+    </g>
+    <path d="M-14-9h28l5 9-5 9h-28l-5-9z" fill="#0c1722" stroke="#dfe8f0" stroke-width="1.1"/>
+    <circle cx="0" cy="0" r="4" fill="#67d7f2"/>
+    <path d="M-8-14-2-7M8-14 2-7" stroke="#dfe8f0" stroke-opacity="0.7"/>
+  </g>
+
+  <!-- reusable booster, tilted into the ascent -->
+  <g transform="translate(590 372) rotate(14)">
+    <!-- body -->
+    <path d="M-26-300 0-372 26-300V78H-26z" fill="url(#hull)" stroke="#f5f9fc" stroke-width="1.4"/>
+    <path d="M-26-38h52v32H-26z" fill="#111a24" stroke="#2b3743" stroke-width="1"/>
+    <path d="M-26 44h52v26H-26z" fill="#111a24" stroke="#2b3743" stroke-width="1"/>
+    <path d="M-26-230h52" stroke="#b9c6d3" stroke-opacity="0.55" stroke-width="1"/>
+    <path d="M-26-160h52" stroke="#b9c6d3" stroke-opacity="0.4" stroke-width="1"/>
+    <path d="M-18-292v182" stroke="#ffffff" stroke-opacity="0.6" stroke-width="1.2"/>
 
     <!-- grid fins -->
-    <g stroke="#d5e2ee" stroke-opacity="0.78" stroke-width="1.4" fill="#0e1e2c">
-      <path d="M629 242 668 252v34l-39-12z"/>
-      <path d="M571 242 532 252v34l39-12z"/>
-      <g stroke-opacity="0.4" stroke-width="1">
-        <path d="M629 250 668 260M629 258 668 268M629 266 668 276M629 274 668 284"/>
-        <path d="M571 250 532 260M571 258 532 268M571 266 532 276M571 274 532 284"/>
+    <g stroke="#dfe8f0" stroke-opacity="0.9" stroke-width="1.3" fill="#0c1722">
+      <path d="M26-30 72-18v38l-46-14z"/>
+      <path d="M-26-30-72-18v38l46-14z"/>
+      <g stroke-opacity="0.42" stroke-width="0.9">
+        <path d="M26-20 72-8M26-9 72 3M26 2 72 14M26 13 72 25"/>
+        <path d="M-26-20-72-8M-26-9-72 3M-26 2-72 14M-26 13-72 25"/>
       </g>
     </g>
 
     <!-- landing legs -->
-    <g stroke="#c9d6e2" stroke-opacity="0.65" stroke-width="2.4" fill="none" stroke-linecap="round">
-      <path d="M573 412 546 474"/>
-      <path d="M627 412 654 474"/>
-      <path d="M546 474h-12M654 474h12" stroke-width="1.6" stroke-opacity="0.5"/>
+    <g stroke="#c9d6e2" stroke-opacity="0.85" stroke-width="2.6" fill="none" stroke-linecap="round">
+      <path d="M-24 74-70 158"/>
+      <path d="M24 74 70 158"/>
+      <path d="M-70 158h-14M70 158h14" stroke-width="1.8" stroke-opacity="0.55"/>
     </g>
 
-    <!-- engine bell and plume -->
-    <path d="M589 410h22l6 22h-34z" fill="#0a1622" stroke="#d5e2ee" stroke-opacity="0.7" stroke-width="1.4"/>
-    <path d="M578 434h44l-8 96h-28z" fill="url(#plume)"/>
-    <g stroke="#8fd3e8" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 11">
-      <path d="M594 438v78M600 441v92M606 438v78"/>
+    <!-- engine and plume -->
+    <path d="M-19 84h38l8 26h-54z" fill="#0a131d" stroke="#dfe8f0" stroke-opacity="0.85" stroke-width="1.2"/>
+    <ellipse cx="0" cy="170" rx="104" ry="128" fill="url(#halo)"/>
+    <path d="M-24 112h48l-12 162h-24z" fill="url(#flame)"/>
+    <g stroke="#fff3d2" stroke-opacity="0.72" stroke-width="1.5">
+      <path d="M-12 116v104M0 112v138M12 116v104"/>
     </g>
-    <circle cx="629" cy="300" r="2.2" fill="#d9a441"/>
   </g>
 
-  <!-- foreground vignette -->
-  <rect width="1200" height="750" fill="none"/>
+  <!-- soft horizon glow -->
+  <ellipse cx="1000" cy="470" rx="330" ry="40" fill="#2997ff" fill-opacity="0.08"/>
 </svg>
