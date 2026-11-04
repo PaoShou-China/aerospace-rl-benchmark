@@ -9,10 +9,10 @@
 <p align="center">
   <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/"><b>paoshou-china.github.io/aerospace-rl-benchmark</b></a>
   <br>
-  <a href="README.zh-CN.md">中文</a> ·
+  <a href="README.zh-CN.md">Chinese</a> ·
   <a href="docs/technical-highlights.md">Technical highlights</a> ·
   <a href="docs/evaluation_protocol.md">Evaluation protocol</a> ·
-  <a href="benchmark_report.md">Benchmark report (中文)</a>
+  <a href="benchmark_report.md">Benchmark report (Chinese)</a>
 </p>
 
 **GPU-parallel reinforcement learning environments for aerospace control.**
@@ -81,8 +81,8 @@ instantaneous rates and are not comparable to the v2 settled criterion.
 | [docs/repository-layout.md](docs/repository-layout.md) | repository tree, training entries, run artifacts |
 | [docs/roadmap.md](docs/roadmap.md) | planned tasks and landed infrastructure |
 | [docs/references.md](docs/references.md) | publications and upstream projects |
-| [benchmark_report.md](benchmark_report.md) | 中文基准报告 |
-| [docs/rocket_benchmark_v2_zh.md](docs/rocket_benchmark_v2_zh.md) | 火箭 v2 判据与复现说明 |
+| [benchmark_report.md](benchmark_report.md) | Chinese benchmark report |
+| [docs/rocket_benchmark_v2_zh.md](docs/rocket_benchmark_v2_zh.md) | Rocket v2 criterion and reproduction notes |
 
 ## Acknowledgments
 
