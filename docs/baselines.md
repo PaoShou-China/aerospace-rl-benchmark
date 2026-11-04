@@ -1,5 +1,7 @@
 # Classical Baseline Results
 
+**English** · [简体中文](baselines.zh-CN.md)
+
 Every task ships a non-learned GNC baseline
 ([algorithms/baselines/](../algorithms/baselines/baselines.py)) on the same
 environment, reward and success bar as the policy. Controllers read only the
@@ -33,7 +35,7 @@ Two readings worth keeping:
   braking) that a learned policy is expected to attack.
 - The rocket v1 figures in older notes (82.8% / 84.1%) are **instantaneous**
   success rates and are not comparable to the v2 settled criterion. Background
-  and reproduction commands: [rocket_benchmark_v2_zh.md](rocket_benchmark_v2_zh.md).
+  and reproduction commands: [rocket_benchmark_v2.md](rocket_benchmark_v2.md).
 
 Success rates are reported per task and per controller. They do not define a
 cross-task ranking: task difficulty, observation budgets and success criteria

@@ -1,5 +1,7 @@
 # Fixedwing-Waypoints Environment (`FixedwingWaypointsEnv`)
 
+**English** · [简体中文](env-fixedwing-waypoints.zh-CN.md)
+
 ## 1. Overview
 
 The Fixedwing-Waypoints task is the fixed-wing navigation task of the AerospaceRL benchmark, ported from

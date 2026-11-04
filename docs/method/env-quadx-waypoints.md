@@ -1,5 +1,7 @@
 # QuadX-Waypoints Environment (`QuadXWaypointsEnv`)
 
+**English** · [简体中文](env-quadx-waypoints.zh-CN.md)
+
 ## 1. Overview
 
 The QuadX-Waypoints task is the quadrotor navigation task of the AerospaceRL benchmark, ported from the

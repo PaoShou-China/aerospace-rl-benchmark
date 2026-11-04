@@ -712,14 +712,14 @@ python scripts/baseline_eval.py quadx</code></pre>
           <h3 data-i18n="docs.title">Documentation</h3>
           <ul>
             <li><a data-doc="readme" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md"><span>README</span><span class="d" data-i18n="docs.overview">overview</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/tasks.md"><span>docs/tasks</span><span class="d" data-i18n="docs.tasks">task table</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baselines.md"><span>docs/baselines</span><span class="d" data-i18n="docs.baselines">baseline results</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md"><span>technical-highlights</span><span class="d" data-i18n="docs.reviewer">infrastructure claims</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/evaluation_protocol.md"><span>evaluation_protocol</span><span class="d" data-i18n="docs.protocol">protocol</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/tree/main/docs/method"><span>docs/method</span><span class="d" data-i18n="docs.method">per-task methods</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baseline_test_report.md"><span>baseline_test_report</span><span class="d" data-i18n="docs.baseline">multi-seed</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/benchmark_report.md"><span>benchmark_report (中文)</span><span class="d" data-i18n="docs.report">full report</span></a></li>
-            <li><a href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/rocket_benchmark_v2_zh.md"><span>rocket_benchmark_v2 (中文)</span><span class="d" data-i18n="docs.rocket">criterion</span></a></li>
+            <li><a data-doc="tasks" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/tasks.md"><span>docs/tasks</span><span class="d" data-i18n="docs.tasks">task table</span></a></li>
+            <li><a data-doc="baselines" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baselines.md"><span>docs/baselines</span><span class="d" data-i18n="docs.baselines">baseline results</span></a></li>
+            <li><a data-doc="highlights" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md"><span>technical-highlights</span><span class="d" data-i18n="docs.reviewer">infrastructure claims</span></a></li>
+            <li><a data-doc="protocol" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/evaluation_protocol.md"><span>evaluation_protocol</span><span class="d" data-i18n="docs.protocol">protocol</span></a></li>
+            <li><a data-doc="method" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/method/README.md"><span>docs/method</span><span class="d" data-i18n="docs.method">per-task methods</span></a></li>
+            <li><a data-doc="baseline-report" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baseline_test_report.md"><span>baseline_test_report</span><span class="d" data-i18n="docs.baseline">multi-seed</span></a></li>
+            <li><a data-doc="report" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/benchmark_report.md"><span>benchmark_report</span><span class="d" data-i18n="docs.report">full report</span></a></li>
+            <li><a data-doc="rocket" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/rocket_benchmark_v2.md"><span>rocket_benchmark_v2</span><span class="d" data-i18n="docs.rocket">criterion</span></a></li>
           </ul>
         </div>
       </div>
@@ -779,9 +779,17 @@ python scripts/baseline_eval.py quadx</code></pre>
 
 <script>
 (() => {
-  const DOCS = {
-    en: "https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md",
-    zh: "https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.zh-CN.md"
+  const DOC_BASE = "https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/";
+  const DOC_PATHS = {
+    readme: { en: "README.md", zh: "README.zh-CN.md" },
+    tasks: { en: "docs/tasks.md", zh: "docs/tasks.zh-CN.md" },
+    baselines: { en: "docs/baselines.md", zh: "docs/baselines.zh-CN.md" },
+    highlights: { en: "docs/technical-highlights.md", zh: "docs/technical-highlights.zh-CN.md" },
+    protocol: { en: "docs/evaluation_protocol.md", zh: "docs/evaluation_protocol.zh-CN.md" },
+    method: { en: "docs/method/README.md", zh: "docs/method/README.zh-CN.md" },
+    "baseline-report": { en: "docs/baseline_test_report.md", zh: "docs/baseline_test_report.zh-CN.md" },
+    report: { en: "benchmark_report.md", zh: "benchmark_report.zh-CN.md" },
+    rocket: { en: "docs/rocket_benchmark_v2.md", zh: "docs/rocket_benchmark_v2.zh-CN.md" }
   };
 
   const I18N = {
@@ -1068,7 +1076,10 @@ python scripts/baseline_eval.py quadx</code></pre>
     langButtons.forEach(b => {
       b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
     });
-    document.querySelectorAll('[data-doc="readme"]').forEach(a => { a.href = DOCS[lang]; });
+    document.querySelectorAll('[data-doc]').forEach(a => {
+      const entry = DOC_PATHS[a.dataset.doc];
+      if (entry) a.href = DOC_BASE + entry[lang];
+    });
     if (menuBtn) menuBtn.setAttribute('aria-label', nav.classList.contains('open') ? dict['menu.close'] : dict['menu.open']);
 
     document.title = dict['meta.title'];

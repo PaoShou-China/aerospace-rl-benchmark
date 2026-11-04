@@ -10,9 +10,9 @@
   <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/"><b>paoshou-china.github.io/aerospace-rl-benchmark</b></a>
   <br>
   <a href="README.md">English</a> ·
-  <a href="docs/technical-highlights.md">技术要点</a> ·
-  <a href="docs/evaluation_protocol.md">评测协议</a> ·
-  <a href="benchmark_report.md">基准报告</a>
+  <a href="docs/technical-highlights.zh-CN.md">技术要点</a> ·
+  <a href="docs/evaluation_protocol.zh-CN.md">评测协议</a> ·
+  <a href="benchmark_report.zh-CN.md">基准报告</a>
 </p>
 
 **面向航空航天控制的 GPU 并行强化学习环境。**
@@ -31,8 +31,8 @@ python scripts/baseline_eval.py quadx            # 评测经典基线
 ```
 
 六个 Genesis 任务在 GPU 后端上需要 CUDA 版 PyTorch；四个张量动力学任务与全部经典基线也可在纯 CPU 版 PyTorch 上运行。精确版本、环境契约与可选的 Dryden 风扰接口见
-[docs/environment-contract.md](docs/environment-contract.md)；完整训练入口、运行产物与目录结构见
-[docs/repository-layout.md](docs/repository-layout.md)。
+[docs/environment-contract.zh-CN.md](docs/environment-contract.zh-CN.md)；完整训练入口、运行产物与目录结构见
+[docs/repository-layout.zh-CN.md](docs/repository-layout.zh-CN.md)。
 
 ## 任务概览
 
@@ -50,28 +50,28 @@ python scripts/baseline_eval.py quadx            # 评测经典基线
 | Rendezvous | 航天 | 6 / 3 | 1 s/步 | 距离 < 10 m，速度 < 0.5 m/s，遵守禁飞球 |
 
 完整动力学、回合长度、观测布局与奖励分解见
-[docs/tasks.md](docs/tasks.md) 与
-[docs/method/README.md](docs/method/README.md)。
+[docs/tasks.zh-CN.md](docs/tasks.zh-CN.md) 与
+[docs/method/README.zh-CN.md](docs/method/README.zh-CN.md)。
 
 基线成功率及其评测条件见
-[docs/baselines.md](docs/baselines.md)。数值按任务、按控制器分别报告，不构成跨任务排名。火箭 v1 数值为瞬时成功率，与 v2 的稳定停留判据不可比。
+[docs/baselines.zh-CN.md](docs/baselines.zh-CN.md)。数值按任务、按控制器分别报告，不构成跨任务排名。火箭 v1 数值为瞬时成功率，与 v2 的稳定停留判据不可比。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/tasks.md](docs/tasks.md) | 任务表、动力学、观测与动作布局 |
-| [docs/baselines.md](docs/baselines.md) | 经典控制器结果与可比性说明 |
-| [docs/method/README.md](docs/method/README.md) | 各任务、各算法的论文式方法文档（符号、方程、常量） |
-| [docs/environment-contract.md](docs/environment-contract.md) | 张量契约、安装、风扰 |
-| [docs/evaluation_protocol.md](docs/evaluation_protocol.md) | 评测协议与报告规则 |
-| [docs/baseline_test_report.md](docs/baseline_test_report.md) | 多种子基线复分析 |
-| [docs/technical-highlights.md](docs/technical-highlights.md) | 面向评审的基础设施说明 |
-| [docs/repository-layout.md](docs/repository-layout.md) | 目录结构、训练入口、运行产物 |
-| [docs/roadmap.md](docs/roadmap.md) | 计划任务与已有基础设施 |
-| [docs/references.md](docs/references.md) | 文献与上游项目 |
-| [benchmark_report.md](benchmark_report.md) | 中文基准报告 |
-| [docs/rocket_benchmark_v2_zh.md](docs/rocket_benchmark_v2_zh.md) | 火箭 v2 判据与复现说明 |
+| [docs/tasks.zh-CN.md](docs/tasks.zh-CN.md) | 任务表、动力学、观测与动作布局 |
+| [docs/baselines.zh-CN.md](docs/baselines.zh-CN.md) | 经典控制器结果与可比性说明 |
+| [docs/method/README.zh-CN.md](docs/method/README.zh-CN.md) | 各任务、各算法的论文式方法文档（符号、方程、常量） |
+| [docs/environment-contract.zh-CN.md](docs/environment-contract.zh-CN.md) | 张量契约、安装、风扰 |
+| [docs/evaluation_protocol.zh-CN.md](docs/evaluation_protocol.zh-CN.md) | 评测协议与报告规则 |
+| [docs/baseline_test_report.zh-CN.md](docs/baseline_test_report.zh-CN.md) | 多种子基线复分析 |
+| [docs/technical-highlights.zh-CN.md](docs/technical-highlights.zh-CN.md) | 面向评审的基础设施说明 |
+| [docs/repository-layout.zh-CN.md](docs/repository-layout.zh-CN.md) | 目录结构、训练入口、运行产物 |
+| [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md) | 计划任务与已有基础设施 |
+| [docs/references.zh-CN.md](docs/references.zh-CN.md) | 文献与上游项目 |
+| [benchmark_report.zh-CN.md](benchmark_report.zh-CN.md) | 基准技术报告 |
+| [docs/rocket_benchmark_v2.zh-CN.md](docs/rocket_benchmark_v2.zh-CN.md) | 火箭 v2 判据与复现说明 |
 
 ## 致谢
 
@@ -87,4 +87,4 @@ python scripts/baseline_eval.py quadx            # 评测经典基线
 [gym-satellite-trajectory](https://github.com/zampanteymedio/gym-satellite-trajectory) ·
 SpaceGym（Supreeth & Mehta，CVPR 2026 Workshop on AI4Space）
 
-任务定义与默认参数沿用 [docs/references.md](docs/references.md) 列出的公开工作；相应模型与基准的上游许可及引用要求适用。
+任务定义与默认参数沿用 [docs/references.zh-CN.md](docs/references.zh-CN.md) 列出的公开工作；相应模型与基准的上游许可及引用要求适用。

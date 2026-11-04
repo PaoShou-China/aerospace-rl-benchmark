@@ -1,41 +1,83 @@
-# 冻结评测协议（2026-10-22）
+# Frozen Evaluation Protocol (2026-10-22)
 
-正式实验前冻结的判定、预算与报告口径。冻结后只允许以追加条目的方式修订，且必须在正文注明修订日期与理由；不允许回溯修改已发布结果对应的条目。
+**English** · [简体中文](evaluation_protocol.zh-CN.md)
 
-## 1. 成功定义与终止优先级（已冻结进代码）
+Criterion, budget and reporting rules frozen before the formal experiments. After
+freezing, revisions are allowed only as appended entries, and each must state
+the revision date and reason in the body; already-published result entries may
+not be retroactively edited.
 
-- 终止优先级：**违约 > 成功**。回合终步若同时满足目标状态与任一失败条件，记为失败（terminated），不计入 `completed_successes`，不发放终端奖励。
-- 该优先级在 `satellite/rendezvous_docking/env.py` 的 `_CWHBase.step` 实现（`success = goal & ~violation`）。修复动机：rendezvous 的 keep-out 球（5 m）位于目标球（10 m）内部，旧行为允许"低速冲进 keep-out"被同时记为 success + terminated，成功率不可解释。
-- docking 无 keep-out，语义变化仅可能出现在"燃料恰好在捕获步耗尽"的边角（基线最大燃料 0.912 kg < 2 kg 预算，不受影响）。
-- 语义修正后复测：rendezvous 官方基线 1024/1024 = 100% 不变（hold 点 9 m 在 keep-out 外）。**语义修正前的 RL 训练成功率（rendezvous 1.5% 等）与新口径不可直接比较，正式实验一律用新口径重跑。**
+## 1. Success definition and termination priority (frozen into code)
 
-## 2. 传统控制器（BC 数据源）审计
+- Termination priority: **violation > success**. If the final step satisfies
+  both the goal and any failure condition, it is recorded as a failure
+  (`terminated`), not counted in `completed_successes`, and receives no terminal
+  reward.
+- This priority is implemented in `_CWHBase.step` in
+  `satellite/rendezvous_docking/env.py` (`success = goal & ~violation`). Fix
+  rationale: rendezvous's keep-out sphere (5 m) lies inside the goal sphere
+  (10 m); the old behavior allowed "low-speed entry into keep-out" to be
+  recorded simultaneously as success + terminated, making the success rate
+  unintelligible.
+- Docking has no keep-out, so a semantic change can only appear in the corner
+  case "fuel runs out exactly on the capture step" (the baseline's maximum fuel
+  is 0.912 kg < the 2 kg budget, so it is unaffected).
+- Re-test after the semantic fix: the official rendezvous baseline remains
+  1024/1024 = 100% (the 9 m hold point is outside keep-out). **RL training
+  success rates from before the semantic fix (e.g., rendezvous 1.5%) are not
+  directly comparable to the new criterion; formal experiments were re-run
+  under the new criterion.**
 
-BC warm-start 数据源 = 各任务 `conventional_controller`（BC 采集器自建控制器实例直接驱动，env 的 info 不含控制器动作）。各控制器均在训练/验证初始条件上调参并冻结后才开始采集 BC 数据，冻结状态如下：
+## 2. Classical-controller (BC data source) audit
 
-| 任务 | 控制器 | train 场景成功率 | dev/test | 状态 | BC 决策 |
+The BC warm-start data source = each task's `conventional_controller` (the
+collector constructs and drives its own controller instance directly; the env
+`info` does not contain controller actions). Every controller was tuned and
+frozen on training/validation initial conditions before BC data collection
+began. Freeze status:
+
+| Task | Controller | Train success | Dev/test | Status | BC decision |
 |---|---|---|---|---|---|
-| quadx | SE(3) 几何（Lee et al. 2010） | 100% | 全场景 100% | 冻结 | 启用 |
-| docking | CWH-LQR + shield | 100%（d=0/.5/1 × 3 seeds） | 64 场景网格 63/64 | 冻结 | 启用 |
-| rendezvous | 两脉冲 CWH 制导 | 100%（4096 eps） | 150–1900 m 网格全 100% | 冻结 | 启用 |
-| transfer | 单步贪心 Gauss 门控 | 100%（d=0/.5/1） | 最优性探针已做 | 冻结 | 启用 |
-| satellite | 四元数 PD + CMG 阻尼伪逆 | 100%（1024 eps） | 随机复位 100%；奇异/180° 专项记录未随仓库发布 | 冻结 | 启用 |
-| fixedwing | L1 + TECS | 74.6% | dev 74.4% / test 73.1% | 冻结（21.3%→74.9% 迭代后定稿；残余 = OOB 极限环的结构性局限） | 启用，但报告须注明专家天花板 ~75%，BC 继承该上限 |
-| rocket | ZEM/PN + 脉冲伺服 PDG | 84.1%（v1 瞬时 ever-success，2000 步口径） | 700 步套件 A 69%/B 34% | 冻结（v3 定稿；B_corners 为饱和权限的结构性局限） | 启用，但报告须注明专家天花板（v1 84.1%，v2 `ever_stable_2s` 100%） |
+| quadx | SE(3) geometric (Lee et al. 2010) | 100% | 100% all scenarios | frozen | enabled |
+| docking | CWH-LQR + shield | 100% (d=0/.5/1 × 3 seeds) | 63/64 on the 64-scenario grid | frozen | enabled |
+| rendezvous | two-impulse CWH guidance | 100% (4096 eps) | 100% over the 150–1900 m grid | frozen | enabled |
+| transfer | one-step greedy Gauss gating | 100% (d=0/.5/1) | optimality probe done | frozen | enabled |
+| satellite | quaternion PD + CMG damped pseudo-inverse | 100% (1024 eps) | 100% random reset; singularity/180° records not shipped | frozen | enabled |
+| fixedwing | L1 + TECS | 74.6% | dev 74.4% / test 73.1% | frozen (finalized after 21.3%→74.9% iteration; residual = structural OOB limit cycle) | enabled, but reports must state the ~75% expert ceiling inherited by BC |
+| rocket | ZEM/PN + pulse-servo PDG | 84.1% (v1 instantaneous ever-success, 2000-step window) | 700-step suite A 69% / B 34% | frozen (v3 final; B_corners is a structural authority-saturation limit) | enabled, but reports must state the expert ceiling (v1 84.1%, v2 `ever_stable_2s` 100%) |
 
-结论：无"表现很差"的失控控制器；fixedwing / rocket 的天花板为控制器结构性局限（已记录成因），BC 只能继承、不会放大这些上限，报告时须与专家成功率并列呈现。
+Conclusion: no controller is wildly out of control; the fixedwing/rocket
+ceilings are structural controller limitations (causes documented). BC can only
+inherit, not amplify, those ceilings, and reports must present them alongside
+the expert success rate.
 
-> 注：上表是 2026-10-22 冻结时点的审计快照，行内数字不是当前发布产物。当前可核验值见 [baseline_test_report.md](baseline_test_report.md)：`results/fixedwing/baseline.json` 为 97.0%（128 副本 / seed 13 / 1500 步，`complete=false`），`results/rocket/baseline.json` 为 100%（v2 `ever_stable_2s`）。表中已删除不存在的 `pendulum` 任务——本仓库只注册 10 个任务（见 `scripts/baseline_eval.py` 的 `ENVS`）。
+> Note: the table above is an audit snapshot frozen on 2026-10-22; its numbers
+> are not current release artifacts. Current verifiable values are in
+> [baseline_test_report.md](baseline_test_report.md):
+> `results/fixedwing/baseline.json` is 97.0% (128 replicas / seed 13 / 1500
+> steps, `complete=false`), and `results/rocket/baseline.json` is 100% (v2
+> `ever_stable_2s`). The nonexistent `pendulum` task has been removed from the
+> table — this repository registers only 10 tasks (see `ENVS` in
+> `scripts/baseline_eval.py`).
 
-satellite 转向律消融（不改变冻结基线）：同一四元数 PD 与增益下，把阻尼伪逆换成普通 Moore–Penrose 伪逆，注册名 `quat_pd_mp_pinv_cmg`，评测入口 `scripts/satellite_steering_compare.py`；配置与近奇异/精确奇异场景见 [baseline-satellite-mp-pinv.md](method/baseline-satellite-mp-pinv.md)。
+Satellite steering-law ablation (does not change the frozen baseline): with the
+same quaternion PD and gains, replace the damped pseudo-inverse with an ordinary
+Moore–Penrose pseudo-inverse; registry name `quat_pd_mp_pinv_cmg`, evaluation
+entry `scripts/satellite_steering_compare.py`. Configuration and near-singular /
+exact-singular scenarios are in
+[baseline-satellite-mp-pinv.md](method/baseline-satellite-mp-pinv.md).
 
-## 3. 冻结评测协议
+## 3. Frozen evaluation protocol
 
-对每个任务（10 任务统一）：
+For every task (uniform across all 10):
 
-- **训练预算**：冻结口径为 1024 并行 envs × 1000 PPO updates；达到预算即停，不做 early stopping，不依据训练中指标挑选 checkpoint（只评最终 checkpoint）。当前各 `train_<task>.py` 实际硬编码的预算如下（与冻结口径的偏差已登记在 §5 的 2026-11-02 条目）：
+- **Training budget**: frozen as 1024 parallel envs × 1000 PPO updates; stop at
+  budget, no early stopping, no checkpoint selection from training metrics
+  (evaluate the final checkpoint only). The budgets actually hard-coded in each
+  `train_<task>.py` are below (deviations from the frozen rule are logged in the
+  2026-11-02 entry of §5):
 
-  | 任务 | updates | steps/env | transitions |
+  | Task | updates | steps/env | transitions |
   |---|---:|---:|---:|
   | quadx | 1000 | 100 | 102.4 M |
   | quadx_track | 200 | 100 | 20.5 M |
@@ -48,85 +90,196 @@ satellite 转向律消融（不改变冻结基线）：同一四元数 PD 与增
   | docking | 1000 | 32 | 32.8 M |
   | rendezvous | 1500 | 250 | 384.0 M |
 
-  所有入口均为 1024 并行副本、seed 7。
-- **收敛阈值（绝对成功率，训练分布、训练口径）**：
+  All entries use 1024 parallel replicas and seed 7.
+- **Convergence thresholds (absolute success, training distribution and
+  protocol)**:
 
-  | 任务 | 收敛阈值 | 依据 |
+  | Task | Threshold | Basis |
   |---|---|---|
-  | quadx | ≥ 60% | 当前最佳 84.9% |
-  | docking | ≥ 60% | MLP 臂 77.9% |
-  | transfer | ≥ 90% | 当前 98.9% |
-  | rendezvous | ≥ 60% | 当前 82.2%（新成功口径下重测） |
-  | fixedwing | ≥ 60% | 当前 76.2% |
-  | satellite | ≥ 10% | 当前 17.4%（基线 100%，RL 明显未解，阈值仅作地板） |
-  | rocket | ≥ 30% | 2026-10-22 快照：v1 基线 84.1%（瞬时 ever-success；当前 v2 `ever_stable_2s` 基线为 100%） |
+  | quadx | ≥ 60% | current best 84.9% |
+  | docking | ≥ 60% | MLP arm 77.9% |
+  | transfer | ≥ 90% | current 98.9% |
+  | rendezvous | ≥ 60% | current 82.2% (re-measured under the new success criterion) |
+  | fixedwing | ≥ 60% | current 76.2% |
+  | satellite | ≥ 10% | current 17.4% (baseline 100%; RL clearly unsolved, threshold is only a floor) |
+  | rocket | ≥ 30% | 2026-10-22 snapshot: v1 baseline 84.1% (instantaneous ever-success; current v2 `ever_stable_2s` baseline is 100%) |
 
-  达到阈值记为**已收敛**；未达到记为**未收敛（not converged）**并原样报告，不得以"仍在上升"等叙事替代。阈值修订需在第 5 节登记。表中"当前"数字是 2026-10-22 冻结时点值，不是当前发布产物；另有不存在的 `pendulum` 行已删除（本仓库没有该任务）。
-- **评测间隔**：训练过程每 200 updates 保存一次 `model_*.pt`（rsl-rl save_interval），仅在训练结束后对最终 checkpoint 做一次确定性评测（eval.py，冻结 config.json 里的 env_kwargs）；训练中不做验证集模型选择。
-- **种子与区间**：正式实验每任务 **3 seeds {7, 13, 21}** 训练；报告 mean 与 [min, max] 区间，不报单 seed 结果。
-- **Held-out 测试集**：训练/验证只用 seed 7/13/21 的 IC 流；最终泛化评测用 eval.py `--seed 101`（未在训练中出现的 RNG 流），每任务只跑一次，只报不改。基线（baseline_eval.py）同样补测 seed 101，保证同分布可比。
-- **报告口径**：成功率必须注明①训练口径还是确定性评测口径②步数窗口（rocket 的 700 步与 2000 步口径差异巨大，报告默认 2000 步/官方 reset 分布）③是否带风扰。训练可以带风；`eval.py` 在 `results/<task>/config.json` 存在时会恢复该次训练的 `env_kwargs`，因此评测使用训练时的风配置，而不是恒为静风。跨方法比较必须显式固定同一风配置。
+  Reaching the threshold is recorded as **converged**; not reaching it is
+  recorded as **not converged** and reported as is. Narrative substitutes such
+  as "still improving" are not allowed. Threshold revisions must be logged in
+  §5. The "current" numbers above are 2026-10-22 snapshot values, not current
+  release artifacts; the nonexistent `pendulum` row has also been removed (this
+  repository does not have that task).
+- **Evaluation interval**: during training, `model_*.pt` is saved every 200
+  updates (rsl-rl `save_interval`); after training, exactly one deterministic
+  evaluation is run on the final checkpoint (`eval.py`, restoring `env_kwargs`
+  from the frozen `config.json`). No validation-set model selection during
+  training.
+- **Seeds and intervals**: formal experiments train each task with **3 seeds
+  {7, 13, 21}**; report mean and [min, max] interval, not single-seed results.
+- **Held-out test set**: training/validation use only the seed 7/13/21 IC
+  streams; final generalization evaluation uses `eval.py --seed 101` (an RNG
+  stream never seen in training), run once per task and reported unchanged.
+  Baselines (`baseline_eval.py`) are also evaluated on seed 101 for
+  same-distribution comparability.
+- **Reporting rules**: success rates must state (1) whether they are
+  training-protocol or deterministic-evaluation numbers, (2) the step window
+  (rocket's 700-step and 2000-step windows differ enormously; default is 2000
+  steps / official reset distribution), and (3) whether wind disturbance is
+  enabled. Training may use wind; `eval.py` restores the training `env_kwargs`
+  from `results/<task>/config.json` when present, so evaluation uses the
+  training wind configuration rather than always calm air. Cross-method
+  comparisons must explicitly fix the same wind configuration.
 
-## 4. 成本与并行性能的报告口径（学习成本 ≠ 并行性能）
+## 4. Cost and parallel-performance reporting (learning cost ≠ parallel performance)
 
-RL 主结果同时报告两类比较，不得混用：
+RL main results report two comparisons, never mixed:
 
-- **等交互步数**：固定 transitions（`1024 envs × updates × steps/env`；冻结口径为 1024 × 1000 × 32 = 32.8 M，当前各入口的实际值见 §3 预算表），比最终成功率/return —— 衡量样本效率。
-- **等墙钟时间**：报告 `train_wall_seconds` 与 `train_throughput_steps_per_s`（run.json 现已记录），在相同墙钟预算下比较可达成功率 —— 衡量工程吞吐。吞吐量、完整训练墙钟、显存峰值（`peak_vram_gib`）三项分别报告（summarize.py 已加 k steps/s 与 vram GiB 列）。
+- **Equal interaction steps**: fixed transitions (`1024 envs × updates ×
+  steps/env`; frozen rule 1024 × 1000 × 32 = 32.8 M; actual per-entry values in
+  the §3 budget table), comparing final success/return — measures sample
+  efficiency.
+- **Equal wall-clock time**: report `train_wall_seconds` and
+  `train_throughput_steps_per_s` (now recorded in `run.json`), comparing
+  achievable success under the same wall-clock budget — measures engineering
+  throughput. Report throughput, full training wall clock and peak VRAM
+  (`peak_vram_gib`) separately (`summarize.py` now includes k steps/s and vram
+  GiB columns).
 
-BC 另行报告独立成本，不摊入 RL 训练预算：示范采集墙钟（`bc_warmstart.collect_wall_seconds`）、预训练墙钟（`bc_warmstart.wall_seconds`）、最终 actor/critic MSE、采集 transitions 数（config.json `bc_warmstart` 节）。使用 BC 的臂在等交互步数比较中须注明 PPO 交互步不含 BC 采集步。
+BC reports its own cost, not charged to the RL training budget: demonstration
+collection wall clock (`bc_warmstart.collect_wall_seconds`), pretraining wall
+clock (`bc_warmstart.wall_seconds`), final actor/critic MSE, and collected
+transitions (config.json `bc_warmstart` section). Arms using BC must note in
+equal-interaction-step comparisons that PPO interaction steps do not include BC
+collection steps.
 
-## 5. 协议修订记录
+## 5. Protocol revision log
 
-- 2026-10-22 初版冻结（成功定义、控制器审计、阈值/预算/种子/测试集、成本口径）。
-- 2026-10-24 修正 env RNG 流种子分配（`environments/common/plant.py` `TensorRandom`）：由 `arange(n)+seed` 改为 `mix32(seed ^ (i·0x9e3779b1))`。旧方案下 base seed s+1 的第 i 个副本复用 seed s 第 i+1 个副本的同一条流，1024 envs 时相邻 seed 重叠 1023/1024，本协议种子 {7,13,21} 两两重叠 1018/1024，多 seed 实际是同一批初始条件（聚合指标可逐位相同）；修复后 {7,13,21,101} 的流集合两两无交集。因此 2026-10-22/23 产生的所有 env-RNG 相关数字（含 `results/<task>/baseline.json`、第 2 节控制器审计成功率与各任务专项 harness 数字）不再逐位可复现。已按新方案重跑 8 任务经典基线（1024 envs / 官方 reset 分布 / seed 7，`scripts/baseline_eval.py`）并覆盖 `results/<task>/baseline.json`；旧值仅作历史参考，不得与新结果混用或拼接区间。
-- 2026-10-24 任务难度修订（用户指令"把成功率100%的任务难度略微加大"）：5 个基线成功率 100% 的任务（quadx / satellite / transfer / docking / rendezvous）只调初始分布/任务参数分布，**成功判据、奖励、时域、失败界一律不动**：
-  - quadx：waypoint 壳层 [1.0, 4.5] m → [1.5, 4.8] m（无近距易点；远点逼近 5 m OOB 界）。
-  - satellite：`reset_noise_scale` 0.001 → 0.01（初始 |ω| 可达 ~0.017 rad/s，贴近 0.02 成功速率容差；动量注入 ≲2 N·m·s 远在 CMG 容量内）。
-  - transfer：`ecc0` 0.1 → 0.15（rp0 9000→8500 km，ra0 11000→11500 km；ra_ref/rp_ref/vel_ref 自动重算）。
-  - docking：`init_range` (50, 100) m → (60, 120) m（顶值距 0.8·range_fail shield 走廊 40 m；range_fail=200 m 不变）。
-  - rendezvous：`init_range` (800, 1200) m → (1000, 1500) m（range_fail=2000 m 不变，余量 500 m）。
-  修订后已重跑 5 任务经典基线（同口径 1024 envs / seed 7）并覆盖对应 `results/<task>/baseline.json`；修订前的 100% 数字仅作历史参考。第 2 节审计表中该 5 行的"100%"为修订前口径。
+- 2026-10-22 initial freeze (success definition, controller audit,
+  thresholds/budget/seeds/test set, cost accounting).
+- 2026-10-24 fix of env RNG stream seed assignment
+  (`environments/common/plant.py` `TensorRandom`): changed from
+  `arange(n)+seed` to `mix32(seed ^ (i·0x9e3779b1))`. Under the old scheme the
+  i-th replica of base seed s+1 reused the same stream as the (i+1)-th replica
+  of seed s; with 1024 envs adjacent seeds overlapped 1023/1024, and protocol
+  seeds {7,13,21} overlapped 1018/1024 pairwise, so multiple seeds effectively
+  shared one set of initial conditions (aggregate metrics could match bit for
+  bit); after the fix the stream sets of {7,13,21,101} are pairwise disjoint.
+  Consequently all env-RNG-related numbers produced on 2026-10-22/23 (including
+  `results/<task>/baseline.json`, the §2 controller-audit success rates, and
+  per-task harness numbers) are no longer bit-reproducible. The 8-task classical
+  baselines were re-run under the new scheme (1024 envs / official reset
+  distribution / seed 7, `scripts/baseline_eval.py`) and overwrote
+  `results/<task>/baseline.json`; old values are historical only and must not be
+  mixed or marged with new results.
+- 2026-10-24 task-difficulty revision (user instruction: "slightly increase the
+  difficulty of the tasks with 100% success"): for the 5 tasks with 100%
+  baseline success (quadx / satellite / transfer / docking / rendezvous), only
+  initial/task-parameter distributions were changed; **success criterion,
+  reward, horizon and failure bounds were untouched**:
+  - quadx: waypoint shell [1.0, 4.5] m → [1.5, 4.8] m (no near easy points;
+    far points approach the 5 m OOB bound).
+  - satellite: `reset_noise_scale` 0.001 → 0.01 (initial |ω| can reach ~0.017
+    rad/s, close to the 0.02 rad/s success rate tolerance; momentum injection
+    ≲2 N·m·s is well within CMG capacity).
+  - transfer: `ecc0` 0.1 → 0.15 (rp0 9000→8500 km, ra0 11000→11500 km;
+    ra_ref/rp_ref/vel_ref recomputed automatically).
+  - docking: `init_range` (50, 100) m → (60, 120) m (top value is 40 m from the
+    0.8·range_fail shield corridor; range_fail=200 m unchanged).
+  - rendezvous: `init_range` (800, 1200) m → (1000, 1500) m (range_fail=2000 m
+    unchanged, 500 m margin).
+  After the revision the 5 classical baselines were re-run (same protocol 1024
+  envs / seed 7) and the corresponding `results/<task>/baseline.json` files
+  were overwritten; pre-revision 100% numbers are historical only. The "100%"
+  rows in the §2 audit table are pre-revision.
 
-### 2026-10-26：Rocket benchmark v2
+### 2026-10-26: Rocket benchmark v2
 
-RocketLandingEnv 切换为 v2 六球形脚垫接触模型及连续停稳 2 秒主指标，
-原碰撞条资产保留为对照资产，历史 v1 成绩仅作历史参考。
-当前 main 的 30 秒、初始分布、
-观测/动作和奖励保留。连续停稳 2 秒按 40 Hz 策略步需 81 个观测点（60 Hz 时为 121 点）。
+`RocketLandingEnv` switched to the v2 six-spherical-pad contact model and the
+2-second continuous settled primary metric; the original collision-bar assets
+remain as comparison assets, and historical v1 scores are historical only. The
+current main's 30 s horizon, initial distribution, observations/actions and
+reward are retained. A 2 s continuous settle requires 81 observation points at
+40 Hz policy steps (121 points at 60 Hz).
 
-### 2026-10-27：Rocket 策略频率 60→40 Hz；物理步长去硬编码
+### 2026-10-27: Rocket policy rate 60→40 Hz; de-hardcoding physics step
 
-- Rocket 策略与奖励统一到 40 Hz（研究冻结快照同款；要求的 50 Hz 不能整除
-  120 Hz 控制环，upstream 亦拒绝非整除频率）。时域 30 s 不变，策略步数
-  1800→1200；v4 奖励系数沿用（40 Hz 下纯俯冲净收益为负的安全界
-  u = 0.3/(0.1·0.025) = 120 m/s，仍高于 100 m/s 初始下坠）。
-- 全仓 1/240、/120、range(2) 等频率硬编码改为读取实际构造值：物理步长以
-  `environments/common/original_backend.py` 的 `PHYSICS_HZ` 为唯一定义，
-  `TensorPlant` 读回实际场景步长（`physics_dt`/`physics_hz`/`control_hz`/
-  `physics_per_control`），各 env 的内层物理子步数与 PID 增益缩放均自 plant
-  取值。速率未变（240/120 Hz），除 rocket 策略频率外动力学逐位不变。
-- 此前记录在 60 Hz 口径下的 rocket 数字（含 `results/rocket/baseline.json`）
-  仅作历史参考，与新 40 Hz 结果不可比，需重跑后再比较。
+- Rocket policy and reward move uniformly to 40 Hz (the same rate as the frozen
+  research snapshot; the requested 50 Hz does not divide the 120 Hz control loop
+  evenly, and upstream also rejects non-integer rates). The 30 s horizon is
+  unchanged; policy steps go 1800→1200. The v4 reward coefficients are retained
+  (at 40 Hz the safe bound for negative net payoff in a pure dive is
+  u = 0.3/(0.1·0.025) = 120 m/s, still above the 100 m/s initial descent).
+- Repository-wide hard-coded rates `1/240`, `/120`, `range(2)` now read the
+  actual constructed values: `PHYSICS_HZ` in
+  `environments/common/original_backend.py` is the single definition;
+  `TensorPlant` reads back the actual scene step
+  (`physics_dt`/`physics_hz`/`control_hz`/`physics_per_control`), and each env's
+  inner physics substeps and PID gain scaling come from the plant. Rates are
+  unchanged (240/120 Hz); apart from the rocket policy rate, dynamics are
+  bit-identical.
+- Rocket numbers recorded earlier under the 60 Hz protocol (including
+  `results/rocket/baseline.json`) are historical only, not comparable to the new
+  40 Hz results, and must be re-run before comparison.
 
-正式 Rocket 对照采用4×128完整首回合；其他任务保持各自已有样本规模。
-通用评估脚本修正提前失败副本重复计数问题，所有任务都只采每副本首回合。
-完整性不足的报告标为 partial。新训练在开始前保存环境配置；
-续训锁定扰动档位与策略频率，跨配置实验使用独立目录。
+The formal Rocket comparison uses the full 4×128 first episodes; other tasks
+keep their existing sample sizes. The generic evaluation scripts fixed
+double-counting of early-failed replicas; all tasks now take only each replica's
+first episode. Reports with insufficient completeness are marked partial. New
+training saves the environment configuration before starting; continuation
+locks the disturbance profile and policy rate, and cross-configuration
+experiments use separate directories.
 
-物理扰动范围、版本边界、中文替换原因及逐环境诊断证据见
-[rocket_benchmark_v2_zh.md](rocket_benchmark_v2_zh.md)。以上是新协议修订，
-不追溯改写本文件早先冻结的历史实验。
+Physics disturbance ranges, version boundaries, replacement rationale and
+per-environment diagnostic evidence are in
+[rocket_benchmark_v2.md](rocket_benchmark_v2.md). The above are new protocol
+revisions and do not retroactively rewrite earlier frozen experiments.
 
-### 2026-11-02：文档与代码一致性修订（不改变任何实验结果）
+### 2026-11-02: Documentation/code consistency revision (no experimental result changes)
 
-本轮只修正描述与计数，不改写 2026-10-22/24/26/27 的冻结条目，也不改动任何已发布数值：
+This round only fixes descriptions and counts; it does not rewrite the frozen
+2026-10-22/24/26/27 entries or change any published number:
 
-- **任务数**：当前注册 **10 个**任务（quadx / quadx_track / fixedwing / quadplane / rocket / missile / satellite / transfer / docking / rendezvous，见 `scripts/baseline_eval.py` 的 `ENVS`）。§2 审计表中不存在的 `pendulum` 行已删除；该节其余数字保留为 2026-10-22 冻结时点的审计快照，并已在表下注明当前发布产物（fixedwing 97.0%、rocket v2 100%）。
-- **训练预算**：§3 已补充当前各 `train_<task>.py` 实际硬编码值。与冻结口径“1024 envs × 1000 updates”的偏差为：rocket `UPDATES=2000`、rendezvous `UPDATES=1500`、quadx_track `UPDATES = 20_000 // 100 = 200`；其余入口为 1000 updates，但 `steps/env` 在 32–150 之间不同。
-- **评测风口径**：原文“评测恒为静风基准”不成立。`scripts/eval.py` 在 `results/<task>/config.json` 存在时恢复该次训练的 `env_kwargs`（含 `dryden`/`steady_wind`）；只有配置文件缺失时才使用环境默认静风。§3 报告口径已同步更正。
-- **奖励版本**：2026-10-27 条目中“v4 奖励系数沿用”描述的是当时状态；当前 `environments/rocket/env.py` 的奖励为 **v5**（2026-10-28 引入下降速度走廊），详见 `docs/method/env-rocket-landing.md`。
-- **rocket 指标口径**：§2 审计表与 §3 阈值表把 84.1% 标成“v2 奖励”是误标；该数来自 **v1 瞬时 ever-success**（2000 步口径），与当前 v2 的 `ever_stable_2s`（连续停稳 2 s、40 Hz）不可比。当前 `results/rocket/baseline.json` 的 v2 指标为 100%。
-- **基线样本量**：仓库内不存在 1024 副本基线产物。协议数据集 A 为 128 副本、四 seed；数据集 B 为 256 副本、单 seed 7。逐任务元数据、Wilson 区间与失败模式见 [baseline_test_report.md](baseline_test_report.md)。
-- **`baseline.json` 元数据**：2026-10-24 条目中“已按 1024 envs / seed 7 重跑并覆盖 `results/<task>/baseline.json`”描述的是当日动作；当前仓库中的这些文件是 128 副本协议记录（`quadx` 例外：32 副本 / seed 7；`quadx_track` 128 副本 / seed 21；其余 128 副本 / seed 13）。引用时一律以文件自身的 `num_envs`、`seed`、`env_steps` 为准，不要沿用 1024/seed 7 的旧描述。
-- **sigma-pin 机制退役（2026-11-02）**：`train_rendezvous.py` 原传入的 Gaussian 时代旋钮 `sigma_pin=0.2` / `lr_sigma_coupling=1.5e-3` 与默认 `BetaDistribution` 不兼容（读 `log_std_param` 会抛 `AttributeError`）。按用户决定**退役该机制**而非切换回 Gaussian：该入口现与其它 9 个入口一样使用默认 Beta 策略，不再传这两个旋钮；历史 sigma 调参记录仅作 Gaussian 时代参考。
+- **Task count**: currently **10** tasks are registered (quadx / quadx_track /
+  fixedwing / quadplane / rocket / missile / satellite / transfer / docking /
+  rendezvous, see `ENVS` in `scripts/baseline_eval.py`). The nonexistent
+  `pendulum` row in the §2 audit table has been removed; the rest of that table
+  remains a 2026-10-22 audit snapshot, with current release artifacts noted
+  below it (fixedwing 97.0%, rocket v2 100%).
+- **Training budget**: §3 now lists the actual hard-coded values in each
+  `train_<task>.py`. Deviations from the frozen rule "1024 envs × 1000 updates"
+  are: rocket `UPDATES=2000`, rendezvous `UPDATES=1500`, quadx_track
+  `UPDATES = 20_000 // 100 = 200`; the other entries use 1000 updates, but
+  `steps/env` varies between 32 and 150.
+- **Evaluation wind protocol**: the original statement "evaluation is always the
+  calm-air baseline" is incorrect. `scripts/eval.py` restores the training
+  `env_kwargs` (including `dryden`/`steady_wind`) from
+  `results/<task>/config.json` when present; only when the config file is
+  missing does it fall back to the environment's default calm air. §3 has been
+  corrected accordingly.
+- **Reward version**: the 2026-10-27 entry's "v4 reward coefficients retained"
+  describes the state at that time; the current `environments/rocket/env.py`
+  reward is **v5** (descent-speed corridor introduced 2026-10-28), see
+  `docs/method/env-rocket-landing.md`.
+- **Rocket metric protocol**: labeling 84.1% as "v2 reward" in the §2 audit
+  table and §3 threshold table is a mislabel; that number comes from **v1
+  instantaneous ever-success** (2000-step window) and is not comparable to the
+  current v2 `ever_stable_2s` (2 s continuous settle, 40 Hz). The current
+  `results/rocket/baseline.json` v2 metric is 100%.
+- **Baseline sample size**: there are no 1024-replica baseline artifacts in the
+  repository. Protocol dataset A is 128 replicas, four seeds; dataset B is 256
+  replicas, single seed 7. Per-task metadata, Wilson intervals and failure modes
+  are in [baseline_test_report.md](baseline_test_report.md).
+- **`baseline.json` metadata**: the 2026-10-24 entry's statement "re-run at 1024
+  envs / seed 7 and overwritten" describes that day's action; the current files
+  are 128-replica protocol records (`quadx` exception: 32 replicas / seed 7;
+  `quadx_track` 128 replicas / seed 21; the rest 128 replicas / seed 13). Always
+  cite each file's own `num_envs`, `seed`, `env_steps`; do not reuse the old
+  1024/seed 7 description.
+- **sigma-pin mechanism retired (2026-11-02)**: `train_rendezvous.py` previously
+  passed Gaussian-era knobs `sigma_pin=0.2` / `lr_sigma_coupling=1.5e-3`, which
+  are incompatible with the default `BetaDistribution` (reading
+  `log_std_param` raises `AttributeError`). By user decision the mechanism was
+  **retired** rather than reverting to Gaussian: the entry now uses the default
+  Beta policy like the other 9 entries and no longer passes those knobs;
+  historical sigma tuning records are Gaussian-era references only.

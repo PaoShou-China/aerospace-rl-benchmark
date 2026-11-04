@@ -1,5 +1,7 @@
 # QuadX Baseline: SE(3) Geometric Control (`QuadXSE3Baseline`)
 
+**English** · [简体中文](baseline-quadx-se3.zh-CN.md)
+
 ## 1. Overview
 
 The QuadX-Waypoints task requires a Crazyflie 2.x micro-quadrotor (27 g, X configuration) to visit four

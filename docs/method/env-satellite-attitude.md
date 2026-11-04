@@ -1,5 +1,7 @@
 # Satellite Attitude Control with Control Moment Gyros (`satellite`)
 
+**English** · [简体中文](env-satellite-attitude.zh-CN.md)
+
 ## 1. Overview
 
 A rigid spacecraft bus carries a cluster of $N$ single-gimbal control moment

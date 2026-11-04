@@ -1,5 +1,7 @@
 # Low-Thrust Transfer Baseline: One-Step Greedy Gauss Tangential Guidance (`TransferGaussBaseline`)
 
+**English** · [简体中文](baseline-transfer-gauss.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the low-thrust perigee-raising task is a

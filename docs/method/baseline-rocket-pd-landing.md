@@ -1,5 +1,7 @@
 # Rocket-Landing Baseline: Conventional PD Landing (`RocketPDLandingBaseline`)
 
+**English** · [简体中文](baseline-rocket-pd-landing.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the Rocket-Landing task is a deliberately simple,

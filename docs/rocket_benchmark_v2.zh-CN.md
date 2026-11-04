@@ -1,5 +1,7 @@
 # Rocket benchmark v2：替换原因与协议
 
+**简体中文** · [English](rocket_benchmark_v2.md)
+
 旧 benchmark 的 Genesis 着陆接触配置存在结构性问题：三根平底碰撞条与平台接触后持续抖动，
 关机轻放也会被弹起；瞬时 ever-success 又会把抖动过程中短暂满足阈值的状态记为成功。
 这让评分偏离了“火箭着陆并停稳”的任务目标。v2 用球形脚垫修复接触，并以连续停稳 2 秒计分。
@@ -76,7 +78,7 @@ Claude 上述数据采用冻结研究源 `39e6bb6fd5d0f5432f7405a76946938a469492
 40 Hz v2 快照。main 接入保留当前 40 Hz 策略（2026-10-27 起，与研究快照同款频率；
 50 Hz 因不能整除 120 Hz 控制环不可用）、120 Hz 控制、240 Hz 物理频率和 v4 奖励
 （2026-10-28 起为 v5：在同一 dense shaping 上新增可行下降速度走廊惩罚，见
-[`method/env-rocket-landing.md`](method/env-rocket-landing.md)）。
+[`method/env-rocket-landing.zh-CN.md`](method/env-rocket-landing.zh-CN.md)）。
 报告通过版本、频率、源代码哈希、后端和风配置区分各实验；历史榜单保留原版本标签。
 
 ```bash

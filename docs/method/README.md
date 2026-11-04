@@ -1,5 +1,7 @@
 # Method Documentation
 
+**English** · [简体中文](README.zh-CN.md)
+
 Paper-style method-section references for every RL environment and every
 algorithm (learned or classical) in the AerospaceRL Benchmark. Each document
 defines its notation, writes the dynamics / reward / control law as numbered

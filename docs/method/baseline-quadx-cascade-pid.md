@@ -1,5 +1,7 @@
 # QuadX-Waypoints — Position–Attitude Cascaded PID Baseline
 
+**English** · [简体中文](baseline-quadx-cascade-pid.zh-CN.md)
+
 ## 1. Overview
 
 This document specifies a second classical arm for the QuadX-Waypoints task, added

@@ -81,8 +81,8 @@ instantaneous rates and are not comparable to the v2 settled criterion.
 | [docs/repository-layout.md](docs/repository-layout.md) | repository tree, training entries, run artifacts |
 | [docs/roadmap.md](docs/roadmap.md) | planned tasks and landed infrastructure |
 | [docs/references.md](docs/references.md) | publications and upstream projects |
-| [benchmark_report.md](benchmark_report.md) | Chinese benchmark report |
-| [docs/rocket_benchmark_v2_zh.md](docs/rocket_benchmark_v2_zh.md) | Rocket v2 criterion and reproduction notes |
+| [benchmark_report.md](benchmark_report.md) | Benchmark technical report |
+| [docs/rocket_benchmark_v2.md](docs/rocket_benchmark_v2.md) | Rocket v2 criterion and reproduction notes |
 
 ## Acknowledgments
 

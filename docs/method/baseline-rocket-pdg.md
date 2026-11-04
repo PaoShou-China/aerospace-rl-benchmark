@@ -1,5 +1,7 @@
 # Rocket-Landing Baseline: Analytic ZEM/ZEV Powered-Descent Guidance (`RocketPDGBaseline`)
 
+**English** · [简体中文](baseline-rocket-pdg.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the Rocket-Landing task is a fully analytic powered-descent guidance and control stack: a

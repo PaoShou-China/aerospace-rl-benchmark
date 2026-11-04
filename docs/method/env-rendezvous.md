@@ -1,5 +1,7 @@
 # Rendezvous Environment (`SpaceRendezvousEnv`)
 
+**English** · [简体中文](env-rendezvous.zh-CN.md)
+
 ## 1. Overview
 
 The rendezvous task reproduces the medium-range approach benchmark of the

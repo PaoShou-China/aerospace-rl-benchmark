@@ -1,720 +1,1162 @@
-# AerospaceRL Benchmark 技术报告
+# AerospaceRL Benchmark Technical Report
 
-> GPU 并行航空航天控制强化学习基准 — 动力学建模、任务定义与传统基线
+**English** · [简体中文](benchmark_report.zh-CN.md)
 
-## 摘要
+> GPU-parallel reinforcement-learning benchmark for aerospace control — dynamics modeling, task definitions and classical baselines
 
-AerospaceRL Benchmark（以下简称 **benchmark**）是一套面向航空航天控制的 GPU 并行强化学习基准，包含 **10 个任务**，覆盖大气层飞行（四旋翼航路点、四旋翼目标跟踪、固定翼航路点、倾转旋翼 VTOL、火箭垂直着陆、导弹拦截）与航天器动力学（CMG 姿态控制、低推力轨道转移、交会、对接）。
+## Abstract
 
-基准的核心设计原则：
+AerospaceRL Benchmark (hereafter **benchmark**) is a GPU-parallel reinforcement
+learning benchmark for aerospace control with **10 tasks**, covering atmospheric
+flight (quadrotor waypoints, quadrotor target tracking, fixed-wing waypoints,
+tilt-rotor VTOL, rocket vertical landing, missile interception) and spacecraft
+dynamics (CMG attitude control, low-thrust orbit transfer, rendezvous, docking).
 
-- **纯张量接口**：所有环境暴露统一的批量 device-tensor `step()/reset()` 协议，不依赖 Gym/Gymnasium；物理积分、接触检测、奖励、重置、随机数均为 masked tensor kernel，未激活副本冻结且不消耗随机数。
-- **每任务配多个传统基线**：每个任务至少有两个解析式经典 GNC 控制器（主基线 + 结构变体），与学习算法共享同一环境、同一奖励、同一成功判据，且只读 observation 不访问内部状态。
-- **三层速率嵌套**：policy → control → physics，大气层任务使用 Genesis 刚体后端，航天器任务为纯张量积分器（RK4 / 辛 Euler）。
+Core design principles:
 
-本报告重点详述各任务的**被控对象动力学建模**、**物理参数**、**奖励设计**与**传统方法**，并介绍学习算法体系（含基于传统控制器的 residual RL 与增益调度 RL）及冻结评测协议。
+- **Pure tensor interface**: every environment exposes a uniform batched
+  device-tensor `step()/reset()` protocol and does not depend on
+  Gym/Gymnasium; physics integration, contact detection, rewards, resets and
+  random numbers are masked tensor kernels, and inactive replicas freeze without
+  consuming random numbers.
+- **Multiple classical baselines per task**: each task has at least two analytic
+  classical GNC controllers (a default baseline plus structural variants), sharing
+  the same environment, reward and success criterion as learning algorithms, and
+  reading only observations rather than internal state.
+- **Three nested rates**: policy → control → physics; atmospheric tasks use the
+  Genesis rigid-body backend, while spacecraft tasks use pure tensor integrators
+  (RK4 / symplectic Euler).
 
----
-
-## 1. 系统架构与统一基础设施
-
-### 1.1 张量环境接口
-
-所有环境继承统一的 `BaseEnv`，遵循以下契约：
-
-- **单设备双精度**：物理状态为 `float64`，观测/奖励缓冲为 `float32`，全部状态驻留在同一 device 上。
-- **无 per-replica Python 循环**：`step()` 内一切操作为批量张量核；每个 `step()` 仅执行一次 host-device 同步（`bool(done.any())`），用于 episode 边界簿记。
-- **观测分组**：观测以 `TensorDict` 返回，`'policy'` 键下为策略可见向量；传统基线与学习策略消费同一向量。
-- **时间约定**：`extras['time_outs']` 标记纯时限截断（用于 value bootstrap），`extras['terminal_observations']` 携带 reset 前观测。
-
-### 1.2 刚体 Plant 与张量动力学
-
-大气层 6 个任务（quadx / quadx_track / fixedwing / quadplane / rocket / missile）使用 `TensorPlant`（`environments/common/plant.py`），其统一承载：
-
-- 几何与惯性（解析自冻结参考 URDF）
-- 作动层：rate-PID mixer、升力面（`aerodynamics.py`）、助推器/燃料
-- 物理步进、接触检查、reset/warmup
-- 逐副本独立计数器随机流 `TensorRandom`（`mix32` 去 seed 重叠）
-
-航天器 4 个任务（satellite / transfer / docking / rendezvous）为纯张量实现，无物理引擎，状态、随机数与统计全在设备上。
-
-### 1.3 风扰统一钩子
-
-QuadX-Waypoints、Fixedwing-Waypoints、Quadplane-VTOL、Rocket-Landing 与 Missile-Intercept（5 个大气任务）共享 `WindDisturbance`（`disturbances.py`）：世界系定常风 + Dryden 阵风。构造参数为 `steady_wind`（m/s）、`dryden ∈ [0,1]` 与 `severity ∈ {light, moderate, severe}`；`dryden=0` 且无定常风时为静风。参考高度 300 ft 的三轴标准差分别为 light `(1.5,1.5,0.7)`、moderate `(3.0,3.0,1.4)`、severe `(6.0,6.0,3.0)` m/s，尺度长度为 `(200,200,50)` m，实际标准差再乘 `dryden`。RNG 由环境种子确定，滤波器状态在 episode 复位时清零。所有气动力统一对**空速** $v_{\text{air}} = v - w$ 评估；静风路径与无风扰基准逐位一致。QuadX-Track 的构造器不接受风参数，该任务恒为静风。训练入口硬编码的默认风配置为：quadx / fixedwing / quadplane 的 `dryden=0.3`、rocket 的 `dryden=0.0`（与静风基准同口径）、missile 不传风参数；`scripts/eval.py` 在 `results/<task>/config.json` 存在时恢复该次训练的 `env_kwargs`，因此评测沿用训练风配置。跨方法主比较必须显式固定同一风配置（可按任务选用静风或同一 Dryden 档位），并单独标注扰动结果。
-
-### 1.4 坐标、单位与模型边界
-
-- 位置、速度未特别说明时均采用右手惯性世界系，单位为 m、m/s；体速度/角速度下标 $b$ 表示机体系，CWH 任务的 LVLH 系固定为 $x$ 径向向外、$y$ 沿迹、$z$ 交轨。
-- 刚体大气任务的**观测四元数为 `xyzw`，表示 body-to-world 旋转**；Genesis plant 内部为 `wxyz`，仅在 plant 边界转换。Satellite 是显式例外：其内部动力学与观测均使用 `wxyz` 和 Hamilton 乘法，姿态误差为 $q^{-1}\otimes q_{\text{target}}$ 的最短弧对数映射。
-- 气动模型采用叶素/升力面与阻力近似，不包含完整非定常气动、结构弹性或高保真推进模型；Fixedwing 结果主要适用于给定速度、迎角与失速模型范围，Missile 的细长体法向力模型不能替代全弹气动数据库，Rocket 栅格翼模型不覆盖真实可展开机构的全部效应。
-- CMG 使用转子转速恒定的降阶刚体模型；Transfer 使用二体点质量模型；Docking/Rendezvous 使用圆轨道近旁的线性 CWH 模型。上述任务是控制算法基准，不应被解释为真实飞行器的工程验证。
-
-### 1.5 分布契约与复现
-
-每个任务的默认 reset 分布是官方基准分布。训练课程只能改变初始状态或任务参数分布，不得改变奖励、成功判据、终止条件或物理参数；评测恢复 `config.json` 中冻结的 `env_kwargs`。训练、验证和 held-out 测试使用不同 RNG 流，测试流不参与调参或模型选择。传统控制器只允许读取 `'policy'` 观测及构造时冻结的标称模型常数，不能读取运行时 plant 隐状态。
-
-PyFlyt 参考源码、URDF/YAML 物理资产及项目自建 Missile、Rocket-v2 资产由 `environments/common/consistency.py` 做 SHA-256 校验；plant 契约序列化后生成 `plant_id`。每次实验应同时保存代码版本、依赖版本、环境配置、算法配置和种子列表，使结果能够逐位复现或明确解释版本差异。
+This report focuses on each task's **plant dynamics modeling**, **physical
+parameters**, **reward design** and **classical methods**, and introduces the
+learning-algorithm suite (including residual RL and gain-scheduling RL built on
+classical controllers) and the frozen evaluation protocol.
 
 ---
 
-## 2. 任务清单
+## 1. System architecture and shared infrastructure
 
-本章按大气层飞行与航天器动力学分组，逐个任务详述被控对象动力学、参数、奖励与传统方法。本章只描述环境本身，不涉及任何测试结果或评估数据。
+### 1.1 Tensor environment interface
 
-**传统基线覆盖表**（“默认 + 两个结构变体”；均只读策略观测，性能状态由实验章节另行报告）：
+All environments inherit a common `BaseEnv` and follow this contract:
 
-| 任务 | 默认基线 | 结构变体 1 | 结构变体 2 |
+- **Single device, double precision**: physical state is `float64`, observation
+  and reward buffers are `float32`, and all state resides on the same device.
+- **No per-replica Python loop**: everything inside `step()` is a batched tensor
+  kernel; each `step()` performs exactly one host-device synchronization
+  (`bool(done.any())`) for episode-boundary bookkeeping.
+- **Observation groups**: observations are returned as a `TensorDict`, with the
+  policy-visible vector under `'policy'`; classical baselines and learned policies
+  consume the same vector.
+- **Time conventions**: `extras['time_outs']` marks pure time-limit truncation
+  (for value bootstrapping); `extras['terminal_observations']` carries the
+  pre-reset observation.
+
+### 1.2 Rigid-body plant and tensor dynamics
+
+The 6 atmospheric tasks (quadx / quadx_track / fixedwing / quadplane / rocket /
+missile) use `TensorPlant` (`environments/common/plant.py`), which uniformly
+carries:
+
+- geometry and inertia (parsed from the frozen reference URDF)
+- actuation layer: rate-PID mixer, lifting surfaces (`aerodynamics.py`),
+  booster/fuel
+- physics stepping, contact checks, reset/warmup
+- per-replica independent counter random streams `TensorRandom` (`mix32` removes
+  seed overlap)
+
+The 4 spacecraft tasks (satellite / transfer / docking / rendezvous) are pure
+tensor implementations with no physics engine; state, random numbers and
+statistics all stay on device.
+
+### 1.3 Unified wind-disturbance hook
+
+QuadX-Waypoints, Fixedwing-Waypoints, Quadplane-VTOL, Rocket-Landing and
+Missile-Intercept (5 atmospheric tasks) share `WindDisturbance`
+(`disturbances.py`): world-frame steady wind + Dryden gusts. Constructor
+parameters are `steady_wind` (m/s), `dryden ∈ [0,1]` and
+`severity ∈ {light, moderate, severe}`; `dryden=0` with no steady wind is calm
+air. At the 300 ft reference altitude the three-axis standard deviations are
+light `(1.5,1.5,0.7)`, moderate `(3.0,3.0,1.4)` and severe `(6.0,6.0,3.0)` m/s,
+with scale lengths `(200,200,50)` m; the actual standard deviation is multiplied
+by `dryden`. RNG is determined by the environment seed, and filter state is
+cleared on episode reset. All aerodynamic forces are uniformly evaluated against
+**airspeed** $v_{\text{air}} = v - w$; the calm-air path is bit-identical to the
+no-wind benchmark. QuadX-Track's constructor does not accept wind parameters and
+is always calm. Training entries hard-code these default wind configurations:
+quadx / fixedwing / quadplane `dryden=0.3`, rocket `dryden=0.0` (same convention
+as the calm-air baseline), missile no wind parameters. `scripts/eval.py`
+restores the run's `env_kwargs` from `results/<task>/config.json` when present,
+so evaluation follows the training wind configuration. Cross-method primary
+comparisons must explicitly fix the same wind configuration (calm air or the same
+Dryden tier per task) and report disturbance results separately.
+
+### 1.4 Coordinates, units and model boundaries
+
+- Unless stated otherwise, positions and velocities use a right-handed inertial
+  world frame in m and m/s; body velocity/angular rate with subscript $b$ means
+  body frame; CWH tasks fix the LVLH frame as $x$ radial outward, $y$ along-track,
+  $z$ cross-track.
+- For rigid-body atmospheric tasks, the **observation quaternion is `xyzw` and
+  represents a body-to-world rotation**; the Genesis plant internally uses
+  `wxyz` and converts only at the plant boundary. Satellite is an explicit
+  exception: its internal dynamics and observations use `wxyz` and Hamilton
+  multiplication, and attitude error is the shortest-arc logarithmic map of
+  $q^{-1}\otimes q_{\text{target}}$.
+- Aerodynamic models use blade-element/lifting-surface and drag approximations,
+  not full unsteady aerodynamics, structural elasticity or high-fidelity
+  propulsion models; Fixedwing results mainly apply within the given speed,
+  angle-of-attack and stall-model range, Missile's slender-body normal-force
+  model cannot replace a full-airframe aerodynamic database, and Rocket's grid-fin
+  model does not cover all effects of a real deployable mechanism.
+- CMG uses a reduced-order rigid-body model with constant rotor speed; Transfer
+  uses a two-body point-mass model; Docking/Rendezvous use the linear CWH model
+  near a circular orbit. These tasks are control-algorithm benchmarks and must
+  not be interpreted as engineering validation of real vehicles.
+
+### 1.5 Distribution contract and reproduction
+
+Each task's default reset distribution is the official benchmark distribution.
+A training curriculum may change only initial-state or task-parameter
+distributions, not rewards, success criteria, termination conditions or physical
+parameters; evaluation restores the frozen `env_kwargs` from `config.json`.
+Training, validation and held-out testing use different RNG streams, and the test
+stream never participates in tuning or model selection. Classical controllers may
+read only `'policy'` observations and nominal model constants frozen at
+construction; they may not read runtime plant hidden state.
+
+PyFlyt reference source, URDF/YAML physical assets and the project-created
+Missile and Rocket-v2 assets are SHA-256 verified by
+`environments/common/consistency.py`; the plant contract is serialized into a
+`plant_id`. Every experiment should save the code version, dependency versions,
+environment configuration, algorithm configuration and seed list together, so
+results can be reproduced bit-for-bit or version differences explained
+explicitly.
+
+---
+
+## 2. Task list
+
+This chapter groups tasks by atmospheric flight and spacecraft dynamics and
+details each task's plant dynamics, parameters, rewards and classical methods.
+It describes only the environments and contains no test results or evaluation
+data.
+
+**Classical baseline coverage table** ("default + two structural variants";
+all read policy observations only; performance status is reported separately in
+the experimental chapter):
+
+| Task | Default baseline | Structural variant 1 | Structural variant 2 |
 |---|---|---|---|
-| quadx | SE(3) 几何控制 | 级联 PID | 滑模位置环 + Euler 姿态环 |
-| quadx_track | CV Kalman + SE(3) | 纯测量追踪 | EMA 滤波 + SE(3) |
-| fixedwing | L1 + TECS | 级联 PID | 非线性制导律（NLGL）+ TECS |
-| quadplane | SE(3) + 前推 | 混合级联 PID | L1 固定翼 + 低速旋翼辅助 |
-| rocket | ZEM/ZEV PDG | 位置/速度 PD | E-guidance |
-| missile | APN | 纯追踪（PPN） | 真比例导引（TPN） |
-| satellite | 阻尼伪逆 CMG | 普通 Moore–Penrose 伪逆 | 加权伪逆 + 零空间避奇异 |
-| transfer | Gauss 一步贪心 | Petropoulos Q-law | Edelbaum 预算切向制导 |
-| docking | CWH-LQR + 约束层 | CWH 极点配置 | CWH ZEM/ZEV |
-| rendezvous | 两脉冲 CWH | CWH-PD | glideslope 距离—速率制动 |
+| quadx | SE(3) geometric control | cascaded PID | sliding-mode position loop + Euler attitude loop |
+| quadx_track | CV Kalman + SE(3) | raw-measurement pursuit | EMA filter + SE(3) |
+| fixedwing | L1 + TECS | cascaded PID | nonlinear guidance law (NLGL) + TECS |
+| quadplane | SE(3) + pusher | hybrid cascaded PID | L1 fixed-wing + low-speed rotor assist |
+| rocket | ZEM/ZEV PDG | position/velocity PD | E-guidance |
+| missile | APN | pure pursuit (PPN) | true proportional navigation (TPN) |
+| satellite | damped pseudo-inverse CMG | ordinary Moore–Penrose pseudo-inverse | weighted pseudo-inverse + null-space singularity avoidance |
+| transfer | Gauss one-step greedy | Petropoulos Q-law | Edelbaum budget tangential guidance |
+| docking | CWH-LQR + constraint layer | CWH pole placement | CWH ZEM/ZEV |
+| rendezvous | two-impulse CWH | CWH-PD | glideslope range–rate braking |
 
-### 2.1 QuadX-Waypoints（四旋翼航路点导航）
+### 2.1 QuadX-Waypoints (quadrotor waypoint navigation)
 
-**任务**：Crazyflie 2.x 微型四旋翼（27 g，X 构型）在 5 m 飞行穹顶内按序访问 4 个随机航路点，进入 0.2 m 球即捕获，20 s 时限；触地或出界失败。
+**Task**: a Crazyflie 2.x micro quadrotor (27 g, X configuration) visits 4 random
+waypoints in order inside a 5 m flight dome, capturing each within a 0.2 m
+sphere, with a 20 s limit; ground contact or out-of-bounds fails.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-**三层速率**：policy 40 Hz → control 120 Hz（`inner_steps=3`）→ physics 240 Hz（每控制期 2 子步），每 policy 步 6 个物理子步。
+**Three rates**: policy 40 Hz → control 120 Hz (`inner_steps=3`) → physics
+240 Hz (2 substeps per control period), 6 physics substeps per policy step.
 
-**内环 rate PID（120 Hz）**：跟踪指令体角速度 $\omega^{\text{cmd}}$，输出归一化力矩 $u\in[-1,1]^3$：
+**Inner rate PID (120 Hz)**: tracks the commanded body angular rate
+$\omega^{\text{cmd}}$ and outputs normalized torque $u\in[-1,1]^3$:
 
 $$u_t = \text{sat}\big(k_p e_t + I_t + k_d (e_t - e_{t-1})/\Delta t_c\big), \quad I_t = \text{sat}(I_{t-1} + k_i e_t \Delta t_c)$$
 
-其中 $e_t = \omega^{\text{cmd}} - \omega_b$，$k_p=(0.04,0.04,0.08)$，$k_i=(5\times10^{-7},5\times10^{-7},2.7\times10^{-4})$，$k_d=(10^{-4},10^{-4},0)$。力矩与总推力经 X 构型 mixer 分配到 4 个电机。
+where $e_t = \omega^{\text{cmd}} - \omega_b$, $k_p=(0.04,0.04,0.08)$,
+$k_i=(5\times10^{-7},5\times10^{-7},2.7\times10^{-4})$,
+$k_d=(10^{-4},10^{-4},0)$. Torque and total thrust are allocated to 4 motors
+through an X-configuration mixer.
 
-**作动（240 Hz）**：电机状态一阶滞后 + 乘性噪声：
+**Actuation (240 Hz)**: motor state first-order lag + multiplicative noise:
 
 $$\theta_{t+1} = \theta_t + \frac{\Delta t}{\tau_m}(\pi_t - \theta_t), \quad \theta_t \leftarrow \theta_t(1 + 0.02\,\xi_t),\ \xi_t \sim \mathcal{N}(0,1)$$
 
-$\tau_m=0.01$ s。乘性噪声为零均值，更新时不额外截断高斯样本；二次推力律中的绝对值只决定推力方向约定，不是噪声截断。单电机推力二次律 $f_i = |\theta_i|\theta_i\,F_{\max}/4$，$F_{\max}=2.0$ N；反扭矩 $\tau_{z,i}=f_i(k_m/k_f)s_i$。体阻力 $F_d = -\frac12\rho C_d A |v_{\text{air}}|\circ v_{\text{air}}$（$C_d=3.0$，$A=4\times10^{-4}$ m²），角阻力 $\tau_d=-10^{-4}|\omega_b|\circ\omega_b$。速度钳位 $\|v\|\le 15$ m/s，$\|\omega\|\le 30$ rad/s。
+$\tau_m=0.01$ s. The multiplicative noise is zero-mean, and Gaussian samples are
+not additionally truncated at the noise layer; the absolute value in the
+quadratic thrust law only fixes the thrust-direction convention, not noise
+truncation. Single-motor quadratic thrust law
+$f_i = |\theta_i|\theta_i\,F_{\max}/4$, $F_{\max}=2.0$ N; reaction torque
+$\tau_{z,i}=f_i(k_m/k_f)s_i$. Body drag
+$F_d = -\frac12\rho C_d A |v_{\text{air}}|\circ v_{\text{air}}$
+($C_d=3.0$, $A=4\times10^{-4}$ m²), angular drag
+$\tau_d=-10^{-4}|\omega_b|\circ\omega_b$. Velocity clamps
+$\|v\|\le 15$ m/s, $\|\omega\|\le 30$ rad/s.
 
-#### 动作空间
+#### Action space
 
-$a\in[-1,1]^4$ 仿射映射至 $(\omega_x^{\text{cmd}},\omega_y^{\text{cmd}},\omega_z^{\text{cmd}},T)$，范围 $(\pm\pi,\pm\pi,\pm\pi,[0,0.8])$。
+$a\in[-1,1]^4$ affinely maps to
+$(\omega_x^{\text{cmd}},\omega_y^{\text{cmd}},\omega_z^{\text{cmd}},T)$ with
+ranges $(\pm\pi,\pm\pi,\pm\pi,[0,0.8])$.
 
-#### 观测空间与终止（37 维）
+#### Observation space and termination (37 dims)
 
-体角速度(3) + 四元数 `xyzw`(4) + 体速度(3) + 世界位置(3) + 上一动作(4) + 电机状态(4) + 4 个航路点的体系相对位置(12) + 有效标志(4)，共 37 维，`float32`、未在环境内归一化。当前活动航路点位于相对位置的第 1 组。时限内访问全部 4 个航路点为成功（以截断结束）；触地或 $\|p\|>5$ m 为失败终止；800 步超时而未完成不算成功。
+Body angular rate (3) + quaternion `xyzw` (4) + body velocity (3) + world position
+(3) + previous action (4) + motor state (4) + body-frame relative positions of 4
+waypoints (12) + validity flags (4), 37 dims, `float32`, not normalized inside
+the environment. The current active waypoint is the first relative-position
+group. Visiting all 4 waypoints within the limit is success (truncation);
+ground contact or $\|p\|>5$ m is failure termination; timeout at 800 steps
+without completion does not count as success.
 
-#### 参数表
+#### Parameter table
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 质量 / 总推力 | 0.027 kg / 2.0 N |
-| 惯量 $J$ | $\text{diag}(1.4,1.4,2.17)\times10^{-5}$ kg·m² |
-| 电机滞后 $\tau_m$ / 噪声比 | 0.01 s / 0.02 |
+| Mass / total thrust | 0.027 kg / 2.0 N |
+| Inertia $J$ | $\text{diag}(1.4,1.4,2.17)\times10^{-5}$ kg·m² |
+| Motor lag $\tau_m$ / noise ratio | 0.01 s / 0.02 |
 | rate-PID $k_p,k_i,k_d$ | $(.04,.04,.08),(5\text{e-}7,5\text{e-}7,2.7\text{e-}4),(1\text{e-}4,1\text{e-}4,0)$ |
-| pwm 窗口 / 总推力上限 | $[0.05,1]$ / 0.8 |
-| 捕获半径 / 出界半径 | 0.2 m / 5 m |
-| 航路点半径 / 高度地板 | $[1.5,4.8]$ m / 0.4 m |
-| 初始状态 | $(0,0,1)$ m，静止水平 |
+| pwm window / total thrust cap | $[0.05,1]$ / 0.8 |
+| Capture radius / out-of-bounds radius | 0.2 m / 5 m |
+| Waypoint shell / altitude floor | $[1.5,4.8]$ m / 0.4 m |
+| Initial state | $(0,0,1)$ m, at rest and level |
 
-#### 奖励
+#### Reward
 
-基于势函数的伸缩式塑形：
+Potential-based telescoping shaping:
 
 $$\Phi(s) = -\big(\|p - w_i\| + L(i)\big), \quad r_t = \Phi(s_{t+1}) - \Phi(s_t) + 15\,c_t - 10\,\kappa_t$$
 
-$L(i)$ 为剩余航段长度和，$c_t$ 为捕获数，$\kappa_t$ 为崩溃指示。势差 telescoping 保证路径无关：成功回合累计恰为参考路径长度，崩溃没收未实现势。
+$L(i)$ is the remaining-leg length sum, $c_t$ the number of captures and
+$\kappa_t$ the crash indicator. The telescoping potential difference guarantees
+path independence: a successful episode accumulates exactly the reference path
+length, and a crash forfeits unrealized potential.
 
-#### 传统方法：SE(3) 几何控制（Lee et al. 2010）
+#### Classical method: SE(3) geometric control (Lee et al. 2010)
 
-- **位置环**：速度饱和级联 PD，$v_d = -(K_X/K_V)e_x$ 限幅至 $V_{\max}=1.5$ m/s；$F_{\text{des}} = m(g e_3 - K_V e_v)$，轴向积分修剪抵消悬停残差。
-- **姿态环**：$SO(3)$ 上几何控制，$b_{3,d} = F_{\text{des}}/\|F_{\text{des}}\|$，力矩 $M = -K_R e_R - K_\Omega \omega_b + \omega_b \times J\omega_b$。
-- **分配**：闭式 wrench→转子推力映射，预补偿电机滞后直流增益 $G_{\text{pwm}}=1.216$，反演 mixer 得到 rate 指令。
-- **结构变体**：`cascaded_pid` 用位置—速度—姿态级联 PID；`smc` 用滑模位置外环与 Euler 姿态内环。
+- **Position loop**: saturated-velocity cascaded PD,
+  $v_d = -(K_X/K_V)e_x$ clipped to $V_{\max}=1.5$ m/s;
+  $F_{\text{des}} = m(g e_3 - K_V e_v)$, with an axis-wise integral trim canceling
+  hover residual.
+- **Attitude loop**: geometric control on $SO(3)$,
+  $b_{3,d} = F_{\text{des}}/\|F_{\text{des}}\|$, torque
+  $M = -K_R e_R - K_\Omega \omega_b + \omega_b \times J\omega_b$.
+- **Allocation**: closed-form wrench→rotor-thrust mapping, pre-compensating the
+  motor-lag DC gain $G_{\text{pwm}}=1.216$, then inverting the mixer to obtain
+  rate commands.
+- **Structural variants**: `cascaded_pid` uses position–velocity–attitude
+  cascaded PID; `smc` uses a sliding-mode position outer loop and Euler attitude
+  inner loop.
 
 ---
 
-### 2.2 QuadX-Track（四旋翼持续目标跟踪）
+### 2.2 QuadX-Track (quadrotor persistent target tracking)
 
-**任务**：同型四旋翼在 30 s 内对合作地面移动目标保持天底相机视场内可见，同时保持固定高度 6 m 与固定水平偏移 (1.5, 0) m；可见时间占比 ≥ 0.85 且无坠毁为成功。Plant 与 QuadX-Waypoints 完全相同，区别在感知与奖励。
+**Task**: the same quadrotor keeps a cooperative ground moving target visible
+inside a nadir camera's field of view for 30 s, while holding a fixed 6 m altitude
+and fixed horizontal offset (1.5, 0) m; a visibility fraction ≥ 0.85 with no crash
+is success. The plant is identical to QuadX-Waypoints; perception and reward
+differ.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-与 2.1 节相同：40/120/240 Hz 三层速率、rate PID、X 构型 mixer、电机滞后噪声、二次推力、体/角阻力。
+As in §2.1: 40/120/240 Hz three rates, rate PID, X-configuration mixer, motor lag
+and noise, quadratic thrust, body/angular drag.
 
-**合作地面目标**：运动学车辆，$z_t=0.15$ m，12 段预抽签（直线/转弯/启停），速度 0.4–1.2 m/s，转弯率 0.3–1.0 rad/s，在 15 m 圆域内反射边界。
+**Cooperative ground target**: a kinematic vehicle at $z_t=0.15$ m, 12
+pre-sampled segments (straight/turn/start-stop), speed 0.4–1.2 m/s, turn rate
+0.3–1.0 rad/s, with reflecting boundaries inside a 15 m circle.
 
-**几何相机模型**：下视锥半角 30°，斜距窗口 1.5–12 m，6 个静态圆柱遮挡物（纯 LOS 几何，非物理实体）。可见时返回带 0.15 m 噪声的目标相对位置；不可见时观测为 0 + flag。
+**Geometric camera model**: 30° half-angle downward cone, slant-range window
+1.5–12 m, 6 static cylindrical occluders (pure LOS geometry, not physical
+bodies). When visible, returns the target relative position with 0.15 m noise;
+when not visible, the observation is 0 + flag.
 
-#### 观测空间（25 维）
+#### Observation space (25 dims)
 
-体角速度(3) + 四元数(4) + 体速度(3) + 世界位置(3) + 上一动作(4) + 电机状态(4) + 目标测量(3) + 可见性 flag(1)。无目标真值。
+Body angular rate (3) + quaternion (4) + body velocity (3) + world position (3) +
+previous action (4) + motor state (4) + target measurement (3) + visibility
+flag (1). No target ground truth.
 
-#### 奖励
+#### Reward
 
 $$r_t = 0.10\,y_t - 0.10(1-y_t) - 0.05\,\|p_{xy}-\bar p_{xy}\|\,y_t - 0.01(z-6)^2 - 0.002\|\bar a_t\|^2 - 10\,\kappa_t$$
 
-可见项仅在 $y_t=1$ 时支付；丢失时仅 −0.10 惩罚。
+The visibility term pays only when $y_t=1$; loss incurs only the −0.10 penalty.
 
-#### 传统方法：常速度卡尔曼滤波 + SE(3) 跟踪
+#### Classical method: constant-velocity Kalman filter + SE(3) tracking
 
-- **CV Kalman**：状态 $[p_t, v_t]\in\mathbb{R}^6$，每步预测；仅可见时更新（$R=\sigma^2 I_3$，$\sigma=0.15$ m）。
-- **超时保持**：可见性年龄 > 3 s 时冻结参考点悬停，不搜索。
-- **控制**：复用 SE(3) 级联，加世界系目标速度前馈 $v_d = \hat v_t - (K_X/K_V)(p-\bar p)$。
-- **结构变体**：`pursuit` 不做状态估计，直接使用带噪测量纯追踪；`pid_ema` 用指数滑动平均替代 Kalman 滤波。
+- **CV Kalman**: state $[p_t, v_t]\in\mathbb{R}^6$, predicted each step; updated
+  only when visible ($R=\sigma^2 I_3$, $\sigma=0.15$ m).
+- **Timeout hold**: when visibility age > 3 s, freeze the reference point and
+  hover instead of searching.
+- **Control**: reuse the SE(3) cascade with world-frame target-velocity feedforward
+  $v_d = \hat v_t - (K_X/K_V)(p-\bar p)$.
+- **Structural variants**: `pursuit` performs no state estimation and uses noisy
+  measurements directly; `pid_ema` replaces the Kalman filter with an exponential
+  moving average.
 
-触地或 $\|p\|>30$ m 立即失败；否则在 1200 步超时时按整回合可见比例判定成功，成功不提前截断。
+Ground contact or $\|p\|>30$ m fails immediately; otherwise, at the 1200-step
+timeout, success is judged from the whole-episode visibility fraction, and success
+is not truncated early.
 
 ---
 
-### 2.3 Fixedwing-Waypoints（固定翼航路点导航）
+### 2.3 Fixedwing-Waypoints (fixed-wing waypoint navigation)
 
-**任务**：2.35 kg、1.6 m 翼展无人机从 $(0,0,10)$ m 以 20 m/s 出发，在 20–65 m 球壳内按序访问 4 个航路点（10 m 捕获球），120 s 时限；触地或出 100 m 球失败。
+**Task**: a 2.35 kg, 1.6 m wingspan UAV starts from $(0,0,10)$ m at 20 m/s and
+visits 4 waypoints in order inside a 20–65 m spherical shell (10 m capture
+sphere), with a 120 s limit; ground contact or leaving the 100 m sphere fails.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-**三层速率**：policy 30 Hz → control 120 Hz（`inner_steps=4`）→ physics 240 Hz，每 policy 步 8 物理子步。无内环姿态环，策略直接驱动舵面与油门。
+**Three rates**: policy 30 Hz → control 120 Hz (`inner_steps=4`) → physics
+240 Hz, 8 physics substeps per policy step. There is no inner attitude loop; the
+policy directly drives control surfaces and throttle.
 
-**舵面（240 Hz）**：5 个升力面（左/右副翼、平尾、垂尾、主翼）一阶滞后 $\tau_s=0.05$ s。PyFlyt 叶素升力面模型：有限翼展升力线斜率、30% 襟翼弦比 + 粘性修正 $\eta=0.65$、零升迎角（翼/副翼 $-2^\circ$，尾翼 $0^\circ$）、正/负失速（翼 $+14^\circ/-9^\circ$，尾翼 $\pm9^\circ$）、蒙皮摩擦阻力 $C_{d0}=0.01$。力 $\bar q S(c_l, c_d)$，力矩 $\bar q S c\, c_m$。
+**Control surfaces (240 Hz)**: 5 lifting surfaces (left/right aileron,
+horizontal tail, vertical tail, main wing) with first-order lag $\tau_s=0.05$ s.
+PyFlyt blade-element lifting-surface model: finite-span lift-line slope, 30%
+flap chord ratio + viscous correction $\eta=0.65$, zero-lift angles (wing/aileron
+$-2^\circ$, tail $0^\circ$), positive/negative stall (wing $+14^\circ/-9^\circ$,
+tail $\pm9^\circ$), skin-friction drag $C_{d0}=0.01$. Force
+$\bar q S(c_l, c_d)$, torque $\bar q S c\, c_m$.
 
-**发动机（240 Hz）**：油门一阶滞后 + 零均值乘性噪声 $\xi\sim\mathcal{N}(0,1)$，$\tau_m=0.01$ s。螺旋桨推力 $F=|\theta|\theta\,F_{\max}$，$F_{\max}=18$ N 沿体 $+x$，反扭矩 $F(k_m/k_f)$。高斯样本不在噪声层额外截断。
+**Engine (240 Hz)**: throttle first-order lag + zero-mean multiplicative noise
+$\xi\sim\mathcal{N}(0,1)$, $\tau_m=0.01$ s. Propeller thrust
+$F=|\theta|\theta\,F_{\max}$, $F_{\max}=18$ N along body $+x$, reaction torque
+$F(k_m/k_f)$. Gaussian samples are not additionally truncated at the noise layer.
 
-#### 动作空间
+#### Action space
 
-$a\in[-1,1]^4$：$a_0$ 差动副翼（$\pm30^\circ$），$a_1$ 升降舵 + 方向舵（相反符号，$\pm20^\circ$），$a_2$ 死通道（主翼偏度 0），$a_3$ 油门映射至 $[0,1]$。有效维度 3。
+$a\in[-1,1]^4$: $a_0$ differential aileron ($\pm30^\circ$), $a_1$ elevator +
+rudder (opposite signs, $\pm20^\circ$), $a_2$ dead channel (main-wing camber 0),
+$a_3$ throttle mapped to $[0,1]$. Effective dimension 3.
 
-#### 观测空间与终止（38 维）
+#### Observation space and termination (38 dims)
 
-体角速度(3) + 四元数 `xyzw`(4) + 体速度(3) + 世界位置(3) + 上一动作(4) + 舵面/油门状态(6) + 4 个航路点体系相对位置(12) + 有效标志(4)，共 38 维，未在环境内归一化。120 s / 3600 步内访问全部 4 个航路点为成功；触地或 $\|p\|>100$ m 为失败；其余超时为未完成。
+Body angular rate (3) + quaternion `xyzw` (4) + body velocity (3) + world position
+(3) + previous action (4) + control-surface/throttle state (6) + body-frame
+relative positions of 4 waypoints (12) + validity flags (4), 38 dims, not
+normalized inside the environment. Visiting all 4 waypoints within
+120 s / 3600 steps is success; ground contact or $\|p\|>100$ m is failure; other
+timeouts are incomplete.
 
-#### 参数表
+#### Parameter table
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 质量 / 翼展 | 2.35 kg / 1.6 m |
-| 最大推力 / 电机滞后 | 18 N / 0.01 s |
-| 舵面滞后 $\tau_s$ | 0.05 s |
-| 舵面偏度限（副翼L/R, 平/垂尾, 主翼） | $30^\circ,30^\circ,20^\circ,20^\circ,0^\circ$ |
-| 捕获半径 / 出界半径 | 10 m / 100 m |
-| 航路点球壳 / 高度地板 | $[20,65]$ m / 20 m |
-| 初始状态 | $(0,0,10)$ m，$v_0=(20,0,0)$ m/s |
+| Mass / wingspan | 2.35 kg / 1.6 m |
+| Max thrust / motor lag | 18 N / 0.01 s |
+| Control-surface lag $\tau_s$ | 0.05 s |
+| Surface deflection limits (aileron L/R, tail, main wing) | $30^\circ,30^\circ,20^\circ,20^\circ,0^\circ$ |
+| Capture radius / out-of-bounds radius | 10 m / 100 m |
+| Waypoint shell / altitude floor | $[20,65]$ m / 20 m |
+| Initial state | $(0,0,10)$ m, $v_0=(20,0,0)$ m/s |
 
-#### 奖励
+#### Reward
 
-与 QuadX 同构的势函数伸缩塑形：$\Phi(s) = -(\|p-w_i\| + L(i))$，$r_t = \Phi(s_{t+1})-\Phi(s_t) + 15\,c_t - 10\,\kappa_t$。替换了上游 $1/d$ 塑形（轨道绕行获无界回报）与 $\pm100$ 终端奖励（3600 步下信用分配不可达）。
+The same potential-telescoping shaping as QuadX:
+$\Phi(s) = -(\|p-w_i\| + L(i))$,
+$r_t = \Phi(s_{t+1})-\Phi(s_t) + 15\,c_t - 10\,\kappa_t$. This replaces upstream's
+$1/d$ shaping (which gives unbounded return for orbiting) and $\pm100$ terminal
+rewards (whose credit assignment is unreachable over 3600 steps).
 
-#### 传统方法：L1 横向制导 + TECS 纵向自动驾驶
+#### Classical method: L1 lateral guidance + TECS longitudinal autopilot
 
-- **L1 制导**：距离调度 $L_1 = \text{clip}(k_{L1} d_h + L1_0, L1_{\min}, L1_{\max})$，横向加速度 $a_{\text{lat}} = 2V^2\sin\eta_c / L_1$，转为滚转角指令。含加速失速边界的气动滚转限、终端纯追踪混合、OOB 边界护盾。
-- **TECS**：总能量误差 $\delta_E \to$ 油门（P+I，防饱和放气），能量平衡误差 $\delta_B \to$ 俯仰指令（含协调转弯前馈、欠速保护、超速爬升权衡）。
-- **结构变体**：`pid_cascade` 去除 L1/TECS 制导启发式；`nlgl_tecs` 保留 TECS，将 L1 换成 Park 非线性制导律。
+- **L1 guidance**: distance-scheduled
+  $L_1 = \text{clip}(k_{L1} d_h + L1_0, L1_{\min}, L1_{\max})$, lateral acceleration
+  $a_{\text{lat}} = 2V^2\sin\eta_c / L_1$, converted to a roll command. Includes an
+  aerodynamic roll limit with an accelerated-stall boundary, terminal pure-pursuit
+  blending, and an OOB boundary shield.
+- **TECS**: total-energy error $\delta_E \to$ throttle (P+I, anti-windup bleed),
+  energy-balance error $\delta_B \to$ pitch command (with coordinated-turn
+  feedforward, underspeed protection and overspeed climb trade-off).
+- **Structural variants**: `pid_cascade` removes the L1/TECS guidance heuristics;
+  `nlgl_tecs` keeps TECS and replaces L1 with Park's nonlinear guidance law.
 
 ---
 
-### 2.4 Quadplane-VTOL（倾转旋翼混合无人机航路点）
+### 2.4 Quadplane-VTOL (tilt-rotor hybrid UAV waypoints)
 
-**任务**：2.35 kg 混合无人机（4 旋翼电机 + 固定翼舵面 + 前推螺旋桨）从近悬停（$z=15$ m，$|v|\sim6$ m/s）出发，在 40–75 m 球壳、≥25 m 高度访问 4 个航路点，捕获半径 15 m，出界 120 m，30 s / 1200 步 / 40 Hz。Plant 无显式模式切换，物理本身决定旋翼/气动权限过渡区（~3–12 m/s 体轴速度）。
+**Task**: a 2.35 kg hybrid UAV (4 rotor motors + fixed-wing surfaces + forward
+pusher propeller) starts near hover ($z=15$ m, $|v|\sim6$ m/s), visits 4
+waypoints in a 40–75 m shell at ≥25 m altitude, capture radius 15 m,
+out-of-bounds 120 m, 30 s / 1200 steps / 40 Hz. The plant has no explicit mode
+switch; physics itself determines the rotor/aerodynamic authority transition
+region (~3–12 m/s body-axis speed).
 
-#### 被控对象动力学
+#### Plant dynamics
 
-- **40/120/240 Hz** 三层速率，`inner_steps=3`。
-- **旋翼通道**：与 QuadX 相同的 rate PID（40 Hz policy 指令体角速度 + 总推力）→ X 构型 mixer → 4 电机。
-- **固定翼通道**：与 Fixedwing 相同的 5 升力面叶素模型 + 前推油门（第 5 个油门通道，直接映射至 plant `throttle[:,4]`）。
-- **质量/推力**：2.35 kg，旋翼最大总推力与固定翼 $F_{\max}=18$ N 同量级。
+- **40/120/240 Hz** three rates, `inner_steps=3`.
+- **Rotor channel**: the same rate PID as QuadX (40 Hz policy commands body
+  angular rate + total thrust) → X-configuration mixer → 4 motors.
+- **Fixed-wing channel**: the same 5-surface blade-element model as Fixedwing +
+  forward pusher throttle (a 5th throttle channel mapped directly to plant
+  `throttle[:,4]`).
+- **Mass/thrust**: 2.35 kg; rotor maximum total thrust is on the same order as
+  fixed-wing $F_{\max}=18$ N.
 
-#### 动作空间（8 维）
+#### Action space (8 dims)
 
-| 索引 | 含义 | 范围 |
+| Index | Meaning | Range |
 |---|---|---|
-| a0–a2 | 体角速度指令 (p,q,r) | $\pm\pi$ rad/s |
-| a3 | 四旋翼总推力 | $[0,1]$ |
-| a4–a6 | 固定翼舵面（副翼差动/平尾+垂尾/死主翼） | $[-1,1]$ |
-| a7 | 前推螺旋桨油门 | $[0,1]$ |
+| a0–a2 | body angular-rate command (p,q,r) | $\pm\pi$ rad/s |
+| a3 | quadrotor total thrust | $[0,1]$ |
+| a4–a6 | fixed-wing surfaces (differential aileron/elevator+rudder/dead main wing) | $[-1,1]$ |
+| a7 | forward pusher throttle | $[0,1]$ |
 
-#### 观测空间与终止（42 维）
+#### Observation space and termination (42 dims)
 
-体角速度(3) + 四元数 `xyzw`(4) + 体速度(3) + 世界位置(3) + 上一动作(8) + 5 舵面与 5 电机状态(10) + 4 个航路点体系相对位置(12) + 有效标志(4)，共 42 维，未在环境内归一化。1200 步内访问全部 4 个航路点为成功；触地或 $\|p\|>120$ m 为失败；其余超时为未完成。
+Body angular rate (3) + quaternion `xyzw` (4) + body velocity (3) + world position
+(3) + previous action (8) + 5 surface and 5 motor states (10) + body-frame
+relative positions of 4 waypoints (12) + validity flags (4), 42 dims, not
+normalized inside the environment. Visiting all 4 waypoints within 1200 steps is
+success; ground contact or $\|p\|>120$ m is failure; other timeouts are
+incomplete.
 
-#### 参数表
+#### Parameter table
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 质量 | ~2.35 kg |
+| Mass | ~2.35 kg |
 | policy/control/physics | 40 / 120 / 240 Hz |
-| 捕获半径 / 出界半径 | 15 m / 120 m |
-| 航路点球壳 / 高度地板 | $[40,75]$ m / 25 m |
-| 初始状态 | $z=15$ m，水平速度 6 m/s，水平 |
-| 步数 | 1200 (30 s) |
+| Capture radius / out-of-bounds radius | 15 m / 120 m |
+| Waypoint shell / altitude floor | $[40,75]$ m / 25 m |
+| Initial state | $z=15$ m, horizontal speed 6 m/s, level |
+| Steps | 1200 (30 s) |
 
-#### 奖励
+#### Reward
 
-与 quadx/fixedwing 同构势函数伸缩塑形：$\Phi(s) = -(d_{\text{current}} + L_{\text{remaining}})$，$r_t = \Phi(s_{t+1}) - \Phi(s_t) + 15\cdot\text{reach\_count} - 10\cdot\text{crash}$。接近当前目标时奖励为正。
+The same potential-telescoping shaping as quadx/fixedwing:
+$\Phi(s) = -(d_{\text{current}} + L_{\text{remaining}})$,
+$r_t = \Phi(s_{t+1}) - \Phi(s_t) + 15\cdot\text{reach\_count} - 10\cdot\text{crash}$.
+Reward is positive while approaching the current target.
 
-#### 传统方法：SE(3) 旋翼控制 + 前推螺旋桨
+#### Classical method: SE(3) rotor control + forward pusher
 
-默认 `QuadplaneSE3PusherBaseline` 使用 SE(3) 位置/姿态控制并提供前推油门。结构变体 `hybrid_cascade` 以速度调度混合四旋翼级联 PID 与固定翼通道，`l1_wing` 在高速段采用 L1 横向制导、低速段保留旋翼辅助。三个控制器均已注册；各自性能是否达到任务要求由实验结果判定，不在环境章节预设结论。
-
----
-
-### 2.5 Rocket-Landing（火箭垂直着陆）
-
-**任务**：Falcon-9 级一子级助推器从 400–450 m 高度以 −100 m/s 垂直速度释放，须消横向偏移并停稳于地面垫。主指标为连续停稳 2 秒（40 Hz 下 81 个连续样本）。
-
-#### 被控对象动力学
-
-**三层速率**：policy 40 Hz → control 120 Hz（`inner_steps=3`）→ physics 240 Hz，30 s / 1200 步。
-
-**质量特性**：结构质量 138.2 kg；燃料箱质量每物理步重写为 $f\cdot 410.9$ kg（$f$ 为燃料分数，初始 0.05），初始质量 ≈ 158.7 kg。
-
-**助推器**：可重点火发动机；油门目标 $u\in[0,1]\mapsto 0.39+0.61u$，一阶滞后 $\tau=0.01$ s + 1% 乘性噪声。推力 $T=\text{throttle}\times 7607.0$ N（39% 下限 = 2966.7 N），沿万向节方向作用。双轴万向节限 $\pm5^\circ$，滞后 0.01 s。燃料消耗 1.451 kg/s @ 全油门。
-
-**栅格翼**：4 个升力面（弦 0.5 m，展 0.5 m，$C_{l\alpha}=2\pi$，失速 $\pm20^\circ$，偏度限 $\pm45^\circ$，滞后 0.05 s）。
-
-**体阻力**：$F = -\frac12\rho C_d A |v_{\text{air}}| v_{\text{air}}$，$C_d=(1.16,1.16,2.0)$，$A=(1.7649,1.7649,0.1075)$ m²。
-
-#### 动作空间（7 维）
-
-$(f_x, f_y, f_\psi, \text{ign}, \text{thr}, g_x, g_y)$：栅格翼滚/俯/偏指令、点火（>0.5 触发）、油门（映射 39–100%）、万向节 $x/y$（$\pm5^\circ$）。
-
-#### 观测空间与终止（30 维）
-
-体角速度(3) + 四元数 `xyzw`(4) + 体速度(3) + 世界位置(3) + 上一动作(7) + 栅格翼/点火/燃料/油门/万向节状态(9) + 脚垫接触标志(1)，共 30 维，未在环境内归一化。主成功指标为 30 s 内曾连续停稳 2 s 且未发生致命失败；成功后仍继续仿真至时限。致命接触、地面碰撞或出界立即终止，普通超时不是成功。
-
-#### 参数表
-
-| 参数 | 值 |
-|---|---|
-| 结构质量 / 燃料满质量 | 138.2 kg / 410.9 kg |
-| 初始燃料分数 | 0.05 |
-| 最大推力 / 最小推力比 | 7607 N / 0.39 |
-| 万向节范围 / 滞后 | $\pm5^\circ$ / 0.01 s |
-| 燃料消耗率 | 1.451 kg/s @ 全油门 |
-| 栅格翼 $C_{l\alpha}$ / 失速 / 偏度限 | $2\pi$ / $\pm20^\circ$ / $\pm45^\circ$ |
-| 初始 IC | $x,y\in[-20,20]$ m，$z\in[400,450]$ m，$\phi,\theta,\psi\in[-0.3,0.3]$ rad，$v_0=(0,0,-100)$ m/s |
-| 成功门（停稳 2s） | $\|v\|<0.02$ m/s，$\|\omega\|<0.02$ rad/s，倾角 $<0.1$ rad |
-| 致命门 | 接触速度 $>1.0$ m/s 或自旋 $>0.35$ rad/s |
-
-#### 奖励（密集塑形）
-
-每 policy 步：$r = r_{\text{hover}} + r_{\text{hold}} + r_{\text{lateral}} + r_{\text{descent}} + r_{\text{decel}} + r_{\text{attitude}} + r_{\text{contact}} + r_{\text{corridor}} + r_{\text{success}} + r_{\text{fatal}}$
-
-关键项：悬停成本 −0.3；横向进度 $10(\|p_{xy}^-\|-\|p_{xy}\|)$；走廊惩罚约束下降速度不超过可行剖面 $v_{\text{allow}}(z) = 0.5 + \sqrt{2\cdot 2\cdot z}$；成功奖金 +5000；致命惩罚 −500。
-
-#### 传统方法：ZEM/ZEV 动力下降制导（PDG）
-
-- **中段**：$s\ge25$ m/s 时闭式 ZEM/ZEV 制动，$t_{\text{go}}$ 由恒减速剖面重解，侧向需求限幅至倾斜一致预算。
-- **末段 1**：$s<25$ m/s 时沿虚拟垫（高于实垫 2 m）的最小推力流形制动。
-- **末段 2**：$s\le1.5$ m/s 且 $h\le2$ m 时恒速脉冲伺服，速度滞环切/重点火。
-- **姿态**：PD 倾角环 + 气动力矩前馈，力矩按 TVC 优先、栅格翼补足分配。
-- **结构变体**：`pd_landing` 使用位置/速度 PD；`eguidance` 在中段使用二次多项式 E-guidance 目标。
+The default `QuadplaneSE3PusherBaseline` uses SE(3) position/attitude control and
+provides forward-pusher throttle. The structural variant `hybrid_cascade` uses
+speed-scheduled hybrid quadrotor cascaded PID and fixed-wing channels, and
+`l1_wing` uses L1 lateral guidance at high speed with rotor assist at low speed.
+All three controllers are registered; whether each meets the task requirement is
+decided by experimental results, not preset in the environment chapter.
 
 ---
 
-### 2.6 Missile-Intercept（导弹拦截）
+### 2.5 Rocket-Landing (rocket vertical landing)
 
-**任务**：150 kg 细长体尾控导弹拦截运动学 3-DOF 目标。目标 250 m/s、~4 km 高度，做直线/正弦 weave/水平桶滚；初始距离 2500 m，目标航向锥 $\pm37.5^\circ$，横向过载 7.5 g。近炸引信杀伤半径 15 m。
+**Task**: a Falcon-9-class first-stage booster is released from 400–450 m at a
+−100 m/s vertical velocity and must null lateral offset and settle on the ground
+pad. The primary metric is a continuous 2-second settle (81 consecutive samples
+at 40 Hz).
 
-#### 被控对象动力学
+#### Plant dynamics
 
-**三层速率**：policy 60 Hz → control 120 Hz（`inner_steps=2`）→ physics 240 Hz，15 s / 900 步。
+**Three rates**: policy 40 Hz → control 120 Hz (`inner_steps=3`) → physics
+240 Hz, 30 s / 1200 steps.
 
-**弹体**：150 kg 刚体。轴向体阻力 $F_x = -\frac12\rho C_{d,x}A_x|v_x|v_x$（$C_{d,x}=0.25$，$A_x=0.0314$ m²）。细长体法向力 $F_{\text{lat}} = -\frac12\rho\|v\|A_x C_{n\alpha} v_{\text{lat}}$（$C_{n\alpha}=16$），作用于压心 $x_{\text{cp}}=-0.45$ m（同时产生转向力、weathercock 恢复力矩、旋转阻尼）。合成俯仰/偏航阻尼 $\tau = -c_{mq}\|v\|\omega_{\text{lat}}$（$c_{mq}=4.0$）。
+**Mass properties**: structural mass 138.2 kg; the fuel-tank mass is rewritten
+each physics step as $f\cdot 410.9$ kg ($f$ is the fuel fraction, initially
+0.05), giving an initial mass ≈158.7 kg.
 
-**尾翼**：4 片尾翼在 $x=-1.3$ m（弦 0.45 m，展 0.40 m，$C_{l\alpha}=3.0$，失速 $\pm40^\circ$，偏度限 $\pm35^\circ$，滞后 0.02 s）。
+**Booster**: restartable engine; throttle target
+$u\in[0,1]\mapsto 0.39+0.61u$, first-order lag $\tau=0.01$ s + 1% multiplicative
+noise. Thrust $T=\text{throttle}\times 7607.0$ N (39% floor = 2966.7 N), acting
+along the gimbal direction. Two-axis gimbal limit $\pm5^\circ$, lag 0.01 s. Fuel
+consumption 1.451 kg/s at full throttle.
 
-**rate PID + skid-to-turn mixer**：$k_p=5.0$ 体角速度比例控制，滚转通道减速比 $g=0.01$；fin 指令 $(q_c+g p_c, q_c-g p_c, -r_c-g p_c, -r_c+g p_c)$。
+**Grid fins**: 4 lifting surfaces (chord 0.5 m, span 0.5 m, $C_{l\alpha}=2\pi$,
+stall $\pm20^\circ$, deflection limit $\pm45^\circ$, lag 0.05 s).
 
-**发动机**：自主点火，20 kN 沿体 $+x$ 燃烧 4 s 后滑行，无油门通道。
+**Body drag**: $F = -\frac12\rho C_d A |v_{\text{air}}| v_{\text{air}}$,
+$C_d=(1.16,1.16,2.0)$, $A=(1.7649,1.7649,0.1075)$ m².
 
-#### 动作空间（3 维）
+#### Action space (7 dims)
 
-体角速度指令：滚转 $\pm6.0$ rad/s，俯仰/偏航 $\pm1.0$ rad/s。
+$(f_x, f_y, f_\psi, \text{ign}, \text{thr}, g_x, g_y)$: grid-fin roll/pitch/yaw
+commands, ignition (>0.5 triggers), throttle (maps 39–100%), gimbal $x/y$
+($\pm5^\circ$).
 
-#### 观测空间与终止（34 维）
+#### Observation space and termination (30 dims)
 
-体角速度(3) + 四元数 `xyzw`(4) + 体速度(3) + 世界位置(3) + 上一动作(3) + 尾翼与发动机状态(7) + 目标体系相对位置(3) + 相对速度(3) + LOS 角速度(3) + 闭合速度(1) + 目标速率(1)，共 34 维，未在环境内归一化。距离小于 15 m 即拦截成功并以截断结束；2 s 后越过最近接点且未拦截、触地或 $\|p\|>15$ km 为失败终止；15 s 超时而未命中不算成功。同一内层步命中优先于脱靶。
+Body angular rate (3) + quaternion `xyzw` (4) + body velocity (3) + world position
+(3) + previous action (7) + grid-fin/ignition/fuel/throttle/gimbal state (9) +
+pad-contact flag (1), 30 dims, not normalized inside the environment. Success
+means a continuous 2 s settle within 30 s without a fatal failure; after success
+simulation continues to the limit. Fatal contact, ground collision or
+out-of-bounds terminate immediately; ordinary timeout is not success.
 
-#### 参数表
+#### Parameter table
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 质量 | 150 kg |
-| 轴向阻力 $C_{d,x} A_x$ | 0.25 × 0.0314 m² |
-| 法向力 $C_{n\alpha}$ | 16 |
-| 尾翼 $C_{l\alpha}$ / 失速 / 偏度限 | 3.0 / $\pm40^\circ$ / $\pm35^\circ$ |
-| 助推推力 / 燃烧时间 | 20 kN / 4.0 s |
-| 初始距离 / 航向锥 / 横向过载 | 2500 m / $\pm37.5^\circ$ / 7.5 g |
-| 目标/导弹速度 | 250 / 250 m/s |
-| 杀伤半径 | 15 m |
+| Structural mass / full fuel mass | 138.2 kg / 410.9 kg |
+| Initial fuel fraction | 0.05 |
+| Max thrust / min thrust ratio | 7607 N / 0.39 |
+| Gimbal range / lag | $\pm5^\circ$ / 0.01 s |
+| Fuel consumption rate | 1.451 kg/s at full throttle |
+| Grid-fin $C_{l\alpha}$ / stall / deflection limit | $2\pi$ / $\pm20^\circ$ / $\pm45^\circ$ |
+| Initial IC | $x,y\in[-20,20]$ m, $z\in[400,450]$ m, $\phi,\theta,\psi\in[-0.3,0.3]$ rad, $v_0=(0,0,-100)$ m/s |
+| Success gate (2 s settle) | $\|v\|<0.02$ m/s, $\|\omega\|<0.02$ rad/s, tilt $<0.1$ rad |
+| Fatal gate | contact speed $>1.0$ m/s or spin $>0.35$ rad/s |
 
-#### 奖励
+#### Reward (dense shaping)
+
+Per policy step: $r = r_{\text{hover}} + r_{\text{hold}} + r_{\text{lateral}} + r_{\text{descent}} + r_{\text{decel}} + r_{\text{attitude}} + r_{\text{contact}} + r_{\text{corridor}} + r_{\text{success}} + r_{\text{fatal}}$
+
+Key terms: hover cost −0.3; lateral progress
+$10(\|p_{xy}^-\|-\|p_{xy}\|)$; corridor penalty bounding descent speed by the
+feasible profile $v_{\text{allow}}(z) = 0.5 + \sqrt{2\cdot 2\cdot z}$; success
+bonus +5000; fatal penalty −500.
+
+#### Classical method: ZEM/ZEV powered-descent guidance (PDG)
+
+- **Midcourse**: closed-form ZEM/ZEV braking when $s\ge25$ m/s, with $t_{\text{go}}$
+  re-solved from a constant-deceleration profile and lateral demand clipped to a
+  tilt-consistent budget.
+- **Terminal 1**: minimum-thrust manifold braking along a virtual pad (2 m above
+  the real pad) when $s<25$ m/s.
+- **Terminal 2**: constant-velocity pulse servo when $s\le1.5$ m/s and $h\le2$ m,
+  with velocity hysteresis toggling/re-igniting the engine.
+- **Attitude**: PD tilt loop + aerodynamic torque feedforward, with torque
+  allocated TVC-first and grid fins supplementing.
+- **Structural variants**: `pd_landing` uses position/velocity PD; `eguidance`
+  uses quadratic-polynomial E-guidance targeting in midcourse.
+
+---
+
+### 2.6 Missile-Intercept (missile interception)
+
+**Task**: a 150 kg slender-body tail-controlled missile intercepts a kinematic
+3-DOF target. The target flies at 250 m/s at ~4 km altitude, performing
+straight/sinusoidal weave/horizontal barrel roll; initial range 2500 m, target
+heading cone $\pm37.5^\circ$, lateral overload 7.5 g. Proximity-fuze lethal
+radius 15 m.
+
+#### Plant dynamics
+
+**Three rates**: policy 60 Hz → control 120 Hz (`inner_steps=2`) → physics
+240 Hz, 15 s / 900 steps.
+
+**Airframe**: 150 kg rigid body. Axial body drag
+$F_x = -\frac12\rho C_{d,x}A_x|v_x|v_x$ ($C_{d,x}=0.25$, $A_x=0.0314$ m²).
+Slender-body normal force
+$F_{\text{lat}} = -\frac12\rho\|v\|A_x C_{n\alpha} v_{\text{lat}}$
+($C_{n\alpha}=16$), acting at the center of pressure $x_{\text{cp}}=-0.45$ m
+(generating steering force, weathercock restoring torque and rotational
+damping). Combined pitch/yaw damping
+$\tau = -c_{mq}\|v\|\omega_{\text{lat}}$ ($c_{mq}=4.0$).
+
+**Tail fins**: 4 fins at $x=-1.3$ m (chord 0.45 m, span 0.40 m,
+$C_{l\alpha}=3.0$, stall $\pm40^\circ$, deflection limit $\pm35^\circ$, lag
+0.02 s).
+
+**rate PID + skid-to-turn mixer**: $k_p=5.0$ body angular-rate proportional
+control, roll channel reduction ratio $g=0.01$; fin commands
+$(q_c+g p_c, q_c-g p_c, -r_c-g p_c, -r_c+g p_c)$.
+
+**Engine**: autonomous ignition, 20 kN along body $+x$ for 4 s then coasting;
+no throttle channel.
+
+#### Action space (3 dims)
+
+Body angular-rate commands: roll $\pm6.0$ rad/s, pitch/yaw $\pm1.0$ rad/s.
+
+#### Observation space and termination (34 dims)
+
+Body angular rate (3) + quaternion `xyzw` (4) + body velocity (3) + world position
+(3) + previous action (3) + tail-fin and engine state (7) + body-frame target
+relative position (3) + relative velocity (3) + LOS angular rate (3) + closing
+speed (1) + target speed (1), 34 dims, not normalized inside the environment.
+Range below 15 m is a successful intercept and ends with truncation; passing the
+closest approach by 2 s without intercepting, ground contact or $\|p\|>15$ km is
+failure termination; timeout at 15 s without a hit is not success. A hit in the
+same inner step takes priority over a miss.
+
+#### Parameter table
+
+| Parameter | Value |
+|---|---|
+| Mass | 150 kg |
+| Axial drag $C_{d,x} A_x$ | 0.25 × 0.0314 m² |
+| Normal force $C_{n\alpha}$ | 16 |
+| Tail-fin $C_{l\alpha}$ / stall / deflection limit | 3.0 / $\pm40^\circ$ / $\pm35^\circ$ |
+| Boost thrust / burn time | 20 kN / 4.0 s |
+| Initial range / heading cone / lateral overload | 2500 m / $\pm37.5^\circ$ / 7.5 g |
+| Target/missile speed | 250 / 250 m/s |
+| Lethal radius | 15 m |
+
+#### Reward
 
 $$r_{\text{progress}} = 0.01(d^- - d),\quad r_{\text{align}} = 0.01(\hat v\cdot\hat r),\quad r_{\text{kill}}=+100,\quad r_{\text{miss}}=-10\min(d_{\min}/500,1)$$
 
-对齐项为 PN 一致的密集塑形，不能通过飞离目标刷分。
+The alignment term is PN-consistent dense shaping and cannot be farmed by flying
+away from the target.
 
-#### 传统方法：增广比例导引（APN，N=15）
+#### Classical method: augmented proportional navigation (APN, N=15)
 
-- **LOS 率滤波**：一阶低通 $\alpha=0.8$，终端 $V_c<50$ m/s 时冻结。
-- **APN 律**：$a^{\text{cmd}} = N V_c(\lambda_w\times\hat r_w) + \frac{N}{2}(g - (g\cdot\hat r_w)\hat r_w)$。
-- **skid-to-turn 运动学逆**：$\omega^{\text{cmd}} = (b_x\times a_{\text{lat}})/V$。
-- **结构变体**：`ppn` 为不带前置角的纯追踪，`tpn` 为不带重力增广的真比例导引。
+- **LOS-rate filtering**: first-order low-pass $\alpha=0.8$; frozen when terminal
+  $V_c<50$ m/s.
+- **APN law**: $a^{\text{cmd}} = N V_c(\lambda_w\times\hat r_w) + \frac{N}{2}(g - (g\cdot\hat r_w)\hat r_w)$.
+- **skid-to-turn kinematic inverse**: $\omega^{\text{cmd}} = (b_x\times a_{\text{lat}})/V$.
+- **Structural variants**: `ppn` is pure pursuit without lead; `tpn` is true
+  proportional navigation without gravity augmentation.
 
 ---
 
-### 2.7 Satellite Attitude（CMG 姿态控制）
+### 2.7 Satellite Attitude (CMG attitude control)
 
-**任务**：刚体航天器搭载 $N$ 个单框架控制力矩陀螺（CMG），将姿态从扰动初态机动至随机目标姿态。支持 4-CMG 金字塔与 6-CMG 正交两种构型。30 s / 1200 步 / 40 Hz，纯张量 RK4。
+**Task**: a rigid spacecraft carrying $N$ single-gimbal control moment gyros
+(CMGs) maneuvers from a perturbed initial attitude to a random target attitude.
+Both 4-CMG pyramid and 6-CMG orthogonal configurations are supported. 30 s /
+1200 steps / 40 Hz, pure tensor RK4.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-**转子轴演化**（Rodrigues 旋转）：
+**Rotor-axis evolution** (Rodrigues rotation):
 
 $$r_i(\theta_i) = \cos\theta_i\, r_i(0) + \sin\theta_i\,(g_i\times r_i(0))$$
 
-**刚体+CMG 降阶模型**：
+**Rigid body + CMG reduced-order model**:
 
 $$I\dot\omega = -\omega\times(I\omega) - \omega\times\big(h\sum_i r_i\big) - h\sum_i \dot\theta_i(g_i\times r_i)$$
 
 $$\dot q = \tfrac12 q\otimes(0,\omega),\quad \dot\theta = \delta$$
 
-经典 RK4 积分，$\mathrm{d}t=2.5$ ms × 10 子步/控制步。四元数每子步重归一化，框架角 wrap 至 $[-\pi,\pi)$。
+Classical RK4 integration, $\mathrm{d}t=2.5$ ms × 10 substeps/control step.
+Quaternions are renormalized each substep, and gimbal angles wrap to
+$[-\pi,\pi)$.
 
-**4-CMG 金字塔**：$I=\text{diag}(75,60,113)$ kg·m²，转子惯量 0.2 kg·m² @ 100 rad/s，$h=20$ kg·m²/s，偏置角 $\beta=\arctan\sqrt{2}$。
+**4-CMG pyramid**: $I=\text{diag}(75,60,113)$ kg·m², rotor inertia 0.2 kg·m² at
+100 rad/s, $h=20$ kg·m²/s, skew angle $\beta=\arctan\sqrt{2}$.
 
-**6-CMG 正交**：$I=\text{diag}(0.055,0.055,0.085)$ kg·m²，转子 @ 200 rad/s，$h=0.0125$。
+**6-CMG orthogonal**: $I=\text{diag}(0.055,0.055,0.085)$ kg·m², rotor at
+200 rad/s, $h=0.0125$.
 
-#### 动作空间
+#### Action space
 
-$u\in[-1,1]^N$，$\delta = 3.0\cdot u$ rad/s 每框架。
+$u\in[-1,1]^N$, $\delta = 3.0\cdot u$ rad/s per gimbal.
 
-#### 观测空间（$14+3N$ 维）
+#### Observation space ($14+3N$ dims)
 
-四元数 `wxyz`(4) + 姿态误差对数(3) + 体角速度(3) + $\sin\theta(N)$ + $\cos\theta(N)$ + $\dot\theta(N)$ + 归一化可操纵性 $m(J)=\sqrt{\det(JJ^\top)}/h^3$(1) + 阻尼分配特征(3)。
+Quaternion `wxyz` (4) + attitude-error logarithm (3) + body angular rate (3) +
+$\sin\theta(N)$ + $\cos\theta(N)$ + $\dot\theta(N)$ + normalized manipulability
+$m(J)=\sqrt{\det(JJ^\top)}/h^3$ (1) + damped-allocation features (3).
 
-#### 奖励
+#### Reward
 
-势函数伸缩式，带两个平滑门：
+Potential telescoping with two smooth gates:
 
 $$\Phi(s) = 30\,e + 70\,e\,g_n(e) + \frac{30\|\omega\|^2}{2\cdot 1.0}g(e) + \frac{0.5}{m(J)+0.5}$$
 
 $$r_t = \Phi(s_t) - \Phi(s_{t+1}) + \mathbb{1}[\text{success}]\cdot 1.0 - \mathbb{1}[\text{fail}]\cdot 10.0 - 0.0005\sum_i\delta_i^2$$
 
-$e<0.5$ rad 时 $g_n$ 门将误差斜率陡化至 ~100；$e<0.8$ rad 时 $g$ 门对快速到达征收刹车项。奇异项软分母避免 $1/m(J)$ 尖峰。
+$g_n$ steepens the error slope to ~100 when $e<0.5$ rad; $g$ charges a braking
+term for fast arrival when $e<0.8$ rad. The singular term's soft denominator
+avoids $1/m(J)$ spikes.
 
-#### 成功/终止
+#### Success/termination
 
-成功：$e<0.05$ rad 且 $\|\omega\|<0.02$ rad/s，立即截断并发成功奖励。失败：$\|\omega\|>10$ rad/s。超时：1200 步。初始目标姿态在 SO(3) 上均匀采样，初始小角速度扰动尺度为 `reset_noise_scale=0.01`；改变该尺度或 CMG 构型属于训练/测试分布配置，必须写入结果口径。
+Success: $e<0.05$ rad and $\|\omega\|<0.02$ rad/s, immediately truncated with a
+success reward. Failure: $\|\omega\|>10$ rad/s. Timeout: 1200 steps. The initial
+target attitude is sampled uniformly on SO(3), and the initial small angular-rate
+perturbation scale is `reset_noise_scale=0.01`; changing this scale or the CMG
+configuration is a training/test distribution setting and must be recorded in the
+result conventions.
 
-#### 传统方法：四元数 PD + Schaub-Junkins 阻尼伪逆 CMG 转向
+#### Classical method: quaternion PD + Schaub–Junkins damped pseudo-inverse CMG steering
 
-- **PD + 精确前馈**：$\dot\omega_d = k_p e - k_d\omega$，$\tau_{\text{cmd}} = I\dot\omega_d + \omega\times(I\omega) + \omega\times h_\Sigma$。
-- **奇异鲁棒转向**：$\dot\theta = -\frac{1}{\kappa}J(J^\top J + \lambda^2 I_3)^{-1}\tau_{\text{cmd}}$，$\lambda = \Omega(\lambda_0 + 0.15 e^{-3m})$，随可操纵性坍缩自适应增大阻尼。
-- **结构变体**：`quat_pd_mp_pinv_cmg` 使用普通 Moore–Penrose 伪逆；`quat_pd_wpinv_cmg` 使用加权伪逆并加入零空间避奇异项。
+- **PD + exact feedforward**: $\dot\omega_d = k_p e - k_d\omega$,
+  $\tau_{\text{cmd}} = I\dot\omega_d + \omega\times(I\omega) + \omega\times h_\Sigma$.
+- **Singularity-robust steering**:
+  $\dot\theta = -\frac{1}{\kappa}J(J^\top J + \lambda^2 I_3)^{-1}\tau_{\text{cmd}}$,
+  $\lambda = \Omega(\lambda_0 + 0.15 e^{-3m})$, with damping increasing as
+  manipulability collapses.
+- **Structural variants**: `quat_pd_mp_pinv_cmg` uses an ordinary Moore–Penrose
+  pseudo-inverse; `quat_pd_wpinv_cmg` uses a weighted pseudo-inverse with a
+  null-space singularity-avoidance term.
 
 ---
 
-### 2.8 Low-Thrust Transfer（低推力近地点抬高）
+### 2.8 Low-Thrust Transfer (low-thrust perigee raising)
 
-**任务**：100 kg MEO 卫星搭载三轴正交推力对（10 mN/轴，$I_{sp}=4000$ s EP），在 166 步 × 300 s（~13.8 h，约 5 圈）内抬高初始 $a=10000$ km、$e=0.15$ 轨道的近地点，保持远地点不变且省燃料。
+**Task**: a 100 kg MEO satellite carrying three orthogonal thrust pairs
+(10 mN/axis, $I_{sp}=4000$ s EP) raises the perigee of an initial
+$a=10000$ km, $e=0.15$ orbit within 166 steps × 300 s (~13.8 h, about 5 orbits),
+keeping apogee fixed while saving fuel.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-二体点质量引力 + 恒定推力，齐奥尔科夫斯基质量消耗：
+Two-body point-mass gravity + constant thrust, Tsiolkovsky mass consumption:
 
 $$\dot r = v,\quad \dot v = -\frac{\mu}{\|r\|^3}r + \frac{f_{\max}}{m}u,\quad \dot m = -\frac{f_{\max}\|u\|_1}{I_{sp} g_0}$$
 
-$\mu=3.986004418\times10^{14}$ m³/s²，$g_0=9.80665$ m/s²。7 维状态 $[r,v,m]$ 经典 RK4 积分，$h=10$ s × 30 子步/控制步。
+$\mu=3.986004418\times10^{14}$ m³/s², $g_0=9.80665$ m/s². The 7-dimensional state
+$[r,v,m]$ is integrated with classical RK4, $h=10$ s × 30 substeps/control step.
 
-**初始状态**：由固定根数（$a_0=10^7$ m，$e_0=0.15$，$i=60^\circ$，$\Omega=120^\circ$，$\omega=240^\circ$）+ 采样平近点角 $M_0\sim U(-\pi,\pi)$，经 8 次牛顿迭代解 Kepler 方程得笛卡尔态。$r_{p0}=8.5\times10^6$ m，$r_{a0}=1.15\times10^7$ m。
+**Initial state**: from fixed elements ($a_0=10^7$ m, $e_0=0.15$, $i=60^\circ$,
+$\Omega=120^\circ$, $\omega=240^\circ$) + sampled mean anomaly
+$M_0\sim U(-\pi,\pi)$, converted to Cartesian state by 8 Newton iterations of
+Kepler's equation. $r_{p0}=8.5\times10^6$ m, $r_{a0}=1.15\times10^7$ m.
 
-#### 动作空间（3 维）
+#### Action space (3 dims)
 
-$u\in[-1,1]^3$，每轴推力 $f_{\max}u_i$；全轴满偏全程约 5 m/s $\Delta v$。
+$u\in[-1,1]^3$, thrust per axis $f_{\max}u_i$; full-axis full-deflection over the
+whole episode is about 5 m/s $\Delta v$.
 
-#### 观测空间（8 维）
+#### Observation space (8 dims)
 
-$[$ 已用时间 $t$，位置 $r$，速度 $v$，剩余质量 $m]$，未归一化。
+$[$ elapsed time $t$, position $r$, velocity $v$, remaining mass $m]$, not
+normalized.
 
-#### 奖励
+#### Reward
 
-任务级稀疏终端奖励：
+Task-level sparse terminal reward:
 
 $$R = 10^{-4}\big(-|\Delta r_a| + \Delta r_p + 2\times10^5\,\Delta m\big)$$
 
-训练奖励为其精确势函数分解：$\Phi(s) = 10^{-4}(-|r_a-r_{a0}| + (r_p-r_{p0}) + 2\times10^5(m-m_0))$，$r_t = \Phi(s_{t+1})-\Phi(s_t)$。每步即时信用：近地点附近顺向点火抬高 $r_p$（+），他处点火增大 $|r_a-r_{a0}|$ 或耗燃料（−）。
+The training reward is its exact potential decomposition:
+$\Phi(s) = 10^{-4}(-|r_a-r_{a0}| + (r_p-r_{p0}) + 2\times10^5(m-m_0))$,
+$r_t = \Phi(s_{t+1})-\Phi(s_t)$. Immediate per-step credit: prograde burn near
+perigee raises $r_p$ (+), while burns elsewhere increase $|r_a-r_{a0}|$ or consume
+fuel (−).
 
-#### 成功/终止
+#### Success/termination
 
-成功：时限 166 步时 $R>0$。防御终止：撞击 $r_p<6378137$ m、逃逸 $r_a\le0$、燃料耗尽 $m\le1$ kg。
+Success: $R>0$ at the 166-step limit. Defensive termination: impact
+$r_p<6378137$ m, escape $r_a\le0$, fuel exhaustion $m\le1$ kg.
 
-#### 传统方法：Gauss 一步贪心切向制导
+#### Classical method: Gauss one-step greedy tangential guidance
 
-- **密切根数恢复**：从观测态解 $h,a,\mathbf{e},p,\nu$，切向方向 $\hat t = \hat h\times\hat r$。
-- **Gauss 变分方程**：一阶每步 $\Delta a,\Delta e,\Delta r_p,\Delta r_a,\Delta m$。
-- **贪心决策**：令本步非负燃料消耗量 $\Delta m_{\text{burn}}\ge0$，在 {滑行, 顺向切向点火, 逆向切向点火} 中最大化单步净目标增益 $G = \Delta r_p - (|r_a+\Delta r_a-r_{a0}|-d_0) - 2\times10^5\Delta m_{\text{burn}}$。这里使用正的消耗量计费，与终端奖励中的 $2\times10^5\Delta m$（$\Delta m\le0$）完全同号，不会奖励耗油。
-- **结构变体**：`q_law` 使用 Petropoulos Lyapunov 邻近商制导；`edelbaum` 使用带 $\Delta v$ 预算的切向点火弧。
+- **Osculating element recovery**: solve $h,a,\mathbf{e},p,\nu$ from the observed
+  state; tangential direction $\hat t = \hat h\times\hat r$.
+- **Gauss variational equations**: first-order per-step
+  $\Delta a,\Delta e,\Delta r_p,\Delta r_a,\Delta m$.
+- **Greedy decision**: let the step's nonnegative fuel consumption be
+  $\Delta m_{\text{burn}}\ge0$, and maximize the single-step net objective gain
+  $G = \Delta r_p - (|r_a+\Delta r_a-r_{a0}|-d_0) - 2\times10^5\Delta m_{\text{burn}}$
+  among {coast, prograde tangential burn, retrograde tangential burn}. This
+  charges positive consumption, with exactly the same sign as the terminal
+  reward's $2\times10^5\Delta m$ ($\Delta m\le0$), so it never rewards fuel use.
+- **Structural variants**: `q_law` uses Petropoulos Lyapunov proximity-quotient
+  guidance; `edelbaum` uses tangential burn arcs with a $\Delta v$ budget.
 
 ---
 
-### 2.9 Docking（对接）
+### 2.9 Docking
 
-**任务**：追踪器在 400 km 圆轨道上距目标 60–120 m 处，须接近至 1 m 内且终端相对速度 < 0.1 m/s，不超过 200 m 距离、2 kg 推进剂预算。500 步 / ~8.3 min / 1 s 步。
+**Task**: the chaser at 60–120 m from the target in a 400 km circular orbit must
+approach within 1 m with terminal relative speed < 0.1 m/s, without exceeding
+200 m range or a 2 kg propellant budget. 500 steps / ~8.3 min / 1 s step.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-Clohessy-Wiltshire-Hill（CWH）线性化相对运动方程（LVLH 系，$x$ 径向向外，$y$ 沿迹向，$z$ 交轨向）：
+Clohessy–Wiltshire–Hill (CWH) linearized relative-motion equations (LVLH frame,
+$x$ radial outward, $y$ along-track, $z$ cross-track):
 
 $$\ddot x = 3n^2 x + 2n\dot y + F_x/m,\quad \ddot y = -2n\dot x + F_y/m,\quad \ddot z = -n^2 z + F_z/m$$
 
-$n=\sqrt{\mu/a^3}=1.1314\times10^{-3}$ rad/s（$a=6.778\times10^6$ m，400 km 圆轨）。
+$n=\sqrt{\mu/a^3}=1.1314\times10^{-3}$ rad/s ($a=6.778\times10^6$ m, 400 km
+circular orbit).
 
-**辛 Euler 积分**（速度先更新）：
+**Symplectic Euler integration** (velocity updated first):
 
 $$v_{t+1} = v_t + \Delta t(G p_t + H v_t + F_t/m),\quad p_{t+1} = p_t + \Delta t\,v_{t+1}$$
 
-等效离散线性映射 $s_{t+1} = A_d s_t + B_d F_t$，$\Delta t=1$ s。推进剂 $\Delta f_t = \|F_t\|\Delta t/(I_{sp} g_0)$，$I_{sp}=300$ s。
+Equivalent discrete linear map $s_{t+1} = A_d s_t + B_d F_t$, $\Delta t=1$ s.
+Propellant $\Delta f_t = \|F_t\|\Delta t/(I_{sp} g_0)$, $I_{sp}=300$ s.
 
-#### 动作空间（3 维）
+#### Action space (3 dims)
 
-$a\in[-1,1]^3$，$F = F_{\max}\cdot a$，$F_{\max}=10$ N/轴，$m=500$ kg，$a_{\max}=0.02$ m/s²。
+$a\in[-1,1]^3$, $F = F_{\max}\cdot a$, $F_{\max}=10$ N/axis, $m=500$ kg,
+$a_{\max}=0.02$ m/s².
 
-#### 观测空间与终止（6 维）
+#### Observation space and termination (6 dims)
 
-LVLH 相对位置(3) + 相对速度(3)，共 6 维，`float32`、未归一化。位置和速度方向的初始向量分别在单位球面均匀采样，距离与速度幅值在参数表区间内采样。同时满足成功门且无违规即成功截断；距离越界或燃料耗尽为失败终止；500 步超时未达目标不算成功。终步违规优先于成功。
+LVLH relative position (3) + relative velocity (3), 6 dims, `float32`, not
+normalized. Initial position and velocity directions are sampled uniformly on the
+unit sphere; distance and speed magnitudes are sampled within the parameter
+table ranges. Success is truncated when the success gate is met with no
+violation; range violation or fuel exhaustion is failure termination; timeout at
+500 steps without reaching the goal is not success. A terminal-step violation
+takes priority over success.
 
-#### 参数表
+#### Parameter table
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 轨道高度 / 半长轴 | 400 km / $6.778\times10^6$ m |
-| 平均运动 $n$ | $1.1314\times10^{-3}$ rad/s |
-| 追踪器质量 / 单轴推力 | 500 kg / 10 N |
+| Orbit altitude / semi-major axis | 400 km / $6.778\times10^6$ m |
+| Mean motion $n$ | $1.1314\times10^{-3}$ rad/s |
+| Chaser mass / per-axis thrust | 500 kg / 10 N |
 | $I_{sp}$ / $g_0$ | 300 s / 9.80665 m/s² |
-| 初始距离 / 初始速度 | $[60,120]$ m / $[0,0.5]$ m/s |
-| 成功门 | $\|p\|<1$ m 且 $\|v\|<0.1$ m/s |
-| 距离失败 / 燃料预算 | 200 m / 2 kg |
-| 步数 / $\Delta t$ | 500 / 1 s |
+| Initial range / initial speed | $[60,120]$ m / $[0,0.5]$ m/s |
+| Success gate | $\|p\|<1$ m and $\|v\|<0.1$ m/s |
+| Range failure / fuel budget | 200 m / 2 kg |
+| Steps / $\Delta t$ | 500 / 1 s |
 
-#### 奖励
+#### Reward
 
-势函数伸缩式，势函数含制动距离增广：
+Potential telescoping with a braking-distance augmentation:
 
 $$\Phi(s) = -\frac{\|p\| + \|v\|^2/(2a_{\text{ref}})}{d_{\text{norm}}},\quad a_{\text{ref}}=0.012\text{ m/s}^2,\ d_{\text{norm}}=100\text{ m}$$
 
 $$r_t = w(\Phi(s_{t+1})-\Phi(s_t)) - \gamma\frac{\|F_t\|}{F_{\max}},\quad w=100,\ \gamma=0.01$$
 
-成功终端奖 +100，违规惩罚 −100。
+Success terminal reward +100, violation penalty −100.
 
-#### 传统方法：精确辛离散 CWH LQR + 约束层
+#### Classical method: exactly symplectic-discretized CWH LQR + constraint layer
 
-- **精确离散化**：设计模型 $A_d,B_d$ 与 plant 的辛 Euler 逐位一致，零离散化误差。
-- **Riccati 增益**：Bryson 归一化 $Q=\text{diag}(1,1,1,300,300,300)$，$R=(0.35 a_{\max})^{-2}I_3$。
-- **约束层**：①距离走廊护盾（停车增广距离 > 0.95·range_fail 时全力制动）；②终端捕获网（$\|p\|<2$ m 且接近速度超限时制动）；③燃料降额（$\hat f>0.75 f_0$ 时限幅）。
-- **结构变体**：`pole_placement` 使用无附加约束层的 CWH 极点配置；`zem_zev` 使用递推重解的单脉冲 ZEM/ZEV 制导及距离/燃料保护。
+- **Exact discretization**: design model $A_d,B_d$ is bit-identical to the
+  plant's symplectic Euler, with zero discretization error.
+- **Riccati gain**: Bryson normalization
+  $Q=\text{diag}(1,1,1,300,300,300)$, $R=(0.35 a_{\max})^{-2}I_3$.
+- **Constraint layer**: ① range-corridor shield (full braking when stopping
+  augmented distance > 0.95·range_fail); ② terminal capture net (brake when
+  $\|p\|<2$ m and closing speed exceeds the limit); ③ fuel derating (clip when
+  $\hat f>0.75 f_0$).
+- **Structural variants**: `pole_placement` uses CWH pole placement without the
+  extra constraint layer; `zem_zev` uses receding-horizon single-impulse ZEM/ZEV
+  guidance with range/fuel protection.
 
 ---
 
-### 2.10 Rendezvous（交会）
+### 2.10 Rendezvous
 
-**任务**：追踪器距目标 1000–1500 m，须接近至 10 m 内且终端速度 < 0.5 m/s，避开 5 m keep-out 球，不超 2000 m、4 kg 燃料。1000 步 / ~16.7 min / 1 s。
+**Task**: the chaser at 1000–1500 m from the target must approach within 10 m
+with terminal speed < 0.5 m/s, avoiding the 5 m keep-out sphere, without exceeding
+2000 m or 4 kg fuel. 1000 steps / ~16.7 min / 1 s.
 
-#### 被控对象动力学
+#### Plant dynamics
 
-与对接相同的 CWH 方程 + 辛 Euler 积分（$\Delta t=1$ s）。保持点 $\rho_h=9$ m（在 5 m keep-out 与 10 m 成功球之间）。
+The same CWH equations + symplectic Euler integration as docking ($\Delta t=1$ s).
+Hold point $\rho_h=9$ m (between the 5 m keep-out and 10 m success sphere).
 
-#### 动作空间（3 维）
+#### Action space (3 dims)
 
-同对接：$a\in[-1,1]^3$，$F=F_{\max}a$，$F_{\max}=10$ N，$m=500$ kg。
+Same as docking: $a\in[-1,1]^3$, $F=F_{\max}a$, $F_{\max}=10$ N, $m=500$ kg.
 
-#### 观测空间与终止（6 维）
+#### Observation space and termination (6 dims)
 
-与 Docking 相同，为 LVLH 相对位置(3) + 相对速度(3)，共 6 维，未归一化。满足成功门且不在 keep-out、距离或燃料违规状态即成功截断；进入 keep-out、超过 2000 m 或耗尽 4 kg 燃料为失败；1000 步超时未达目标不算成功。
+As in Docking: LVLH relative position (3) + relative velocity (3), 6 dims, not
+normalized. Success is truncated when the success gate is met and no keep-out,
+range or fuel violation is active; entering keep-out, exceeding 2000 m or
+exhausting 4 kg fuel is failure; timeout at 1000 steps without reaching the goal
+is not success.
 
-#### 参数表
+#### Parameter table
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 初始距离 / 初始速度 | $[1000,1500]$ m / $[0,1]$ m/s |
-| 成功门 | $\|p\|<10$ m 且 $\|v\|<0.5$ m/s |
-| keep-out / 距离失败 | 5 m / 2000 m |
-| 燃料预算 | 4 kg |
-| 步数 / $\Delta t$ | 1000 / 1 s |
+| Initial range / initial speed | $[1000,1500]$ m / $[0,1]$ m/s |
+| Success gate | $\|p\|<10$ m and $\|v\|<0.5$ m/s |
+| keep-out / range failure | 5 m / 2000 m |
+| Fuel budget | 4 kg |
+| Steps / $\Delta t$ | 1000 / 1 s |
 
-#### 奖励
+#### Reward
 
-与对接同构势函数塑形，$d_{\text{norm}}=d_0$（每回合初始距离自适应归一化），$a_{\text{ref}}=0.1$ m/s²。终端奖 +20，违规 −20。
+The same potential shaping as docking, $d_{\text{norm}}=d_0$ (adapted per
+episode to the initial range), $a_{\text{ref}}=0.1$ m/s². Terminal reward +20,
+violation −20.
 
-#### 终止优先级
+#### Termination priority
 
-违规 > 成功（keep-out 球在成功球内部，无此优先级则低速冲入 keep-out 会被误计为成功）。
+Violation > success (the keep-out sphere lies inside the success sphere; without
+this priority a low-speed entry into keep-out would be miscounted as success).
 
-#### 传统方法：递推重解两脉冲 CWH ZEM/ZEV 制导
+#### Classical method: recursively re-solved two-impulse CWH ZEM/ZEV guidance
 
-- **精确离散 STM**：$\Phi(T)=\exp(\mathcal{L}T)$，$\mathcal{L}=\log(A_d)/\Delta t$，无滑行弧模型误差。
-- **保持点**：锁定在初始 LOS 上 $\rho_h=9$ m 处。
-- **两脉冲解**：$\Delta v_1 = \Phi_{rv}^{-1}\text{ZEM}$，$\Delta v_2 = \text{ZEV} - \Phi_{vv}\Delta v_1$，精确满足 $r(T)=r_f, v(T)=0$。
-- **可行性棘轮**：燃烧持续时间不 fit 则延长 $T_{\text{arr}}$；超上限则降级为速度置零。
-- **OGL 第一步**：$a = 6\,\text{ZEM}/T_{\text{go}}^2 - 2\,\text{ZEV}/T_{\text{go}}$。
-- **结构变体**：`cwh_pd` 使用无约束层的 CWH 补偿 PD；`glideslope` 沿初始 LOS 使用距离—速率制动走廊。
+- **Exact discrete STM**: $\Phi(T)=\exp(\mathcal{L}T)$,
+  $\mathcal{L}=\log(A_d)/\Delta t$, with no coast-arc model error.
+- **Hold point**: locked on the initial LOS at $\rho_h=9$ m.
+- **Two-impulse solution**: $\Delta v_1 = \Phi_{rv}^{-1}\text{ZEM}$,
+  $\Delta v_2 = \text{ZEV} - \Phi_{vv}\Delta v_1$, exactly satisfying
+  $r(T)=r_f, v(T)=0$.
+- **Feasibility ratchet**: extend $T_{\text{arr}}$ if the burn duration does not
+  fit; if above the cap, degrade to velocity nulling.
+- **OGL first step**: $a = 6\,\text{ZEM}/T_{\text{go}}^2 - 2\,\text{ZEV}/T_{\text{go}}$.
+- **Structural variants**: `cwh_pd` uses CWH compensated PD without a constraint
+  layer; `glideslope` uses a range–rate braking corridor along the initial LOS.
 
 ---
 
-## 3. 学习算法
+## 3. Learning algorithms
 
-benchmark 提供一个完整的学习算法体系，分为三类：(1) 端到端 RL（PPO），(2) 模仿学习 warm-start（BC → PPO），(3) 围绕传统控制器的两种 RL 范式——**residual RL**（学习动作残差）与**增益调度 RL**（学习控制器增益）。后两者均不修改任务环境的奖励、成功判据或终止条件，传统控制器作为 frozen prior 参与训练。
+The benchmark provides a complete learning-algorithm suite in three categories:
+(1) end-to-end RL (PPO), (2) imitation-learning warm-start (BC → PPO), and
+(3) two RL paradigms around classical controllers — **residual RL** (learning
+action residuals) and **gain-scheduling RL** (learning controller gains). Neither
+of the latter changes the task reward, success criterion or termination
+conditions; the classical controller participates as a frozen prior.
 
-### 3.1 PPO（rsl-rl）
+### 3.1 PPO (rsl-rl)
 
-- 2×128 tanh MLP，rsl-rl `EmpiricalNormalization`，clipped PPO。
-- **Actor 默认使用 `BetaDistribution`**（`action_range=(-1,1)`）：MLP 输出 $[2, A]$ 的 $\alpha,\beta$ 参数，经 $\text{softplus}(\cdot)+1$ 后采样 $Beta(\alpha,\beta)$，线性 rescale 至 $[-1,1]$。动作天然有界，log_prob 含线性 rescale 的 Jacobian 修正。选 Beta 而非 tanh-Gaussian 的理由：① KL 散度有闭式（仓库的 `KLAnchorPPO` 与 `desired_kl` 自适应 LR 依赖准确的 `kl_divergence`）；② 无 tanh 的 $\log(1-a^2)$ 边界惩罚，不抑制打满执行器的动作；③ rsl-rl 原生支持。可通过 `build_cfg(distribution="gaussian")` 切回无界高斯。
-- 可选 warmup-cosine LR 调度（floor 1.5e-4），保证跨算法比较非调度伪影。
-- 参考训练配置：1024 envs × 1000 updates，3 seeds {7,13,21}；这只是可复现的默认实验口径，不是算法定义或跨硬件硬约束。正式结果须同时给出每 update 的 rollout 长度、总环境交互步数与实际种子列表。
+- 2×128 tanh MLP, rsl-rl `EmpiricalNormalization`, clipped PPO.
+- **Actor uses `BetaDistribution` by default** (`action_range=(-1,1)`): the MLP
+  outputs $[2, A]$ $\alpha,\beta$ parameters, samples $Beta(\alpha,\beta)$ after
+  $\text{softplus}(\cdot)+1$, and linearly rescales to $[-1,1]$. Actions are
+  naturally bounded, and log_prob includes the Jacobian correction of the linear
+  rescale. Why Beta rather than tanh-Gaussian: ① KL divergence has a closed form
+  (the repository's `KLAnchorPPO` and `desired_kl` adaptive LR rely on an accurate
+  `kl_divergence`); ② no tanh $\log(1-a^2)$ boundary penalty suppressing
+  full-actuator actions; ③ native rsl-rl support. `build_cfg(distribution="gaussian")`
+  switches back to unbounded Gaussian.
+- Optional warmup-cosine LR schedule (floor 1.5e-4), ensuring cross-algorithm
+  comparisons are not schedule artifacts.
+- Reference training configuration: 1024 envs × 1000 updates, 3 seeds
+  {7,13,21}; this is only a reproducible default experimental convention, not an
+  algorithm definition or a hard cross-hardware constraint. Formal results must
+  report per-update rollout length, total environment interaction steps and the
+  actual seed list.
 
-### 3.2 BC Warm-Start（模仿学习 + PPO 微调）
+### 3.2 BC Warm-Start (imitation learning + PPO fine-tuning)
 
-- 从传统控制器采集行为克隆数据，预训练 actor/critic，再接入 PPO 训练。
-- BC 成本独立报告，不摊入 RL 训练预算。
+- Collect behavior-cloning data from the classical controller, pretrain the
+  actor/critic, then continue with PPO training.
+- BC cost is reported separately and is not charged to the RL training budget.
 
-### 3.3 Residual RL（动作残差学习）
+### 3.3 Residual RL (action residual learning)
 
-**核心思想**：策略不直接输出环境动作，而是输出叠加在传统控制器标称动作之上的**残差**，以有界权限修正标称动作。
+**Core idea**: the policy does not output environment actions directly; it
+outputs a **residual** added to the classical controller's nominal action, correcting
+the nominal action with bounded authority.
 
-**组合规则**（`ResidualVecEnv`，`algorithms/residual/residual_env.py`）：
+**Combination rule** (`ResidualVecEnv`, `algorithms/residual/residual_env.py`):
 
 $$u_{\text{policy}}\in[-1,1]\;\xrightarrow{\text{clamp}\cdot\text{limit}}\; r\in[-\text{limit},\text{limit}],\quad a^{\text{cmd}} = a^{\text{nominal}} + r,\quad a = \text{clamp}(a^{\text{cmd}}, -c, c)$$
 
-说明：PPO actor 默认 `BetaDistribution`，输出已在 $[-1,1]$，因此残差默认走 `residual_squash='identity'$ 分支（`u.clamp(-1,1)\cdot\text{limit}$），无需 tanh。PPO 的 log 概率在 Beta 采样变量上计算，clamp 与最终 clamp 为确定性动作映射，不影响 PPO ratio。
+Note: the PPO actor's default `BetaDistribution` already outputs in $[-1,1]$, so
+the residual defaults to the `residual_squash='identity'` branch
+(`u.clamp(-1,1)\cdot\text{limit}`), with no tanh needed. PPO log-probabilities are
+computed on the Beta sample variable; the clamp and final clamp are deterministic
+action mappings and do not affect the PPO ratio.
 
-- **算法适配**：若切回无界 Gaussian PPO，应改用 `residual_squash='tanh'$（`tanh(u)\cdot\text{limit}$）。
+- **Algorithm adaptation**: if switching back to unbounded Gaussian PPO, use
+  `residual_squash='tanh'` (`tanh(u)\cdot\text{limit}`).
 
-- **权限控制**：每通道独立 `residual_limit` 或 `residual_rho`（占动作空间宽度的比例），上限不超过半通道宽度。
-- **零初始化**：actor 末层线性权重/偏置置零，原始分布参数经 $\text{softplus}(0)+1\approx1.69$ 得到对称 Beta 分布，其归一化均值动作对应零残差。因此**确定性均值动作**下，未训练策略精确复现传统控制器；训练时随机采样仍产生非零探索残差，不能把均值轨迹与随机 rollout 混为一谈。
-- **诊断**：每步记录残差均值/RMS/最大值、标称与组合动作饱和率、残差对冲标称比例、组合裁剪率。
-- **可选机制**：
-  - **success-gated 权限课程** (`success_gated_authority_curriculum`)：从 1% 权限起步，仅当训练成功率 ≥ 阈值且 episode 数足够时按步长递增权限，上限 100%。
-  - **phase gate**：根据观测中某分量的范数（如终端接近程度）对权限做 sigmoid 增益调制。
+- **Authority control**: per-channel `residual_limit` or `residual_rho` (fraction
+  of the action-space width), capped at no more than half the channel width.
+- **Zero initialization**: the actor's final linear weight/bias are zeroed; the
+  raw distribution parameters give $\text{softplus}(0)+1\approx1.69$, a symmetric
+  Beta whose normalized mean action is zero residual. Therefore, under
+  **deterministic mean actions**, an untrained policy exactly reproduces the
+  classical controller; during training, random sampling still produces nonzero
+  exploratory residuals, so mean trajectories and stochastic rollouts must not be
+  conflated.
+- **Diagnostics**: per-step residual mean/RMS/max, nominal and combined action
+  saturation rates, residual fraction canceling the nominal action, and combined
+  clipping rate.
+- **Optional mechanisms**:
+  - **success-gated authority curriculum**
+    (`success_gated_authority_curriculum`): starts at 1% authority and increases
+    by a step only when training success rate ≥ threshold and episodes are
+    sufficient, up to 100%.
+  - **phase gate**: modulates authority by a sigmoid gain based on the norm of an
+    observation component (e.g. terminal proximity).
 
-**适用任务**：docking（推力残差）、rendezvous（推力残差）、satellite（CMG 框架角速度残差）。物理单位转换按任务记录：docking/rendezvous 为 `limit·f_max` N，satellite 为 `limit·action_scale` rad/s。
+**Applicable tasks**: docking (thrust residual), rendezvous (thrust residual),
+satellite (CMG gimbal-rate residual). Physical unit conversion is recorded per
+task: docking/rendezvous use `limit·f_max` N; satellite uses
+`limit·action_scale` rad/s.
 
-### 3.4 增益调度 RL（RL 调传统控制器参数）
+### 3.4 Gain-scheduling RL (RL tunes classical controller parameters)
 
-**核心思想**：策略不输出动作，而是输出传统控制器**可调增益**的设定值；控制器用被调度后的增益计算标称动作并施加到环境。策略动作空间维度等于控制器声明的 `TUNABLE_PARAMS` 数量，而非环境动作维度。
+**Core idea**: the policy outputs setpoints for the classical controller's
+**tunable gains** rather than actions; the controller computes the nominal action
+with the scheduled gains and applies it to the environment. The policy action
+dimension equals the number of controller-declared `TUNABLE_PARAMS`, not the
+environment action dimension.
 
-**动作→增益映射**（`GainSchedulingVecEnv`，`algorithms/gainsched/gain_sched_env.py`）：
+**Action→gain mapping** (`GainSchedulingVecEnv`,
+`algorithms/gainsched/gain_sched_env.py`):
 
-$$u_i\in[-1,1] \;\mapsto\; g_i = \begin{cases} \text{nominal}_i + u_i\cdot \text{dist}_i & \text{（线性空间）} \\ \exp(\log\text{nominal}_i + u_i\cdot \text{dist}_i) & \text{（对数空间，log=True）} \end{cases}$$
+$$u_i\in[-1,1] \;\mapsto\; g_i = \begin{cases} \text{nominal}_i + u_i\cdot \text{dist}_i & \text{(linear space)} \\ \exp(\log\text{nominal}_i + u_i\cdot \text{dist}_i) & \text{(log space, log=True)} \end{cases}$$
 
-- $u=0$ 始终对应 hand-tuned 标称值；$u=\pm1$ 到达缩放后的上下界。
-- 对数空间映射用于跨数量级的增益（刚度、阻尼、滤波、代价权重），单位动作步产生等比例相对变化。
-- **EMA 平滑**：$g_{\text{applied}} = (1-s)\,g_{\text{req}} + s\,g_{\text{prev}}$，降低增益抖动。
-- **增益观测**：当前归一化增益 `(g-nominal)/authority` 追加到策略观测，使策略能对自身调度闭环。
-- **episode 复位**：每个副本在 episode 开始时增益回到标称值。
+- $u=0$ always corresponds to the hand-tuned nominal value; $u=\pm1$ reaches the
+  scaled bounds.
+- Log-space mapping is used for gains spanning orders of magnitude (stiffness,
+  damping, filtering, cost weights), giving equal proportional relative change per
+  unit action step.
+- **EMA smoothing**: $g_{\text{applied}} = (1-s)\,g_{\text{req}} + s\,g_{\text{prev}}$,
+  reducing gain jitter.
+- **Gain observation**: the current normalized gain `(g-nominal)/authority` is
+  appended to policy observations so the policy can close the loop on its own
+  scheduling.
+- **Episode reset**: each replica resets gains to nominal at episode start.
 
-**控制器契约**：控制器须声明 `TUNABLE_PARAMS: dict[str, dict(low, high, default, log=?)]` 并实现 `set_params(dict)` / `get_params()`（`Baseline` 基类提供）；每副本持有独立增益向量，reward 可独立 credit 每个副本的调度。
+**Controller contract**: a controller must declare
+`TUNABLE_PARAMS: dict[str, dict(low, high, default, log=?)]` and implement
+`set_params(dict)` / `get_params()` (provided by the `Baseline` base class); each
+replica holds an independent gain vector, and reward can credit each replica's
+scheduling independently.
 
-**适用场景**：当传统控制器结构可靠但手工增益未全局最优时，RL 在标称点附近搜索时变增益调度，而非从零学习控制策略。
+**Applicable situation**: when the classical controller structure is reliable but
+the hand-tuned gains are not globally optimal, RL searches time-varying gain
+schedules near the nominal point instead of learning a control policy from
+scratch.
 
-### 3.5 辅助动作空间包装
+### 3.5 Auxiliary action-space wrappers
 
-- **DeltaActionVecEnv**：策略输出有界增量 $d_t$，执行 $a_t = \text{clamp}(a_{t-1} + \text{scale}\cdot d_t, -c, c)$，episode 边界增量状态清零。适配 CMG 框架角速率类 bang-bang 动作。
-- **ActionRatePenaltyVecEnv**：训练奖励追加 $-\text{coef}\|a_t-a_{t-1}\|^2$，仅训练时启用，评测用原始任务奖励。
+- **DeltaActionVecEnv**: the policy outputs a bounded increment $d_t$, executes
+  $a_t = \text{clamp}(a_{t-1} + \text{scale}\cdot d_t, -c, c)$, and clears the
+  increment state at episode boundaries. Suited to bang-bang actions such as CMG
+  gimbal rates.
+- **ActionRatePenaltyVecEnv**: appends $-\text{coef}\|a_t-a_{t-1}\|^2$ to the
+  training reward, enabled only during training; evaluation uses the original
+  task reward.
 
 ---
 
-## 4. 评测原则
+## 4. Evaluation principles
 
-具体训练预算、并行规模、种子数均为可调参数，由实验者按硬件条件设定。报告强调以下评测原则：
+Concrete training budgets, parallel scale and seed counts are adjustable
+parameters set by the experimenter according to hardware. Reports emphasize these
+evaluation principles:
 
-- **固定预算，无 early stopping**：主结果在相同任务内按相同交互步数或相同墙钟预算比较，仅评最终 checkpoint，避免选择性报告。`selection` 只允许作为单独标注的消融臂，不得与最终-checkpoint 主结果混排。
-- **多 seed 报告**：至少 3 个种子，保留逐 seed 原始值，报告 mean、[min,max]；样本量允许时补充 bootstrap 置信区间。配对比较在相同评测种子、副本编号和初始条件上进行，并报告配对差值，而不只比较独立均值。held-out 测试流只用于最终泛化评估。
-- **成功定义**：终止优先级 违约 > 成功（同步满足目标与失败记为失败）。
-- **双维度成本**：同时报告样本效率（等交互步数的成功率）与计算成本（墙钟时间、吞吐、显存峰值）。RL、BC/DAgger 数据采集、传统控制器调参与专家查询分别计量；使用 BC 的臂必须注明 PPO 交互步不含数据采集步，人工调参不作为可忽略的零成本项。
-- **任务内比较**：主结论只在同任务、同分布内形成。跨任务不直接比较原始交互步数或总成功率排名；如需汇总，须同时列出 policy 步长、episode 上限、总物理时间和归一化指标。
-- **口径标注**：每个成功率须注明 ①训练/确定性/随机评测口径 ②步数窗口与物理时域 ③风扰配置 ④reset 分布 ⑤并行副本数和实际评测 episode 数。
+- **Fixed budget, no early stopping**: primary results compare within the same
+  task at equal interaction steps or equal wall-clock budget, evaluating only the
+  final checkpoint, avoiding selective reporting. `selection` is allowed only as a
+  separately labeled ablation arm and must not be mixed with final-checkpoint
+  primary results.
+- **Multi-seed reporting**: at least 3 seeds, preserving per-seed raw values and
+  reporting mean and [min,max]; bootstrap confidence intervals when sample size
+  allows. Paired comparisons use the same evaluation seed, replica index and
+  initial conditions and report paired differences, not just independent means.
+  The held-out test stream is used only for final generalization evaluation.
+- **Success definition**: termination priority violation > success (simultaneously
+  meeting goal and failure counts as failure).
+- **Two-dimensional cost**: report both sample efficiency (success at equal
+  interaction steps) and compute cost (wall-clock, throughput, peak VRAM). RL,
+  BC/DAgger data collection, classical controller tuning and expert queries are
+  metered separately; arms using BC must note that PPO interaction steps exclude
+  data-collection steps, and manual tuning is not a negligible zero-cost item.
+- **Within-task comparison**: primary conclusions form only within the same task
+  and same distribution. Do not directly compare raw interaction steps or total
+  success-rate rankings across tasks; if aggregating, list policy step size,
+  episode cap, total physical time and normalized metrics together.
+- **Convention labeling**: each success rate must state ① training/deterministic/
+  stochastic evaluation convention ② step window and physical horizon ③ wind
+  configuration ④ reset distribution ⑤ parallel replica count and actual evaluated
+  episode count.
 
 ---
 
-## 5. 实验方案与测量指标
+## 5. Experimental design and measurements
 
-本章描述**实验方案**与测量指标，不含具体数值结果。表中的对比臂和消融表示计划覆盖范围；只有实际运行并保存完整配置的条目才可进入结果表，未完成条目标记为“待运行”，未收敛条目标记为“未收敛”，不得用方案描述替代实验结论。
+This chapter describes the **experimental design** and measurement metrics without
+specific numeric results. The comparison arms and ablations in the tables indicate
+planned coverage; only entries actually run with complete configurations saved may
+enter result tables. Incomplete entries are marked "pending"; non-converged entries
+are marked "not converged"; design descriptions must not substitute for
+experimental conclusions.
 
-### 5.1 对比臂设计
+### 5.1 Comparison-arm design
 
-围绕"如何利用传统控制器"这一问题，实验设置以下对比臂，所有学习臂在同一任务内使用相同 PPO 配置：
+Around the question "how to use a classical controller", the experiments define
+the following comparison arms; all learning arms use the same PPO configuration
+within the same task:
 
-| 臂 | 初始化 | 运行时控制 |
+| Arm | Initialization | Runtime control |
 |---|---|---|
-| traditional | — | 完整传统控制器 |
-| bc_only | DAgger 聚合数据训练 BC actor | 仅学习策略 |
-| ppo_scratch | 随机 MLP 初始化 | 仅学习策略 |
-| bc_ppo | 加载同一 BC checkpoint | PPO 微调后的学习策略 |
-| residual_ppo | actor 末层零初始化 + frozen 控制器 | 默认 `clamp(nominal + limit·clamp(u,-1,1))`；仅无界 Gaussian 用 `limit·tanh(u)` |
-| gain_sched_ppo | 传统控制器 + RL 调度增益 | 控制器用 RL 设定的增益输出动作 |
+| traditional | — | full classical controller |
+| bc_only | DAgger-aggregated data trains a BC actor | learned policy only |
+| ppo_scratch | random MLP initialization | learned policy only |
+| bc_ppo | load the same BC checkpoint | PPO-fine-tuned learned policy |
+| residual_ppo | zero-initialized actor final layer + frozen controller | default `clamp(nominal + limit·clamp(u,-1,1))`; only unbounded Gaussian uses `limit·tanh(u)` |
+| gain_sched_ppo | classical controller + RL gain scheduling | controller outputs actions with RL-set gains |
 
-### 5.2 单因素扫描
+### 5.2 Single-factor sweeps
 
-为隔离各机制的影响，对以下因素做单因素扫描（每次只变一个因素，PPO/BC 配方其余部分完全相同）：
+To isolate each mechanism's effect, sweep the following factors one at a time
+(the rest of the PPO/BC recipe stays identical):
 
-- **控制器质量**：设计增益偏置（迟滞/激进/模型偏差），真实 plant 不变。
-- **演示覆盖**：相同样本数、不同初始状态覆盖，评测保持官方分布（分布迁移）。
-- **样本数**：相同覆盖、不同完整 episode 数。
-- **残差权限**：`authority ∈ {0.01, 0.025, 0.1, 0.2}`。
-- **模型失配**：控制器接收显式标称设计模型，无法读取偏移后的 plant 常数。
+- **Controller quality**: bias the design gains (sluggish/aggressive/model bias)
+  without changing the real plant.
+- **Demonstration coverage**: same sample count, different initial-state coverage,
+  evaluation kept on the official distribution (distribution shift).
+- **Sample count**: same coverage, different numbers of complete episodes.
+- **Residual authority**: `authority ∈ {0.01, 0.025, 0.1, 0.2}`.
+- **Model mismatch**: the controller receives an explicit nominal design model and
+  cannot read shifted plant constants.
 
-### 5.3 改进消融
+### 5.3 Improvement ablations
 
-每个条件只改变一个机制，作为独立消融：
+Each condition changes only one mechanism as an independent ablation:
 
-| 条件 | 作用臂 | 机制 |
+| Condition | Arms | Mechanism |
 |---|---|---|
-| KL anchor | bc_ppo | PPO 目标 + 线性衰减 $KL(\pi_\theta\|\pi_{BC})$ |
-| terminal weight | bc_only, bc_ppo | 终端阶段加权 BC MSE |
-| optimizer | ppo_scratch, bc_ppo | LR warmup + cosine、sigma anneal、actor freeze（sigma 项依赖 `log_std_param`，仅在 `distribution='gaussian'` 下生效；默认 Beta 策略忽略 `init_std`） |
-| grad clip | bc_ppo | 更紧梯度裁剪 + 逐 mini-batch advantage 归一化 |
-| rate penalty | bc_ppo | 训练时 $-\text{coef}\|a_t-a_{t-1}\|^2$ 辅助奖励 |
-| delta action | satellite | 有界增量动作参数化 |
-| phase gate | residual_ppo | 终端相位门控残差权限 |
-| authority curriculum | residual_ppo | 成功门控残差权限课程 |
-| scratch curriculum | ppo_scratch | 初始条件课程 |
-| selection | bc_ppo, residual_ppo | 独立消融：按验证种子成功率选 checkpoint；不进入最终-checkpoint 主表 |
+| KL anchor | bc_ppo | PPO objective + linearly decaying $KL(\pi_\theta\|\pi_{BC})$ |
+| terminal weight | bc_only, bc_ppo | terminal-phase weighted BC MSE |
+| optimizer | ppo_scratch, bc_ppo | LR warmup + cosine, sigma anneal, actor freeze (sigma terms depend on `log_std_param` and apply only under `distribution='gaussian'`; the default Beta policy ignores `init_std`) |
+| grad clip | bc_ppo | tighter gradient clipping + per-mini-batch advantage normalization |
+| rate penalty | bc_ppo | training auxiliary reward $-\text{coef}\|a_t-a_{t-1}\|^2$ |
+| delta action | satellite | bounded incremental action parameterization |
+| phase gate | residual_ppo | terminal-phase gated residual authority |
+| authority curriculum | residual_ppo | success-gated residual authority curriculum |
+| scratch curriculum | ppo_scratch | initial-condition curriculum |
+| selection | bc_ppo, residual_ppo | separate ablation: select checkpoints by validation-seed success; does not enter the final-checkpoint primary table |
 
-### 5.4 测量指标
+### 5.4 Measurement metrics
 
-**成功率**：首 episode 评测，确定性（均值）与随机（采样策略）分开报告；训练 rollout 统计作为第三来源。所有臂用相同评测 seed、相同 num_envs、相同环境配置，校验配对初始化。除汇总均值和范围外，保存逐 episode 结果与逐 seed 表，配对臂报告成功率配对差及适用的区间估计；小样本区间只反映种子/场景抽样不确定性，不代表训练全过程稳定性。
+**Success rate**: first-episode evaluation, with deterministic (mean) and
+stochastic (sampled policy) reported separately; training rollout statistics are a
+third source. All arms use the same evaluation seed, same num_envs, same environment
+configuration, verifying paired initialization. Besides summary means and ranges,
+save per-episode results and per-seed tables; paired arms report paired success
+differences and applicable interval estimates. Small-sample intervals reflect only
+seed/scenario sampling uncertainty, not whole-training stability.
 
-**物理代价指标**（独立于官方奖励）：
+**Physical-cost metrics** (independent of the official reward):
 
-| 任务 | 指标 |
+| Task | Metrics |
 |---|---|
-| docking / rendezvous | 推进剂消耗量、机动时间、终端距离/速度 |
-| satellite | 框架角速率平方积分（作动器使用代理）、机动时间、终端姿态/角速度误差 |
-| transfer | 燃料消耗、近地点/远地点变化量 |
+| docking / rendezvous | propellant consumption, maneuver time, terminal distance/speed |
+| satellite | integral of squared gimbal rate (actuator-usage proxy), maneuver time, terminal attitude/rate error |
+| transfer | fuel consumption, perigee/apogee change |
 
-成功条件下的代价始终与成功率并列报告。
+Cost under success is always reported alongside success rate.
 
-### 5.5 残差诊断指标
+### 5.5 Residual diagnostic metrics
 
-Residual RL 臂额外记录：残差均值/RMS/最大值、标称动作均值、组合裁剪率、残差触限率、残差对冲标称比例、残差活跃比例，以及逐通道值。
+Residual RL arms additionally record: residual mean/RMS/max, nominal action mean,
+combined clipping rate, residual limit-hit rate, residual fraction canceling the
+nominal action, residual active fraction, and per-channel values.
 
 ---
 
-## 6. 实验结果
+## 6. Experimental results
 
-本章给出在单张 NVIDIA GPU 上运行的完整端到端验证结果。所有结果均可由仓库内脚本复现；训练配置、种子与输出目录在各小节注明。
+This chapter gives complete end-to-end validation results on a single NVIDIA GPU.
+All results are reproducible with repository scripts; training configurations,
+seeds and output directories are noted in each subsection.
 
-### 6.1 环境与测试覆盖
+### 6.1 Environment and test coverage
 
-- **环境实例化**：10 个任务全部在 CPU 后端成功构造，`step()` 返回五元素元组，观测 `TensorDict` 含 `'policy'` 键，动作空间统一为 `Box(-1, 1)`。
-- **单元/集成测试**（`tests/test_env_contract.py`，57 passed / 1 skipped）：注册构造与空间一致性、step 不变量（无 NaN/Inf）、同种子确定性（`atol=1e-5`）、残差零回归、基线观测隔离 AST 扫描。
-- **训练冒烟**（`scripts/smoke_test.py`，3 workers × 5 updates × 32 envs）：10/10 通过（10 任务 × PPO），均产出 `checkpoint.pt` + `run.json` + `config.json`。
-- **基线健全性**（`scripts/baseline_suite.py`，seeds=7, num_envs=256, max_steps=1500）：30/30 cell 通过。
+- **Environment instantiation**: all 10 tasks were successfully constructed on the
+  CPU backend; `step()` returns a five-element tuple, observations are a
+  `TensorDict` with a `'policy'` key, and the action space is uniformly
+  `Box(-1, 1)`.
+- **Unit/integration tests** (`tests/test_env_contract.py`, 57 passed / 1 skipped):
+  registration construction and space consistency, step invariants (no NaN/Inf),
+  same-seed determinism (`atol=1e-5`), residual zero regression, and baseline
+  observation-isolation AST scan.
+- **Training smoke** (`scripts/smoke_test.py`, 3 workers × 5 updates × 32 envs):
+  10/10 passed (10 tasks × PPO), each producing `checkpoint.pt` + `run.json` +
+  `config.json`.
+- **Baseline sanity** (`scripts/baseline_suite.py`, seeds=7, num_envs=256,
+  max_steps=1500): 30/30 cells passed.
 
-### 6.2 传统基线协议评测
+### 6.2 Classical baseline protocol evaluation
 
-固定协议种子 `{7, 13, 21}` 与留出种子 `101`，每任务 128 并行副本，首 episode 评测（fixedwing 使用完整 8000 步上限，其余 1500 步上限）。下表为各任务默认控制器成功率。
+Fixed protocol seeds `{7, 13, 21}` plus held-out seed `101`, 128 parallel replicas
+per task, first-episode evaluation (fixedwing uses the full 8000-step cap, others
+1500). The table shows each task's default controller success rate.
 
-| 任务 | seed 7 | seed 13 | seed 21 | seed 101 (held-out) | mean | std |
+| Task | seed 7 | seed 13 | seed 21 | seed 101 (held-out) | mean | std |
 |---|---:|---:|---:|---:|---:|---:|
 | quadx | 1.000 | 1.000 | 0.992 | 1.000 | 0.998 | 0.004 |
 | quadx_track | 0.891 | 0.859 | 0.828 | 0.820 | 0.850 | 0.032 |
@@ -727,112 +1169,189 @@ Residual RL 臂额外记录：残差均值/RMS/最大值、标称动作均值、
 | docking | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
 | rendezvous | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
 
-留出种子与协议种子无系统性差异（配对 t 检验 p > 0.1），说明控制器性能未对训练种子过拟合。
+The held-out seed shows no systematic difference from the protocol seeds
+(paired t-test p > 0.1), indicating controller performance is not overfit to the
+training seeds.
 
-### 6.3 强化学习主结果（PPO）
+### 6.3 Reinforcement-learning main results (PPO)
 
-固定预算 200 updates × 256 envs，PPO 在 `satellite` 与 `docking` 上的训练累计成功率（训练 rollout 统计，非确定性评测）：
+Fixed budget 200 updates × 256 envs; PPO training cumulative success on
+`satellite` and `docking` (training rollout statistics, not deterministic
+evaluation):
 
-| 任务 | 算法 | seed | 累计 SR | 墙钟 (s) | 吞吐 (steps/s) |
+| Task | Algorithm | seed | Cumulative SR | Wall clock (s) | Throughput (steps/s) |
 |---|---|---:|---:|---:|---:|
 | satellite | PPO | 7 | 0.428 | 148.1 | 11062 |
 | satellite | PPO | 13 | 0.690 | 144.2 | 11364 |
 | docking | PPO | 7 | 0.112 | 54.0 | 30318 |
 | docking | PPO | 13 | 0.111 | 53.9 | 30407 |
 
-**结论**：在 200 updates 预算下，PPO 可在 `satellite` 上取得 0.43–0.69 的累计成功率，但 `docking`（稀疏终端奖励 + 严格门限）仍较难。与 6.2 节传统基线（satellite/docking SR=1.0）相比，纯 RL 在短预算下显著落后于手工控制器。
+**Conclusion**: under a 200-update budget, PPO reaches 0.43–0.69 cumulative
+success on `satellite`, but `docking` (sparse terminal reward + strict gate)
+remains difficult. Compared with §6.2's classical baselines (satellite/docking
+SR=1.0), pure RL is clearly behind the hand-designed controller under a short
+budget.
 
-### 6.4 BC Warm-Start A/B 对照
+### 6.4 BC warm-start A/B comparison
 
-相同预算（150 updates × 256 envs，seed=7），对比 PPO 从零训练与 BC 预训练后 PPO 微调。BC 从任务传统控制器采集 512 步专家数据，100 epoch 监督预训练 actor 与 critic。
+Same budget (150 updates × 256 envs, seed=7), comparing PPO from scratch with BC
+pretraining followed by PPO fine-tuning. BC collects 512 steps of expert data
+from the task's classical controller and pretrains actor and critic for 100
+epochs.
 
-| 任务 | PPO scratch (cum SR) | PPO + BC warmstart (cum SR) | 提升 |
+| Task | PPO scratch (cum SR) | PPO + BC warmstart (cum SR) | Improvement |
 |---|---:|---:|---:|
 | satellite | 0.251 | 0.709 | +183% |
 | docking | 0.072 | 1.000 | +1289% |
-| quadx | 0.000 | 0.000 | 未见收益 |
+| quadx | 0.000 | 0.000 | no observed benefit |
 
-**结论**：BC warmstart 在传统控制器强且预算内可学的任务上显著提升样本效率与最终性能（satellite、docking）。`quadx` 在 150 updates 下两臂均未取得正成功率，warmstart 收益需更长训练预算才能显现——说明 warmstart 收益与任务难度及预算相关。
+**Conclusion**: BC warmstart significantly improves sample efficiency and final
+performance on tasks where the classical controller is strong and learnable
+within the budget (satellite, docking). On `quadx`, neither arm achieves positive
+success at 150 updates; warmstart benefit requires a longer training budget —
+showing that warmstart benefit depends on task difficulty and budget.
 
-### 6.5 Residual RL 对照
+### 6.5 Residual RL comparison
 
-相同预算（150 updates × 256 envs，seed=7），`residual=True` 时策略学习叠加在传统控制器标称动作之上的残差。Phase 1 的逐位回归测试已确认：残差策略输出零时，轨迹与纯传统控制器逐位一致。
+Same budget (150 updates × 256 envs, seed=7); with `residual=True` the policy
+learns a residual added to the classical controller's nominal action. Phase 1's
+bitwise regression test confirmed that when the residual policy outputs zero, the
+trajectory is bit-identical to the pure classical controller.
 
-| 任务 | 纯传统控制器 | 纯 RL (scratch) | 残差 RL |
+| Task | Pure classical controller | Pure RL (scratch) | Residual RL |
 |---|---:|---:|---:|
 | satellite | 1.000 | 0.251 | **0.985** |
 | docking | 1.000 | 0.072 | **1.000** |
 
-**结论**：残差 RL 大幅超越纯 RL（satellite 3.9×，docking 14×），并逼近或持平纯传统控制器性能。结合 Phase 1 的残差零回归一致性，证明控制器先验作为 frozen prior 能显著降低学习难度。
+**Conclusion**: residual RL substantially surpasses pure RL (satellite 3.9×,
+docking 14×) and approaches or matches pure classical controller performance.
+Combined with Phase 1's zero-residual consistency, this demonstrates that a
+controller prior as a frozen prior can significantly reduce learning difficulty.
 
 ---
 
-## 7. 可视化
+## 7. Visualization
 
-benchmark 提供 `scripts/visualize.py`，对全部 10 个任务运行其传统基线的单个 episode，录制被控对象的位姿序列后在独立的 Genesis 离屏场景中回放渲染，输出 `results/<task>/vis.mp4`。渲染场景与仿真物理完全解耦（零重力、不步进，仅以 `set_pos/set_quat` 驱动物体），保证可视化忠实于仿真状态而不引入额外物理开销。
+The benchmark provides `scripts/visualize.py`, which runs each of the 10 tasks'
+classical baseline for one episode, records the plant pose sequence, then replays
+and renders it in a separate Genesis offscreen scene, outputting
+`results/<task>/vis.mp4`. The render scene is fully decoupled from simulation
+physics (zero gravity, no stepping, objects driven only with
+`set_pos/set_quat`), ensuring visualization faithfully reflects simulation state
+without adding physics cost.
 
-画面统一为 **1440×810（16:9）三区平铺布局**，三块区域在像素层面互不相交，任何一块都不会覆盖另一块：
+The frame uses a uniform **1440×810 (16:9) three-region tiled layout**; the three
+regions do not intersect at the pixel level, and none covers another:
 
-- **左侧 960×810 全景主视图**：固定全局相机，完整呈现航路点、目标、着陆区或轨道，其上不叠加任何内容（近景窗与读数面板均不在这一区域内）。
-- **右上 480×430 状态卡片**：不是把读数行直接堆在画面上的纯文本，而是一块带层级的卡片面板（与左侧全景共享深色底、圆角分隔线与强调色）：顶部为任务标题，其下为大号主指标（高度 / 距离 / 姿态残差 / 比例尺），再下是 2–3 行键值对（目标状态、显示倍率、阈值等），随后是带色块的图例、说明注脚、episode 进度条与时间戳；episode 终止后页脚出现 `SUCCESS` / `FAILURE` 圆角徽章。所有文本按列宽做省略号截断，永不越出卡片。
-- **中间 26 px 强调色标签条**：单行标注近景对象（如 `CLOSE-UP: chaser + station`）。
-- **右下 480×354 近景**：独立跟随被控对象，按原生分辨率渲染后直接贴入，不做缩放拉伸。
+- **Left 960×810 panoramic main view**: fixed global camera, fully showing
+  waypoints, target, landing zone or orbit, with nothing overlaid (the close-up
+  and readout panel are outside this region).
+- **Top-right 480×430 status card**: not raw text lines piled onto the frame, but
+  a hierarchical card panel (sharing the dark base, rounded separators and accent
+  color with the left panorama): task title at top, a large primary metric
+  (altitude / range / attitude residual / scale bar) below, then 2–3 key-value
+  lines (target state, display scaling, thresholds), then a color legend,
+  explanatory footnote, episode progress bar and timestamp; after episode
+  termination a `SUCCESS` / `FAILURE` rounded badge appears in the footer. All
+  text is ellipsized to the column width and never overflows the card.
+- **Middle 26 px accent label strip**: a single line labeling the close-up object
+  (e.g. `CLOSE-UP: chaser + station`).
+- **Bottom-right 480×354 close-up**: independently follows the plant, rendered at
+  native resolution and pasted directly without scaling.
 
-Genesis 相机的 `fov` 是**垂直视角**，因此画幅比例改变时脚本用 `_hfov_match` 重算垂直 fov 以保持原有的**水平视野**不变：从左 960×540 改为 960×810 时只增加上下天空/地面，原先相机调好的左右构图不被裁切。**主相机固定为全局视角**，不随被控对象平移或缩放；近景相机独立跟随被控对象（Satellite 也提供 `bus + CMG` 近景）。所有相机位姿显式给定世界竖直方向 `up=(0,0,1)`，避免相机继承上一帧姿态而产生画面滚转。
+Genesis camera `fov` is **vertical**, so when the frame aspect changes the script
+uses `_hfov_match` to recompute vertical fov and preserve the original **horizontal
+field of view**: changing the left 960×540 to 960×810 only adds sky/ground above
+and below, without cropping the camera's tuned horizontal composition. **The main
+camera is fixed to a global view** and does not pan or zoom with the plant; the
+close-up camera follows the plant independently (Satellite also provides a
+`bus + CMG` close-up). All camera poses explicitly set world up to `(0,0,1)`,
+avoiding inherited camera roll from the previous frame.
 
-真实尺度下机体与标记在远景中往往只有几像素，因此按任务做**纯显示放大**并在画面文字中标注倍率（QuadX 6×、QuadX-Track 12×、Fixedwing/Quadplane/Rocket 8×、Missile 200×、Docking 4×、Rendezvous 6×；Transfer 的盒体为示意尺寸、不按比例，真实尺度以画面下方 2000 km 比例尺为准）。放大是围绕**机体最低点**做的（`_scale_ground_lift`）：Genesis 按 link 原点缩放几何，若直接放大，8× 的火箭在落地时会有约 17 m 埋进着陆平台/地面，造成明显穿模；以最低点为锚后，放大后的机腹始终与真实机腹重合，落地时正好立在平台上，而卡片读数、判定半径仍是真实值。位置、距离、判定半径仍为真实米制；大气层任务使用灰色地面 + 浅蓝天空背景，航天器任务保留深色星空背景。QuadX-Track 与 Quadplane 复用 PyFlyt 机体 URDF、相机角度和航路点样式；QuadX-Track 仅额外显示真实目标、LOS 与环境遮挡物。
+At true scale, bodies and markers are often only a few pixels in the wide view,
+so tasks apply **display-only magnification** labeled with the factor (QuadX 6×,
+QuadX-Track 12×, Fixedwing/Quadplane/Rocket 8×, Missile 200×, Docking 4×,
+Rendezvous 6×; Transfer's box is schematic and not to scale, with the true scale
+given by the 2000 km scale bar at the bottom). Magnification is anchored at the
+**lowest point of the body** (`_scale_ground_lift`): Genesis scales geometry about
+the link origin, so an 8× rocket would sink ~17 m into the landing platform/ground
+on touchdown, causing obvious clipping; anchoring at the lowest point keeps the
+scaled belly coincident with the true belly, so it stands exactly on the platform
+while card readouts and success radii remain true values. Positions, ranges and
+success radii remain in true meters; atmospheric tasks use a gray ground + light
+blue sky background, and spacecraft tasks retain a dark starfield. QuadX-Track
+and Quadplane reuse PyFlyt body URDFs, camera angles and waypoint styling;
+QuadX-Track additionally shows the real target, LOS and environmental occluders.
 
-### 7.1 各任务可视化约定
+### 7.1 Per-task visualization conventions
 
-| 任务 | 全景主视图（左 960×810，不被任何元素覆盖） | 右上状态卡片（480×430） | 右下近景（480×354） |
+| Task | Panoramic main view (left 960×810, uncovered) | Top-right status card (480×430) | Bottom-right close-up (480×354) |
 |------|------|------|------|
-| QuadX-Waypoints | cf2x URDF（显示放大 6×）+ 灰色地面 + 绿色活动航点球（放大至 0.18 m 半径）；固定全局视角（fov 45°，覆盖 5 m 飞行穹顶） | 主指标 Altitude；Waypoints「4 inside the 5 m dome」/ Body「scaled 6x」；绿色航点、灰色地面阴影图例；进度条与 RESULT 徽章 | PyFlyt yaw-30°/pitch-30° 机体 |
-| QuadX-Track | 同型 cf2x（放大 12×）+ 红色地面目标球（半径 1 m）+ 6 个灰色 LOS 遮挡柱 + 白色视线点序列 + 蓝/红历史轨迹 | 主指标 Altitude；Target VISIBLE/LOST / Body「scaled 12x」；红/灰/白图例；RESULT 徽章 | 机体 |
-| Fixedwing-Waypoints | fixedwing URDF（放大 8×），4 个航点红色球体，历史轨迹 | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 8x」；红/蓝图例；RESULT 徽章 | 机体 |
-| Quadplane-VTOL | quadplane URDF（放大 8×），4 个航点红色球体，历史轨迹（旋翼/固定翼构型由真实姿态呈现，不伪造倾转动画） | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 8x」；红/蓝图例；注脚注明真实 VTOL 姿态、无合成倾转动画 | 机体（真实 VTOL 姿态） |
-| Rocket-Landing | rocket URDF（放大 8×，以机腹最低点为锚，落地时立在平台上、不穿模）+ 着陆平台 + 灰色地面，覆盖 0–450 m 下降高度 | 主指标 Altitude；Landing pad「at origin」/ Body「scaled 8x」；灰色地面、蓝色下降轨迹图例；注脚注明固定全局视角与放大锚点 | 火箭（抬高后的完整机体 + 引擎羽流） |
-| Missile-Intercept | 导弹 URDF（放大 200×）+ 黄色定位点，运动学目标用半径 60 m 红色标记，交战轨迹，4 km 高度地面/天空背景；固定全局交战视角 | 主指标 Altitude（km）；Target「red 60 m marker」/ Body「scaled 200x」；黄/红图例；固定全局交战视角注脚 | 导弹 |
-| Satellite Attitude | 卫星总线（灰身 +z/-z 设备舱、+x 传感面、-x 喷管、顶部天线、±y 太阳能板），体轴系三色轴架随动，目标姿态黄色轴架，青色 CMG 框架轴柱，红色目标姿态 ghost；固定斜视角相机（3.4/-3.4/2.15，不随翻滚体旋转） | 主指标 Attitude error（deg）；Gimbal X/Y/Z（rad）键值；红/绿/蓝 = 体轴 X/Y/Z 图例；注脚说明黄/青/ghost 语义 | bus + CMG 轴 |
-| Low-Thrust Transfer | 地球球体 + 航天器盒体（示意尺寸，1 单位 = 1000 km），绿色虚线初始轨道椭圆、青色点线目标圆轨道、红/黄近/远地点标记、橙色真实状态轨迹、2000 km 比例尺；固定 45° 全局视图（相机距离 36 单位） | 主指标 Scale bar「2000 km」；1 unit = 1000 km / Frame = GCRF / Markers 键值；绿/青/橙图例；注脚注明航天器盒体非真实比例 | 航天器 |
-| Docking | 灰色目标站（放大 4×）+ ±y 太阳能板，+x 面对接环（绿边 + 中心标记 + 半透明接近轴柱），橙色追踪器（放大 4×）对接面朝向目标，中心连线虚线，真实速度箭头（10 m/m·s⁻¹），接近轨迹；固定视角对准终端接近段（约 70 m） | 主指标 Range to target；Relative speed / Success「< pos_goal」/ Fail「> range_fail」键值；灰/绿/橙图例 | chaser + station（随距离连续变焦，含太阳翼） |
-| Rendezvous | 对接场景（双方放大 6×）+ LVLH 家具：径向/沿迹/迹外轴条、距离环（250/500/1000/2000 m）、绿色目标球（r=10 m）、红色禁入球（r=5 m）、量化速度箭头（100 m/m·s⁻¹）；固定 LVLH 全局视角（550 m） | 主指标 Range to target；Relative speed / Goal「10 m ball」/ Keep-out「5 m sphere」键值；绿/红/灰（250/500 m 距离环）图例 | 追踪器（随距离连续变焦至 chaser + station） |
+| QuadX-Waypoints | cf2x URDF (6× display scale) + gray ground + green active waypoint sphere (scaled to 0.18 m radius); fixed global view (fov 45°, covering the 5 m flight dome) | Primary metric Altitude; Waypoints "4 inside the 5 m dome" / Body "scaled 6x"; green waypoint and gray ground-shadow legend; progress bar and RESULT badge | PyFlyt yaw-30°/pitch-30° body |
+| QuadX-Track | same cf2x (12×) + red ground target sphere (1 m radius) + 6 gray LOS occluder columns + white LOS point sequence + blue/red history tracks | Primary metric Altitude; Target VISIBLE/LOST / Body "scaled 12x"; red/gray/white legend; RESULT badge | body |
+| Fixedwing-Waypoints | fixedwing URDF (8×), 4 red waypoint spheres, history track | Primary metric Altitude; Waypoints "4 red spheres" / Body "scaled 8x"; red/blue legend; RESULT badge | body |
+| Quadplane-VTOL | quadplane URDF (8×), 4 red waypoint spheres, history track (rotor/fixed-wing configuration shown by true attitude, no fake tilt animation) | Primary metric Altitude; Waypoints "4 red spheres" / Body "scaled 8x"; red/blue legend; footnote noting true VTOL attitude and no synthetic tilt animation | body (true VTOL attitude) |
+| Rocket-Landing | rocket URDF (8×, anchored at the belly's lowest point, standing on the pad without clipping) + landing pad + gray ground, covering 0–450 m descent | Primary metric Altitude; Landing pad "at origin" / Body "scaled 8x"; gray ground and blue descent-track legend; footnote noting fixed global view and magnification anchor | rocket (full raised body + engine plume) |
+| Missile-Intercept | missile URDF (200×) + yellow locator point, kinematic target marked by a 60 m red marker, engagement track, 4 km altitude ground/sky background; fixed global engagement view | Primary metric Altitude (km); Target "red 60 m marker" / Body "scaled 200x"; yellow/red legend; fixed global engagement view footnote | missile |
+| Satellite Attitude | satellite bus (gray body with +z/−z equipment bays, +x sensor face, −x thruster, top antenna, ±y solar panels), body-axis tri-color frame following attitude, yellow target-attitude frame, cyan CMG gimbal axis columns, red target-attitude ghost; fixed oblique camera (3.4/−3.4/2.15, not rotating with the body) | Primary metric Attitude error (deg); Gimbal X/Y/Z (rad) key-values; red/green/blue = body X/Y/Z legend; footnote explaining yellow/cyan/ghost semantics | bus + CMG axes |
+| Low-Thrust Transfer | Earth sphere + spacecraft box (schematic scale, 1 unit = 1000 km), green dashed initial orbit ellipse, cyan dotted target circular orbit, red/yellow perigee/apogee markers, orange true-state track, 2000 km scale bar; fixed 45° global view (camera distance 36 units) | Primary metric Scale bar "2000 km"; 1 unit = 1000 km / Frame = GCRF / Markers key-values; green/cyan/orange legend; footnote noting the spacecraft box is not to scale | spacecraft |
+| Docking | gray target station (4×) + ±y solar panels, +x docking ring (green edge + center marker + translucent approach-axis column), orange chaser (4×) with docking face toward the target, center connecting dashed line, true velocity arrow (10 m/m·s⁻¹), approach track; fixed view aligned with the terminal approach segment (~70 m) | Primary metric Range to target; Relative speed / Success "< pos_goal" / Fail "> range_fail" key-values; gray/green/orange legend | chaser + station (continuously zoomed with range, including solar panels) |
+| Rendezvous | docking scene (both 6×) + LVLH furniture: radial/along-track/cross-track axis bars, range rings (250/500/1000/2000 m), green target sphere (r=10 m), red keep-out sphere (r=5 m), quantized velocity arrow (100 m/m·s⁻¹); fixed LVLH global view (550 m) | Primary metric Range to target; Relative speed / Goal "10 m ball" / Keep-out "5 m sphere" key-values; green/red/gray (250/500 m range rings) legend | chaser (continuously zoomed with range to chaser + station) |
 
-### 7.2 使用方式
+### 7.2 Usage
 
 ```bash
 python scripts/visualize.py <task>    # task ∈ {quadx, quadx_track, fixedwing, quadplane, rocket, missile, satellite, transfer, docking, rendezvous}
 ```
 
-脚本从 `results/<task>/config.json` 恢复环境配置，在单 CPU 副本上运行任务的传统基线控制器，录制位姿后渲染 mp4。此工具用于定性检查控制器行为、辅助检查环境物理，以及为报告生成轨迹演示视频；它本身不构成物理正确性的数值验证。
+The script restores the environment configuration from
+`results/<task>/config.json`, runs the task's classical baseline controller on a
+single CPU replica, records poses, then renders the mp4. This tool is for
+qualitative controller-behavior inspection, environment physics debugging and
+trajectory demo videos for reports; it does not itself constitute numerical
+validation of physical correctness.
 
 ---
 
-## 8. 参考文献
+## 8. References
 
-1. Tai, J. K. *PyFlyt: UAV Simulation and Reinforcement Learning Environments*, PyFlyt 0.29.0 — QuadX、Fixedwing、Rocket 任务及物理资产来源。
-2. Lee, T., Leok, M., & McClamroch, N. H. (2010). “Geometric Tracking Control of a Quadrotor UAV on SE(3),” *IEEE CDC* — QuadX 几何控制。
-3. Park, S., Deyst, J., & How, J. P. (2004). “A New Nonlinear Guidance Logic for Trajectory Tracking,” *AIAA GNC* — L1/NLGL 横向制导。
-4. Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*, Princeton University Press — 固定翼自动驾驶与总能量控制背景。
-5. Zarchan, P. *Tactical and Strategic Missile Guidance*, AIAA — PN/APN 与导弹制导背景。
-6. D’Souza, C. N. (1997). “An Optimal Guidance Law for Planetary Landing,” *AAS/AIAA Astrodynamics Specialist Conference* — ZEM/ZEV 制导。
-7. Schaub, H., & Junkins, J. L. *Analytical Mechanics of Space Systems*, AIAA — 姿态表示、CMG 动力学与转向律。
-8. Wie, B. (2008). *Space Vehicle Dynamics and Control*, AIAA — CMG 动量几何与可操纵性指标。
-9. Petropoulos, A. E. (2004). “Low-Thrust Orbit Transfers Using Candidate Lyapunov Functions with a Mechanism for Coasting,” AAS 04-278 — Q-law。
-10. Vallado, D. A. *Fundamentals of Astrodynamics and Applications* — Kepler 转换、密切根数与 Gauss 变分方程。
-11. Clohessy, W. H., & Wiltshire, R. S. (1960). “Terminal Guidance System for Satellite Rendezvous,” *Journal of the Aerospace Sciences*, 27(9), 653–658 — CWH 模型。
-12. Casas, R., Carro, A., & Sanchez-Esguevillas, J. “Low-Thrust Orbital Transfer using Dynamics-Agnostic Reinforcement Learning,” arXiv:2211.08272 — Transfer 任务设定。
-13. Supreeth, H. S. G., & Mehta, V. “SpaceGym: A Gymnasium-Based Benchmark for Deep Reinforcement Learning in Spacecraft Proximity Operations,” CVPR 2026 Workshop on AI4Space — Docking/Rendezvous 任务设定。
-14. TorchRL contributors. *SatelliteEnv*, pytorch/rl — Satellite 任务参考。
-15. Ng, A. Y., Harada, D., & Russell, S. (1999). “Policy Invariance Under Reward Transformations,” *ICML* — 势函数奖励塑形。
-16. Genesis contributors. *Genesis*；Legged Robotics group, ETH Zürich. *rsl_rl* — 刚体后端与 PPO 训练后端。
+1. Tai, J. K. *PyFlyt: UAV Simulation and Reinforcement Learning Environments*, PyFlyt 0.29.0 — source of the QuadX, Fixedwing and Rocket tasks and physical assets.
+2. Lee, T., Leok, M., & McClamroch, N. H. (2010). "Geometric Tracking Control of a Quadrotor UAV on SE(3)," *IEEE CDC* — QuadX geometric control.
+3. Park, S., Deyst, J., & How, J. P. (2004). "A New Nonlinear Guidance Logic for Trajectory Tracking," *AIAA GNC* — L1/NLGL lateral guidance.
+4. Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*, Princeton University Press — fixed-wing autopilot and total-energy control background.
+5. Zarchan, P. *Tactical and Strategic Missile Guidance*, AIAA — PN/APN and missile guidance background.
+6. D'Souza, C. N. (1997). "An Optimal Guidance Law for Planetary Landing," *AAS/AIAA Astrodynamics Specialist Conference* — ZEM/ZEV guidance.
+7. Schaub, H., & Junkins, J. L. *Analytical Mechanics of Space Systems*, AIAA — attitude representation, CMG dynamics and steering laws.
+8. Wie, B. (2008). *Space Vehicle Dynamics and Control*, AIAA — CMG momentum geometry and manipulability metrics.
+9. Petropoulos, A. E. (2004). "Low-Thrust Orbit Transfers Using Candidate Lyapunov Functions with a Mechanism for Coasting," AAS 04-278 — Q-law.
+10. Vallado, D. A. *Fundamentals of Astrodynamics and Applications* — Kepler conversion, osculating elements and Gauss variational equations.
+11. Clohessy, W. H., & Wiltshire, R. S. (1960). "Terminal Guidance System for Satellite Rendezvous," *Journal of the Aerospace Sciences*, 27(9), 653–658 — CWH model.
+12. Casas, R., Carro, A., & Sanchez-Esguevillas, J. "Low-Thrust Orbital Transfer using Dynamics-Agnostic Reinforcement Learning," arXiv:2211.08272 — Transfer task setting.
+13. Supreeth, H. S. G., & Mehta, V. "SpaceGym: A Gymnasium-Based Benchmark for Deep Reinforcement Learning in Spacecraft Proximity Operations," CVPR 2026 Workshop on AI4Space — Docking/Rendezvous task setting.
+14. TorchRL contributors. *SatelliteEnv*, pytorch/rl — Satellite task reference.
+15. Ng, A. Y., Harada, D., & Russell, S. (1999). "Policy Invariance Under Reward Transformations," *ICML* — potential-based reward shaping.
+16. Genesis contributors. *Genesis*; Legged Robotics group, ETH Zürich. *rsl_rl* — rigid-body backend and PPO training backend.
 
 ---
 
-## 9. 结论
+## 9. Conclusion
 
-benchmark 的核心价值在于：
+The benchmark's core value lies in:
 
-1. **统一的纯张量接口**使 10 个异质任务（6 刚体 + 4 纯张量）可在同一训练管线中批量处理，无 Gym 开销。
-2. **每任务配多个经典 GNC 基线**（主基线 + 结构变体）提供非学习参照系，传统方法与学习算法共享同一环境、奖励与成功判据；各控制器的实际有效性须由独立实验判定。
-3. **三类利用传统控制器的 RL 范式**——BC warm-start、residual RL、增益调度 RL——覆盖从"模仿后微调"到"动作残差"再到"参数调度"的连续谱，为比较不同机制提供统一实验框架；具体优劣不在无结果时预设。
-4. **冻结评测协议**用于保证同任务、同分布下的跨算法可比性，双维度成本报告区分样本效率与工程吞吐，物理代价指标独立于奖励补充评价学习效果；跨任务比较必须保留时域与难度边界。
+1. **A unified pure tensor interface** that lets 10 heterogeneous tasks (6 rigid
+   body + 4 pure tensor) be batched in the same training pipeline without Gym
+   overhead.
+2. **Multiple classical GNC baselines per task** (default + structural variants)
+   providing a non-learned reference frame; classical methods and learning
+   algorithms share the same environment, reward and success criterion. Each
+   controller's actual effectiveness must be decided by independent experiments.
+3. **Three RL paradigms leveraging classical controllers** — BC warm-start,
+   residual RL and gain-scheduling RL — spanning a continuum from "imitate then
+   fine-tune" to "action residual" to "parameter scheduling", providing a unified
+   experimental framework for comparing mechanisms; relative merits are not
+   presumed without results.
+4. **A frozen evaluation protocol** ensuring cross-algorithm comparability within
+   the same task and distribution; two-dimensional cost reporting separates sample
+   efficiency from engineering throughput, and physical-cost metrics complement
+   reward-based evaluation of learning effectiveness; cross-task comparisons must
+   preserve horizon and difficulty boundaries.

@@ -1,388 +1,477 @@
-# pyflyt-genesis 技术亮点与可复验性说明
+# pyflyt-genesis Technical Highlights and Reproducibility Notes
 
-面向审稿人的补充材料。初始版本锚点：commit `6b02383`（2026-10-21）；
-本文档最初为该提交之上新增的文件。文中路径相对仓库根目录，带 `#L...`
-的行号锚点来自该提交，会随工作区演进漂移。2026-11-02 已按当前工作区
-更新任务计数（10 个）、风配置、评测口径与基线战绩；引用具体位置时请以
-文末代码索引中的文件与函数/符号名为准，不要依赖行号。
+**English** · [简体中文](technical-highlights.zh-CN.md)
 
-本文只写**能落到代码行、并注明复验条件**的东西。每条亮点按
-“断言 → 机制 → 证据 → 对审稿人的意义 → 边界”组织，最后单列
-“不声称什么”和“断言状态表”，以免把设计意图误读为已验证结论。
+Supplementary material for reviewers. Initial-version anchor: commit `6b02383`
+(2026-10-21); this document was originally added on top of that commit. Paths are
+relative to the repository root; `#L...` line anchors come from that commit and
+drift as the worktree evolves. On 2026-11-02 the task count (10), wind
+configuration, evaluation conventions and baseline records were updated to the
+current worktree; when citing a specific location, use the file and
+function/symbol in the code index at the end, not the line number.
 
----
-
-## 摘要
-
-与一般 RL 环境库（Gymnasium / Brax / Isaac Lab 等）相比，本套件的增量不在环境数量，
-而在六类**面向对照实验的基础设施**：
-
-1. **哈希清单化的参考基准**：上游 PyFlyt 0.29.0 的任务代码以冻结副本形式随仓库提供；
-   另有源码/资产 SHA-256 校验原语。张量 plant 的惯量直接解析自参考 URDF，而非手工抄数。
-2. **多执行路径**：4 个任务是纯张量实现（satellite / transfer / docking /
-   rendezvous），6 个是 Genesis 刚体实现（quadx / quadx_track / fixedwing /
-   quadplane / rocket / missile）；后者另有一条“原版 NumPy 任务代码不改一行”
-   的共享场景批处理桥，可做实现级交叉校验。
-3. **训练基础设施**：warmup-cosine LR 调度、
-   确定性评测，以及跨任务共享的受控超参旋钮（lr_sigma_coupling、sigma_pin、freeze_obs_norm）。
-4. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标，
-   并显式声明数值不等价边界。
-5. **经典（非学习）基线库**：10 个任务各配一个解析 GNC 基线（几何控制、L1+TECS、
-   PDG、CWH-LQR、两脉冲制导等），同一环境、同一奖励、同一成功判据下给出
-   非学习参照，并保留基线的诚实失败模式作为 RL 的攻击面
-   （quadplane 的三个控制器臂均通过官方口径评测，见亮点六）。
+This document states only facts that **land on a code line and carry a
+re-verification condition**. Each highlight follows "claim → mechanism →
+evidence → significance for reviewers → boundary", followed by separate
+"Non-claims" and "Claim status" sections, so design intent is not misread as a
+verified conclusion.
 
 ---
 
-## 亮点一：可审计的参考基准，而不是“重写了一遍”
+## Abstract
 
-**断言**：参考实现以“冻结副本 + 哈希清单 + 惯量解析”的形式存在；
-审计原语可手动执行，但目前不是运行时强制门禁。
+Compared with general RL environment libraries (Gymnasium / Brax / Isaac Lab,
+etc.), this suite's increment is not the number of environments but six kinds of
+**infrastructure for controlled experiments**:
 
-**机制与证据**
+1. **Hash-manifested reference baseline**: upstream PyFlyt 0.29.0 task code is
+   shipped as a frozen copy; source/asset SHA-256 verification primitives are
+   also provided. Tensor-plant inertias are parsed directly from the reference
+   URDF, not hand-copied.
+2. **Multiple execution paths**: 4 tasks are pure tensor implementations
+   (satellite / transfer / docking / rendezvous), 6 are Genesis rigid-body
+   implementations (quadx / quadx_track / fixedwing / quadplane / rocket /
+   missile); the latter also has a shared-scene batch bridge that runs the
+   **unmodified** original NumPy task code, enabling implementation-level
+   cross-validation.
+3. **Training infrastructure**: warmup-cosine LR scheduling, deterministic
+   evaluation, and controlled hyperparameter knobs shared across tasks
+   (`lr_sigma_coupling`, `sigma_pin`, `freeze_obs_norm`).
+4. **Result provenance**: `run.json` records the task configuration, real
+   transitions, physics-step call counts, device-side completion metrics, and an
+   explicit numerical non-equivalence boundary.
+5. **Classical (non-learned) baseline library**: each of the 10 tasks has an
+   analytic GNC baseline (geometric control, L1+TECS, PDG, CWH-LQR, two-impulse
+   guidance, etc.), giving a non-learned reference under the same environment,
+   reward and success criterion, while retaining the baselines' honest failure
+   modes as surfaces for RL to attack (all three quadplane controller arms are
+   evaluated under the official convention; see Highlight 6).
 
-- 原版代码路径不依赖环境里安装的 PyFlyt：桥接直接导入仓库内的冻结副本
+---
+
+## Highlight 1: An auditable reference baseline, not "a rewrite"
+
+**Claim**: the reference implementation exists as "frozen copy + hash manifest +
+inertia parsing"; the audit primitives can be run manually but are not currently
+runtime gates.
+
+**Mechanism and evidence**
+
+- The original code path does not depend on the PyFlyt installed in the
+  environment: the bridge imports the repository's frozen copy
   `environments/common/original_pyflyt`
-  （[original_backend.py:455-468](../environments/common/original_backend.py#L455-L468)）。
-- `verify_installed_reference()` 校验**已安装**的 `PyFlyt==0.29.0`：
-  版本号，以及清单中源码文件与 URDF/YAML 资产的 SHA-256；任一不符立即抛错
-  （[consistency.py:26-44](../environments/common/consistency.py#L26-L44)）。
-- `contract()` 对仓库内 `environments/common/assets/reference_*` 做哈希校验，并把车辆、
-  `dt`、控制抽取比、坐标系约定、噪声/风设置序列化成一个 `plant_id`
-  （[consistency.py:97-127](../environments/common/consistency.py#L97-L127)）。
-- 惯量不是手写常数：`asset_inertials()` 解析参考 URDF 供张量动力学使用
-  （[consistency.py:63-95](../environments/common/consistency.py#L63-L95)、
-  [dynamics.py:25-27](../environments/common/dynamics.py#L25-L27)）；
-  同一套惯量经 `inertial_basis()` 做“主轴 → 作者轴”旋转后喂给 Genesis 刚体
-  （[plant.py:441-462](../environments/common/plant.py#L441-L462)）。
+  ([original_backend.py:455-468](../environments/common/original_backend.py#L455-L468)).
+- `verify_installed_reference()` verifies the **installed** `PyFlyt==0.29.0`:
+  the version, plus the SHA-256 of the manifest's source files and URDF/YAML
+  assets; any mismatch raises immediately
+  ([consistency.py:26-44](../environments/common/consistency.py#L26-L44)).
+- `contract()` hashes the repository's
+  `environments/common/assets/reference_*` and serializes vehicle, `dt`, control
+  extraction ratio, coordinate conventions and noise/wind settings into a
+  `plant_id` ([consistency.py:97-127](../environments/common/consistency.py#L97-L127)).
+- Inertias are not hand-written constants: `asset_inertials()` parses the
+  reference URDF for tensor dynamics
+  ([consistency.py:63-95](../environments/common/consistency.py#L63-L95),
+  [dynamics.py:25-27](../environments/common/dynamics.py#L25-L27)); the same
+  inertias pass through `inertial_basis()` to rotate "principal axes → author
+  axes" before being fed to the Genesis rigid body
+  ([plant.py:441-462](../environments/common/plant.py#L441-L462)).
 
-**对审稿人的意义**：可以区分“代码复现了任务定义”与“代码碰巧能跑”；
-参考版本、资产哈希与惯量来源都可核查。
+**Significance**: reviewers can distinguish "the code reproduces the task
+definition" from "the code happens to run"; the reference version, asset hashes
+and inertia provenance are all checkable.
 
-**边界（必须同时读）**
+**Boundary (must read together)**
 
-- 两个校验函数目前**没有被训练/评测入口调用**；本开发环境也未安装 PyFlyt，
-  因此哈希复验命令需先安装 0.29.0 才能执行。
-- 覆盖范围不同：`verify_installed_reference()` 校验**已安装包**，
-  不校验仓库内的 `environments/common/original_pyflyt` 冻结副本；`contract()` 校验仓库内参考资产。
-  两者不能互相替代。
-- 哈希一致 **不等于** 物理一致。Genesis 兼容后端在模块首行即声明
-  “API compatibility backend, not a claim of bitwise physics equivalence”
-  （[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
-
----
-
-## 亮点二：可交叉校验的多执行路径，共享一套协议
-
-**断言**：环境层提供的不只是“一个物理引擎包装”，而是三种可互相校验的执行方式——
-纯张量（无引擎）、张量化 plant（Genesis 刚体）、原版 NumPy 任务代码桥接；
-上层训练/评测代码不需要感知差异。
-
-**机制与证据**
-
-1. **纯张量路径**（satellite / transfer / docking / rendezvous）
-   - 无引擎：RK4 / 辛 Euler 等积分器直接写在各自 env 内，
-     状态、随机数与统计全在设备上（[README.md §Package layout](../README.md#package-layout)）。
-   - 套件级约定是每一步都是带掩码的张量核，未激活副本冻结、
-     且**不消耗随机数**；训练循环内无 gym、无 CPU 往返
-     （[README.md](../README.md)）。
-
-2. **张量 plant 路径**（quadx / quadx_track / fixedwing / quadplane / rocket / missile）
-   - `TensorPlant` 统一承载几何、作动（rate-PID mixer、升力面、助推器/燃料）、
-     物理步进、接触检查与 reset/warmup；reward/终止/观测仍留在各 env
-     （[plant.py:1-9](../environments/common/plant.py#L1-L9)）。
-   - `TensorRandom` 为每个副本维护独立计数器随机流；文档明确其与上游
-     **分布兼容、但非 NumPy PCG64 位流兼容**
-     （[plant.py:60-72](../environments/common/plant.py#L60-L72)）。
-   - 作动器、接触、气动均为张量化层，观测/奖励/重置沿用同一协议。
-   - 积分器选择被显式记录并给出实测理由：显式 Euler 会让着陆接触抖动到
-     ~0.1 m/s，越过 0.02 m/s 的判定阈值，因此保留 Genesis 默认的
-     `approximate_implicitfast`
-     （[original_backend.py:95-100](../environments/common/original_backend.py#L95-L100)）。
-     这类“参数背后有测量”的记录，比参数本身更有审稿价值。
-
-3. **原版代码桥接**（仅 quadx / fixedwing / rocket）：`OriginalTaskBatch` 用一个
-   Genesis scene 托管 N 个副本，Python 侧仍是**未修改的** PyFlyt
-   task/controller/aero 对象
-   （[original_batch.py:1-7](../environments/common/original_batch.py#L1-L7)、
-   [original_batch.py:95-113](../environments/common/original_batch.py#L95-L113)）。
-   - 选择性重置时，非参与副本的物理状态通过
-     `scene.get_state()` / `scene.reset(state=..., envs_idx=...)` 精确回滚，
-     其 Aviary 观测到的物理时间不变
-     （[original_batch.py:142-185](../environments/common/original_batch.py#L142-L185)）。
-   - 接触信息在状态回滚**之前**读取，避免缓存被清除后丢失
-     （[original_batch.py:165-181](../environments/common/original_batch.py#L165-L181)）。
-   - `loadURDF` 校验所有副本加载同名 URDF，避免混批
-     （[original_batch.py:62-73](../environments/common/original_batch.py#L62-L73)）。
-
-**对审稿人的意义**：4 个无引擎任务与 6 个引擎任务共享同一套协议，可分别验证；
-其中 3 个大气任务（quadx / fixedwing / rocket）还能做“原版实现/张量化实现”
-的交叉校验，而不是只能相信单一实现。
-
-**边界**
-
-- 该桥接的正确性优先：原版 NumPy 代码仍跑在 host，**不是吞吐最优路径**；
-  其价值是正确性对照，不是性能数字。
-- “暂停非参与副本”是**步进后状态回滚**语义，不是让引擎跳过它们；
-  NumPy/控制器/RNG 状态不被触碰，但物理求解器确实推进过整批。
+- The two verification functions are **not called by the training/evaluation
+  entry points**; this development environment also does not have PyFlyt
+  installed, so the hash re-verification command requires installing 0.29.0
+  first.
+- Coverage differs: `verify_installed_reference()` verifies the **installed
+  package**, not the repository's frozen `environments/common/original_pyflyt`
+  copy; `contract()` verifies the repository's reference assets. They are not
+  substitutes for each other.
+- Hash agreement **does not equal** physical agreement. The Genesis compatibility
+  backend declares on its first line: "API compatibility backend, not a claim of
+  bitwise physics equivalence"
+  ([original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)).
 
 ---
 
-## 亮点三：风扰是统一 Plant 钩子，不是 per-env 力补丁
+## Highlight 2: Cross-validatable multiple execution paths sharing one protocol
 
-**断言**：5 个大气任务（QuadX-Waypoints、Fixedwing-Waypoints、Quadplane-VTOL、
-Rocket-Landing、Missile-Intercept）共享同一套风扰接入路径——气动力统一用
-**空速** `v_air = v - wind` 评估；其中 quadx / fixedwing / quadplane 的训练入口
-硬编码 30% Dryden 阵风的 `WIND` 常量为默认风场，rocket 固定 `dryden=0.0`，
-missile 保持静风。静风（默认）与发表基准**逐位一致**。
+**Claim**: the environment layer provides not just "a physics-engine wrapper" but
+three mutually verifiable execution modes — pure tensor (no engine), tensorized
+plant (Genesis rigid body), and the bridged original NumPy task code; upper-level
+training/evaluation code does not need to perceive the difference.
 
-**机制与证据**
+**Mechanism and evidence**
 
-- `TensorPlant` 持有 `wind`（world 系 (n,3) float64，`None` = 静风）；
-  `_air_velocity` 在世界系减去风后再旋到体轴
-  （[plant.py](../environments/common/plant.py)），因此
-  fixedwing 升力面与 rocket 鳍/体阻力的气动项自动感知风；
-- QuadX 无升力面，其既有体阻力项的变量就叫 `vb_air`——接入前恒等于体轴
-  速度，接入后变为 `vb - R^T·wind`，静风时逐位回到原实现；
-- 风的生成统一走 `environments/common/disturbances.py` 的
-  `WindDisturbance`（定常风 + Dryden 阵风，MIL-F-8785C 低空成形滤波、
-  种子化 RNG 流），env 每个控制步更新一次 `plant.wind`（阵风在物理子步间
-  冻结），`reset_idx` 镜像重置滤波器状态；
-- 训练入口硬编码 `WIND` 常量：quadx / fixedwing / quadplane 为纯 Dryden 阵风
-  （零均值，30% moderate 档）；rocket 为 `dryden=0.0`（与静风基线同口径）；
-  missile 不传风参数；quadx_track 的构造器不接受风参数。卫星任务在真空中无风。
+1. **Pure tensor path** (satellite / transfer / docking / rendezvous)
+   - No engine: RK4 / symplectic Euler and other integrators live directly in
+     each env; state, random numbers and statistics all stay on device
+     ([README.md §Package layout](../README.md#package-layout)).
+   - The suite-level convention is that every step is a masked tensor kernel:
+     inactive replicas freeze and **do not consume random numbers**; the
+     training loop has no gym and no CPU round-trips ([README.md](../README.md)).
 
-**不变式（这条最关键）**
+2. **Tensor plant path** (quadx / quadx_track / fixedwing / quadplane / rocket /
+   missile)
+   - `TensorPlant` uniformly carries geometry, actuation (rate-PID mixer, lifting
+     surfaces, booster/fuel), physics stepping, contact checks and reset/warmup;
+     reward/termination/observation remain in each env
+     ([plant.py:1-9](../environments/common/plant.py#L1-L9)).
+   - `TensorRandom` maintains an independent counter stream per replica; the
+     documentation explicitly states it is **distribution-compatible but not
+     NumPy PCG64 bitstream-compatible** with upstream
+     ([plant.py:60-72](../environments/common/plant.py#L60-L72)).
+   - Actuators, contacts and aerodynamics are tensorized layers; observations,
+     rewards and resets follow the same protocol.
+   - The integrator choice is explicitly recorded with a measured justification:
+     explicit Euler makes landing contact chatter to ~0.1 m/s, crossing the
+     0.02 m/s criterion, so Genesis's default `approximate_implicitfast` is
+     retained ([original_backend.py:95-100](../environments/common/original_backend.py#L95-L100)).
+     Such "measurements behind a parameter" records are more valuable to
+     reviewers than the parameter itself.
 
-- 静风路径完全不进入风分支：`wind=None` 时 `_air_velocity` 与 QuadX 阻力
-  项的字节码路径与旧实现一致，同 seed 的首个 reset 及后续 step **逐位一致**；
-- `eval.py` 在 `results/<task>/config.json` 存在时恢复该次训练记录的
-  `env_kwargs`，因此带风训练的策略会在同一风配置下评测；不存在配置文件时
-  才使用环境默认的静风。跨方法比较必须显式固定同一风配置，而不是假定评测
-  恒为静风。
+3. **Original-code bridge** (quadx / fixedwing / rocket only):
+   `OriginalTaskBatch` hosts N replicas in one Genesis scene, while the Python
+   side remains **unmodified** PyFlyt task/controller/aero objects
+   ([original_batch.py:1-7](../environments/common/original_batch.py#L1-L7),
+   [original_batch.py:95-113](../environments/common/original_batch.py#L95-L113)).
+   - On selective reset, non-participating replicas' physics state is rolled back
+     exactly via `scene.get_state()` / `scene.reset(state=..., envs_idx=...)`,
+     and their Aviary-observed physics time is unchanged
+     ([original_batch.py:142-185](../environments/common/original_batch.py#L142-L185)).
+   - Contact information is read **before** state rollback to avoid losing it
+     after the cache is cleared
+     ([original_batch.py:165-181](../environments/common/original_batch.py#L165-L181)).
+   - `loadURDF` verifies that all replicas load the same-named URDF, preventing
+     mixed batches ([original_batch.py:62-73](../environments/common/original_batch.py#L62-L73)).
 
-**对审稿人的意义**：风扰不是"改 dynamics 的手写补丁"，而是把所有气动力
-改为对空速评估这一物理上正确的表述；可以单独检验"扰动鲁棒性"对策略的
-影响，而不用怀疑评测标准被偷偷放宽。
+**Significance**: the 4 engine-free tasks and 6 engine tasks share one protocol
+and can be verified separately; 3 atmospheric tasks (quadx / fixedwing / rocket)
+can also be cross-validated between "original implementation / tensorized
+implementation" rather than trusting a single implementation.
 
-**边界**
+**Boundary**
 
-- 阵风滤波每控制步推进一次，物理子步间冻结（Dryden 带宽远低于控制频率，
-  误差可忽略）；
-- `WindDisturbance` 的 RNG 是逐副本计数器流（种子 `mix32(seed ^ i*GOLDEN)` +
-  每副本计数器，全部留在 device 上，无 CPU→GPU 传输）；带 `env_ids` 的
-  `step` 只推进被选副本的计数器，不会改变其它副本的噪声序列；
-  静风路径零开销。
-
----
-
-## 亮点四：训练基础设施——可复用的 LR 调度与受控旋钮
-
-**断言**：仓库提供可复用的训练调度与受控超参旋钮，保证跨任务的公平对照。
-
-**机制与证据**
-
-- **warmup-cosine LR 调度**：PPO 侧内置 `_warmup_cosine_decay` 公式（
-  warmup 比例 1e-6 × total updates，peak→end 跨度）；由于 rsl-rl 在
-  `schedule='fixed'` 下永不重设 lr，代码直接写 `optimizer.param_groups`
-  （[train_utils.py:27-36](../algorithms/train_utils.py#L27-L36)、
-  [train_utils.py:681-697](../algorithms/train_utils.py#L681-L697)）。
-- **其他受控旋钮**：指数衰减、`lr_sigma_coupling`（令 lr ∝ σ，保持每步策略漂移率恒定）、
-  `sigma_pin`（重钉探索方差）、`freeze_obs_norm`（冻结 warm start 的观测归一化），
-  均为 opt-in 且互斥关系显式检查
-  （[train_utils.py:551-566](../algorithms/train_utils.py#L551-L566)、
-  [train_utils.py:713-730](../algorithms/train_utils.py#L713-L730)）。
-  其中 `lr_sigma_coupling` / `sigma_pin` 读取 `log_std_param`，只适用于
-  `distribution='gaussian'`；默认的 `BetaDistribution` 无此参数，相关旋钮随之失效。
-
-**边界**
-
-- wall-clock 为同机记录值，受同批并发影响，只作量级参考。
-- 确定性评测由 `eval.py` 统一执行并写入各臂 `eval.json`；
-  但现存记录的评测协议不完全一致（env 数/步数不同），
-  **不应把不同 `eval.json` 的成功率直接横比**。
+- Correctness comes first for this bridge: the original NumPy code still runs on
+  host and is **not the throughput-optimal path**; its value is a correctness
+  comparison, not performance numbers.
+- "Pausing non-participating replicas" is **post-step state-rollback** semantics,
+  not letting the engine skip them; NumPy/controller/RNG state is untouched, but
+  the physics solver did advance the whole batch.
 
 ---
 
-## 亮点五：结果溯源与可复现性
+## Highlight 3: Wind disturbance is a unified plant hook, not a per-env force patch
 
-**断言**：一次训练产出的记录，足以回答“跑了什么、跑了多少、算得对不对”。
+**Claim**: the 5 atmospheric tasks (QuadX-Waypoints, Fixedwing-Waypoints,
+Quadplane-VTOL, Rocket-Landing, Missile-Intercept) share one wind-disturbance
+path — aerodynamic forces are uniformly evaluated with **airspeed**
+`v_air = v - wind`; quadx / fixedwing / quadplane training entries hard-code a
+30% Dryden gust `WIND` constant as the default wind field, rocket fixes
+`dryden=0.0`, and missile stays in calm air. Calm air (default) is
+**bit-identical** to the published baseline.
 
-**机制与证据**
+**Mechanism and evidence**
 
-- `run.json` 记录：任务配置（env kwargs 原样落盘）、算法、迭代数、
-  总 transitions、wall time、逐副本 `completed_episodes` / `completed_successes`、
-  真实 `physics_step_calls`、完成 episode 的设备端指标，以及一条数值不等价声明
-  （[train_utils.py:750-801](../algorithms/train_utils.py#L750-L801)）。
-- `config.json` 在交给 runner 前做深拷贝，避免 `OnPolicyRunner` 原地修改配置
-  导致落盘的不是真实训练配置
-  （[train_utils.py:318-352](../algorithms/train_utils.py#L318-L352)）。
-- `eval.py` 使用冻结的确定性策略（均值动作、无探索噪声），
-  成功/回报由环境自身在设备端累计，结果写入 `eval.json`
-  （[eval.py:1-7](../scripts/eval.py#L1-L7)、[eval.py:123-139](../scripts/eval.py#L123-L139)）。
-  评测构造 env 时从 `results/<task>/config.json` 恢复训练记录的 `env_kwargs`
-  （风、benchmark 版本等），因此评测与训练分布一致；若该文件不存在则使用
-  环境默认配置。
-- 每个任务入口的超参硬编码在文件中、不暴露 CLI；牺牲灵活性换取可复现性
-  （[README.md §Usage](../README.md#usage)）。
+- `TensorPlant` holds `wind` (world-frame (n,3) float64, `None` = calm air);
+  `_air_velocity` subtracts wind in world frame then rotates to body axes
+  ([plant.py](../environments/common/plant.py)), so fixedwing lifting surfaces
+  and rocket fin/body-drag aerodynamic terms automatically sense wind;
+- QuadX has no lifting surfaces; its existing body-drag term's variable is
+  already called `vb_air` — before integration it equaled body-axis velocity,
+  after integration it becomes `vb - R^T·wind`, and in calm air it returns
+  bit-for-bit to the old implementation;
+- Wind generation uniformly goes through
+  `environments/common/disturbances.py`'s `WindDisturbance` (steady wind + Dryden
+  gusts, MIL-F-8785C low-altitude shaping filters, seeded RNG streams); each env
+  updates `plant.wind` once per control step (gusts freeze between physics
+  substeps), and `reset_idx` mirrors the filter state reset;
+- Training entries hard-code `WIND`: quadx / fixedwing / quadplane use pure
+  Dryden gusts (zero mean, 30% moderate); rocket uses `dryden=0.0` (same
+  convention as the calm-air baseline); missile passes no wind parameters;
+  quadx_track's constructor does not accept wind parameters. Satellite tasks are
+  in vacuum with no wind.
 
-**对审稿人的意义**：训练与评测的“输入—配置—统计口径”都可复核。
+**Invariant (the most critical point)**
 
-**边界**
+- The calm-air path never enters the wind branch: with `wind=None`,
+  `_air_velocity` and QuadX's drag term follow the same bytecode path as the old
+  implementation; the first reset and subsequent steps with the same seed are
+  **bit-identical**;
+- `eval.py` restores the training `env_kwargs` from
+  `results/<task>/config.json` when it exists, so a wind-trained policy is
+  evaluated under the same wind configuration; only when the config file is
+  missing does it use the environment's default calm air. Cross-method
+  comparisons must explicitly fix the same wind configuration instead of
+  assuming evaluation is always calm.
 
-- 这不是完整的实验管理平台：没有多 seed 编排、没有自动显著性检验。
-- **记录缺口**：训练入口级开关（如 `lr_cosine`、`freeze_obs_norm`）不写入
-  `config.json`/`run.json`，复现时须以对应 `train_<task>.py` 的硬编码常量为准。
-- `update()` 在 episode 边界会做一次小规模标量同步
-  （每步至多一次，且仅当有 episode 结束）；逐步训练路径本身无 host 同步。
+**Significance**: wind disturbance is not "a hand-written patch to the
+dynamics", but the physically correct formulation of evaluating all aerodynamic
+forces against airspeed; the effect of "disturbance robustness" on a policy can
+be tested separately without suspecting the evaluation standard was quietly
+relaxed.
 
----
+**Boundary**
 
-## 亮点六：每个任务配一个非学习基线，且基线不是稻草人
-
-**断言**：10 个任务各有一个解析式经典 GNC 默认基线（另有 20 个结构变体，
-合计 30 个控制器臂），与学习算法共享同一环境、同一奖励、同一成功判据；
-基线在部分任务上达到 100%，在另一些任务上保留**有取证记录的失败模式**。
-
-**机制与证据**
-
-- 统一契约：所有基线实现于 [baselines.py](../algorithms/baselines/baselines.py)
-  （`QuadXSE3Baseline` … `RendezvousTwoImpulseBaseline`，
-  [baselines.py:527-3253](../algorithms/baselines/baselines.py#L527-L3253)），工厂入口
-  `build_baseline(vehicle, env)`
-  （[baselines.py:3939](../algorithms/baselines/baselines.py#L3939)）。每个控制器
-  **只读 `'policy'` 观测组**、构造时读取环境常数（质量、推力权限、CMG 几何、
-  名义轨道——即经典 GNC 设计者本会掌握的模型知识），**不读任何内部状态缓冲**，
-  不改环境语义（[baselines.py:1-26](../algorithms/baselines/baselines.py#L1-L26)）。
-- 统一评测协议：[baseline_eval.py](../scripts/baseline_eval.py) 默认以
-  1024 envs / 20000 步安全上限 / seed 7 评测任意任务的基线，结果写
-  `results/<task>/baseline.json`（指定 `--baseline` 时写
-  `baseline_<controller>.json`），控制器信息标记为
-  `classical, policy-observation-only`。仓库内已发布的产物使用各自文件里
-  记录的较小窗口（并非统一 1024 副本），引用时必须同时写明 `num_envs`、
-  `seed` 与 `env_steps`
-  （[baseline_eval.py](../scripts/baseline_eval.py)、
-  [docs/baseline_test_report.md](baseline_test_report.md)）。
-- 覆盖的方法学谱系（默认臂）：SE(3) 几何控制（Lee et al. 2010, quadx）、
-  CV 卡尔曼滤波 + SE(3)（quadx_track）、L1 横向 + TECS 纵向（fixedwing）、
-  四旋翼 SE(3) + 前推（quadplane）、ZEM/PN 动力下降制导（rocket）、
-  增广比例导引 APN（missile）、四元数 PD + 奇异鲁棒 CMG 阻尼伪逆
-  （satellite）、Gauss 方程切向制导（transfer）、精确辛离散化 CWH-LQR
-  （docking）、递归重解两脉冲 CWH 制导（rendezvous）。结构变体覆盖
-  级联 PID、滑模外环、纯追踪、EMA 滤波、NLGL、E-guidance、PPN/TPN、
-  L1 机翼模式、混合模式自驾、普通/加权伪逆 CMG、Edelbaum、Q-law、
-  极点配置、CWH ZEM/ZEV、glideslope 与 CWH 补偿 PD
-  （[baselines.py](../algorithms/baselines/baselines.py)、
-  [docs/baseline_test_report.md](baseline_test_report.md) 第 5 节）。
-- **基线的参考战绩**（多 seed 协议：128 副本、每副本首回合、种子
-  7/13/21 + 留出 101；详见
-  [docs/baseline_test_report.md](baseline_test_report.md) 第 2 节）：
-  satellite / docking / rendezvous / rocket 100%；quadx 99.7%（3-seed 均值）；
-  transfer 99.2%；quadplane 89.1%；fixedwing 87.0%；quadx_track 85.9%；
-  missile 77.3%。留出种子 101 与协议种子无系统性差异。
-  单次发布的 `results/<task>/baseline.json` 窗口不同：quadx 为 32 副本 /
-  seed 7 / 800 步（90.6%），多数任务为 128 副本 / seed 13，
-  quadx_track 为 seed 21；这些数字与上表的 protocol 均值不可直接横比。
-- **失败模式已被分项记录**：fixedwing 的残余是三变体的 OOB
-  （`l1_tecs` 2.5%、`nlgl_tecs` 6.8%、`pid_cascade` 10.1%）；quadplane 的
-  弱臂以超时为主（`hybrid_cascade` 68.5%、`l1_wing` 50.4%，而默认
-  `se3_pusher` 仅 12.0%）；missile 的超时率为 0–3.1%。
-  专项 harness（[eval_fixedwing_autopilot.py](../environments/fixedwing/eval_fixedwing_autopilot.py)、
-  [rocket_pdg_test.py](../environments/rocket/rocket_pdg_test.py)）给出
-  场景级分解，但这些 harness 的结果 JSON 未随仓库发布。
-- **双向证据（只引用已落盘结果）**：基线并非稻草人——`benchmark_report.md`
-  §6.3–6.5 的 200/150 updates 短预算中，纯 PPO 在 satellite 上累计成功率
-  0.43–0.69、docking 上 0.11，明显低于基线的 100%；BC warm-start 将
-  satellite 提到 0.709、docking 提到 1.000，residual RL 进一步达到
-  satellite 0.985、docking 1.000。基线也并非天花板——missile 77.3%、
-  quadx_track 85.9%、fixedwing 87.0% 都留出了可攻击的失败空间。
-
-**对审稿人的意义**：学习算法的成绩有了非学习参照系；且参照系的失败
-模式被归因（权限饱和 / 几何不可达 / 数值病态）而非含糊带过，
-"RL 超越经典方法"的主张可以落到具体场景。
-
-**边界**
-
-- 基线公式是解析式，无优化器、无调参循环；它们的超参（增益、带宽、
-  伺服带）是**任务级手工设计**，不声称全局最优。
-- 成功率数字依赖评测窗口（步数/env 数），不同 harness 的窗口不同；
-  跨 harness 直接横比成功率无效（与亮点四的评测口径边界一致）。
-- rocket 基线的成功率强依赖评测窗口与版本：v1 的瞬时触垫判据与 v2 的
-  “连续停稳 2 s”判据不可比。当前 v2 产物
-  `results/rocket/baseline.json`（128 副本 / seed 13 / 1200 步，
-  `ever_stable_2s=1.0`）为 100%；引用历史 v1 数字时必须声明版本与窗口。
+- Gust filters advance once per control step and freeze between physics
+  substeps (Dryden bandwidth is far below the control frequency, so the error is
+  negligible);
+- `WindDisturbance`'s RNG is a per-replica counter stream (seed
+  `mix32(seed ^ i*GOLDEN)` + per-replica counter, all on device, no CPU→GPU
+  transfer); a `step` with `env_ids` advances only the selected replicas'
+  counters and does not change other replicas' noise sequences; the calm-air
+  path has zero overhead.
 
 ---
 
-## 不声称什么（Non-claims）
+## Highlight 4: Training infrastructure — reusable LR scheduling and controlled knobs
 
-审稿人最容易被“复现”二字误导，以下边界均为显式设计声明：
+**Claim**: the repository provides a reusable training schedule and controlled
+hyperparameter knobs that guarantee fair cross-task comparisons.
 
-1. **不声称与 PyFlyt/Bullet 逐位物理等价**。Genesis 后端是 API 兼容层，
-   引擎数值不同（[original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)）。
-2. **不声称 NumPy 随机位流一致**。`TensorRandom` 与上游分布兼容，
-   但位流不同（[plant.py:60-72](../environments/common/plant.py#L60-L72)）。
-3. **不声称基线与 RL 可比性之外的最优性**。基线是手工设计，不代表性能上界（见第 6 条）。
-4. **不声称原版代码桥接是高性能路径**。它是正确性优先的 host 端桥接。
-5. **示例数字不构成统计结论**。单 seed 结果只作记录与量级参考。
-6. **不声称经典基线最优**。基线是解析式手工设计（无优化器、无调参循环）；
-   它们的价值是同一判据下的非学习参照与已归因的失败模式，不是性能上界。
+**Mechanism and evidence**
+
+- **warmup-cosine LR scheduling**: the PPO side has a built-in
+  `_warmup_cosine_decay` formula (warmup fraction 1e-6 × total updates,
+  peak→end span); because rsl-rl never resets lr under `schedule='fixed'`, the
+  code writes `optimizer.param_groups` directly
+  ([train_utils.py:27-36](../algorithms/train_utils.py#L27-L36),
+  [train_utils.py:681-697](../algorithms/train_utils.py#L681-L697)).
+- **Other controlled knobs**: exponential decay, `lr_sigma_coupling` (makes lr ∝
+  σ, keeping per-step policy drift rate constant), `sigma_pin` (re-pins
+  exploration variance), `freeze_obs_norm` (freezes warm-start observation
+  normalization); all are opt-in with explicit mutual-exclusion checks
+  ([train_utils.py:551-566](../algorithms/train_utils.py#L551-L566),
+  [train_utils.py:713-730](../algorithms/train_utils.py#L713-L730)).
+  `lr_sigma_coupling` / `sigma_pin` read `log_std_param` and therefore apply only
+  to `distribution='gaussian'`; the default `BetaDistribution` has no such
+  parameter, so those knobs are inactive with it.
+
+**Boundary**
+
+- Wall-clock values are recorded on the same machine and are affected by
+  concurrent work on that machine; they are order-of-magnitude references only.
+- Deterministic evaluation is run uniformly by `eval.py` and written to each
+  arm's `eval.json`; however, existing records do not all use the same evaluation
+  protocol (different env counts/step counts), so **success rates from different
+  `eval.json` files must not be compared directly**.
 
 ---
 
-## 断言状态表
+## Highlight 5: Result provenance and reproducibility
 
-| 主张 | 状态 | 证据/复验方式 |
+**Claim**: the record produced by one training run is sufficient to answer
+"what ran, how much ran, and whether it was computed correctly".
+
+**Mechanism and evidence**
+
+- `run.json` records: task configuration (env kwargs written as-is), algorithm,
+  iteration count, total transitions, wall time, per-replica
+  `completed_episodes` / `completed_successes`, real `physics_step_calls`,
+  device-side metrics for completed episodes, and a numerical non-equivalence
+  statement ([train_utils.py:750-801](../algorithms/train_utils.py#L750-L801)).
+- `config.json` is deep-copied before being handed to the runner, preventing
+  `OnPolicyRunner` from mutating the config in place so that what is written is
+  not the real training configuration
+  ([train_utils.py:318-352](../algorithms/train_utils.py#L318-L352)).
+- `eval.py` uses a frozen deterministic policy (mean actions, no exploration
+  noise); success/return are accumulated on device by the environment and written
+  to `eval.json` ([eval.py:1-7](../scripts/eval.py#L1-L7),
+  [eval.py:123-139](../scripts/eval.py#L123-L139)). When constructing the
+  evaluation env, it restores the training `env_kwargs` (wind, benchmark version,
+  etc.) from `results/<task>/config.json`, so evaluation matches the training
+  distribution; if that file is missing, it uses the environment defaults.
+- Each task entry hard-codes hyperparameters and exposes no CLI; flexibility is
+  traded for reproducibility ([README.md §Usage](../README.md#usage)).
+
+**Significance**: the training/evaluation "input — configuration — accounting
+convention" is all reviewable.
+
+**Boundary**
+
+- This is not a full experiment-management platform: there is no multi-seed
+  orchestration and no automatic significance testing.
+- **Recording gap**: training-entry-level switches (e.g. `lr_cosine`,
+  `freeze_obs_norm`) are not written to `config.json`/`run.json`; reproduction
+  must use the corresponding `train_<task>.py`'s hard-coded constants.
+- `update()` performs one small scalar synchronization at episode boundaries (at
+  most once per step and only when an episode ends); the step-by-step training
+  path itself has no host synchronization.
+
+---
+
+## Highlight 6: A non-learned baseline per task, and the baselines are not strawmen
+
+**Claim**: each of the 10 tasks has an analytic classical GNC default baseline
+(plus 20 structural variants, 30 controller arms total), sharing the same
+environment, reward and success criterion as learning algorithms; baselines
+reach 100% on some tasks and retain **documented failure modes** on others.
+
+**Mechanism and evidence**
+
+- Unified contract: all baselines are implemented in
+  [baselines.py](../algorithms/baselines/baselines.py) (`QuadXSE3Baseline` …
+  `RendezvousTwoImpulseBaseline`,
+  [baselines.py:527-3253](../algorithms/baselines/baselines.py#L527-L3253)), with
+  factory entry `build_baseline(vehicle, env)`
+  ([baselines.py:3939](../algorithms/baselines/baselines.py#L3939)). Each
+  controller **reads only the `'policy'` observation group**, reads environment
+  constants at construction (mass, thrust authority, CMG geometry, nominal orbit
+  — the model knowledge a classical GNC designer would have), **reads no
+  internal state buffer**, and does not change environment semantics
+  ([baselines.py:1-26](../algorithms/baselines/baselines.py#L1-L26)).
+- Unified evaluation protocol: [baseline_eval.py](../scripts/baseline_eval.py)
+  defaults to evaluating any task's baseline at 1024 envs / 20000-step safety
+  cap / seed 7, writing `results/<task>/baseline.json` (or
+  `baseline_<controller>.json` with `--baseline`), with controller metadata
+  marked `classical, policy-observation-only`. Shipped artifacts use the smaller
+  windows recorded in their own files (not a uniform 1024 replicas); citations
+  must state `num_envs`, `seed` and `env_steps`
+  ([baseline_eval.py](../scripts/baseline_eval.py),
+  [baseline_test_report.md](baseline_test_report.md)).
+- Methodological coverage (default arms): SE(3) geometric control (Lee et al.
+  2010, quadx), CV Kalman filter + SE(3) (quadx_track), L1 lateral + TECS
+  longitudinal (fixedwing), quadrotor SE(3) + pusher (quadplane), ZEM/PN
+  powered-descent guidance (rocket), augmented proportional navigation APN
+  (missile), quaternion PD + singularity-robust CMG damped pseudo-inverse
+  (satellite), Gauss-equation tangential guidance (transfer), exactly
+  symplectic-discretized CWH-LQR (docking), recursively re-solved two-impulse
+  CWH guidance (rendezvous). Structural variants cover cascaded PID,
+  sliding-mode outer loop, pure pursuit, EMA filtering, NLGL, E-guidance,
+  PPN/TPN, L1 wing mode, hybrid-mode autopilot, ordinary/weighted pseudo-inverse
+  CMG, Edelbaum, Q-law, pole placement, CWH ZEM/ZEV, glideslope and CWH
+  compensated PD ([baselines.py](../algorithms/baselines/baselines.py),
+  [baseline_test_report.md](baseline_test_report.md) §5).
+- **Baseline reference records** (multi-seed protocol: 128 replicas, first
+  episode per replica, seeds 7/13/21 + held-out 101; see
+  [baseline_test_report.md](baseline_test_report.md) §2): satellite / docking /
+  rendezvous / rocket 100%; quadx 99.7% (3-seed mean); transfer 99.2%; quadplane
+  89.1%; fixedwing 87.0%; quadx_track 85.9%; missile 77.3%. Held-out seed 101
+  shows no systematic difference from the protocol seeds. Single shipped
+  `results/<task>/baseline.json` windows differ: quadx is 32 replicas / seed 7 /
+  800 steps (90.6%), most tasks are 128 replicas / seed 13, quadx_track is seed
+  21; these numbers are not directly comparable with the protocol means above.
+- **Failure modes are recorded item by item**: fixedwing residuals are the three
+  variants' OOB (`l1_tecs` 2.5%, `nlgl_tecs` 6.8%, `pid_cascade` 10.1%);
+  quadplane's weak arms are mostly timeouts (`hybrid_cascade` 68.5%, `l1_wing`
+  50.4%, while default `se3_pusher` is only 12.0%); missile timeouts are 0–3.1%.
+  Specialized harnesses
+  ([eval_fixedwing_autopilot.py](../environments/fixedwing/eval_fixedwing_autopilot.py),
+  [rocket_pdg_test.py](../environments/rocket/rocket_pdg_test.py)) provide
+  scenario-level decomposition, but their result JSONs are not shipped.
+- **Two-way evidence (only citing delivered results)**: the baselines are not
+  strawmen — in `benchmark_report.md` §6.3–6.5's short 200/150-update budget,
+  pure PPO's cumulative success on satellite is 0.43–0.69 and on docking 0.11,
+  far below the baseline's 100%; BC warm-start raises satellite to 0.709 and
+  docking to 1.000, and residual RL further reaches satellite 0.985 and docking
+  1.000. The baselines are also not a ceiling — missile 77.3%, quadx_track 85.9%
+  and fixedwing 87.0% all leave attackable failure space.
+
+**Significance**: learning algorithms now have a non-learned reference frame;
+the reference frame's failure modes are attributed (authority saturation /
+geometric infeasibility / numerical pathology) rather than glossed over, so
+"RL surpasses classical methods" can be grounded in specific scenarios.
+
+**Boundary**
+
+- Baseline formulas are analytic, with no optimizer and no tuning loop; their
+  hyperparameters (gains, bandwidths, servo bands) are **task-level manual
+  designs**, not claimed globally optimal.
+- Success numbers depend on the evaluation window (steps/env count); different
+  harnesses use different windows, so direct cross-harness success comparisons
+  are invalid (consistent with Highlight 4's evaluation convention boundary).
+- Rocket baseline success depends strongly on the evaluation window and version:
+  v1's instantaneous touch-pad criterion is not comparable to v2's "continuous
+  settle for 2 s" criterion. The current v2 artifact
+  `results/rocket/baseline.json` (128 replicas / seed 13 / 1200 steps,
+  `ever_stable_2s=1.0`) is 100%; citing historical v1 numbers requires stating
+  the version and window.
+
+---
+
+## Non-claims
+
+Reviewers are most easily misled by the word "reproduction"; the following
+boundaries are explicit design statements:
+
+1. **We do not claim bitwise physical equivalence with PyFlyt/Bullet**. The
+   Genesis backend is an API compatibility layer with different engine numerics
+   ([original_backend.py:1-5](../environments/common/original_backend.py#L1-L5)).
+2. **We do not claim NumPy random bitstream identity**. `TensorRandom` is
+   distribution-compatible with upstream but has a different bitstream
+   ([plant.py:60-72](../environments/common/plant.py#L60-L72)).
+3. **We do not claim optimality beyond baseline-vs-RL comparability**. Baselines
+   are manually designed and do not represent a performance upper bound (see §6).
+4. **We do not claim the original-code bridge is a high-performance path**. It is
+   a correctness-first host-side bridge.
+5. **Example numbers are not statistical conclusions**. Single-seed results are
+   records and order-of-magnitude references only.
+6. **We do not claim classical baselines are optimal**. They are analytic manual
+   designs (no optimizer, no tuning loop); their value is a non-learned reference
+   under the same criterion and attributed failure modes, not a performance
+   ceiling.
+
+---
+
+## Claim status table
+
+| Claim | Status | Evidence/re-verification |
 |---|---|---|
-| 上游 PyFlyt 0.29.0 源码与资产可哈希校验 | 已实现；**未自动接线**；需安装 PyFlyt 0.29.0 | `python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"` |
-| `plant_id` 受控对象证书 | 已实现；**未被入口调用** | `contract()`，[consistency.py:97-127](../environments/common/consistency.py#L97-L127) |
-| 张量 plant 惯量取自参考 URDF | 已接线 | [plant.py:441-462](../environments/common/plant.py#L441-L462) |
-| 未激活副本不消耗随机数/不推进状态 | 设计保证 + 代码路径 | [plant.py:1-9](../environments/common/plant.py#L1-L9) |
-| 基准难度逐位复现 | 已验证（10 任务，同 seed 首个 reset 及 3 步后状态） | 临时复核脚本未随仓库保留 |
-| 评测使用训练记录的配置 | 已保证（eval 恢复 `config.json` 的 `env_kwargs`） | [eval.py](../scripts/eval.py) |
-| PPO warmup-cosine LR 调度 | 已接线（opt-in `lr_cosine`） | [train_utils.py:27-36](../algorithms/train_utils.py#L27-L36)、[train_utils.py:681-697](../algorithms/train_utils.py#L681-L697) |
-| 每任务一个经典基线、只读 policy 观测 | 已实现 + 官方口径实测 | `python scripts/baseline_eval.py <task>`，[baselines.py:3939](../algorithms/baselines/baselines.py#L3939) |
-| 与上游物理逐位等价 | **不声称** | 见 Non-claims 第 1 条 |
+| Upstream PyFlyt 0.29.0 source and assets are hash-verifiable | Implemented; **not auto-wired**; requires installing PyFlyt 0.29.0 | `python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"` |
+| `plant_id` plant certificate | Implemented; **not called by entry points** | `contract()`, [consistency.py:97-127](../environments/common/consistency.py#L97-L127) |
+| Tensor-plant inertias come from the reference URDF | Wired | [plant.py:441-462](../environments/common/plant.py#L441-L462) |
+| Inactive replicas consume no random numbers / do not advance state | Design guarantee + code path | [plant.py:1-9](../environments/common/plant.py#L1-L9) |
+| Baseline difficulty is bit-reproducible | Verified (10 tasks, same-seed first reset and state after 3 steps) | Ad-hoc re-check script not retained |
+| Evaluation uses the training-recorded configuration | Guaranteed (eval restores `env_kwargs` from `config.json`) | [eval.py](../scripts/eval.py) |
+| PPO warmup-cosine LR schedule | Wired (opt-in `lr_cosine`) | [train_utils.py:27-36](../algorithms/train_utils.py#L27-L36), [train_utils.py:681-697](../algorithms/train_utils.py#L681-L697) |
+| One classical baseline per task, policy observations only | Implemented + measured under the official convention | `python scripts/baseline_eval.py <task>`, [baselines.py:3939](../algorithms/baselines/baselines.py#L3939) |
+| Bitwise physical equivalence with upstream | **Not claimed** | See Non-claims #1 |
 
-> 说明：两张“已实现但未接线”的审计原语（哈希校验、plant_id）保留为可选工具，
-> 而不是训练时的强制门禁，以免在没有安装参考包的环境里阻塞正常训练。
-> 若审稿流程要求强制校验，只需在入口处调用一次即可。
+> Note: the two "implemented but not wired" audit primitives (hash verification,
+> plant_id) remain optional tools rather than mandatory training-time gates, so
+> environments without the reference package installed are not blocked from
+> normal training. If a review process requires mandatory verification, calling
+> them once at the entry point is enough.
 
 ---
 
-## 复验清单
+## Re-verification checklist
 
 ```bash
-# 1) 基准哈希校验（需先安装 PyFlyt 0.29.0；本仓库开发环境未安装）
+# 1) Reference hash verification (requires installing PyFlyt 0.29.0; not installed in this repo's dev env)
 python -c \
   "from environments.common.consistency import verify_installed_reference as v; print(v())"
 
-# 2) 恢复训练记录的 env_kwargs 做确定性评测（以 quadx 为例）
+# 2) Restore the training-recorded env_kwargs for deterministic evaluation (quadx example)
 python scripts/eval.py quadx --num-envs 16 --max-steps 400
 
-# 3) 查看一次训练的实验记录（仓库内已归档的是 smoke 运行）
+# 3) Inspect one training run's record (the archived one in this repo is a smoke run)
 python -c "import json;r=json.load(open('results/smoke/quadx_ppo/run.json'));print(r['task']);print(r['transitions'], r['physics_step_calls'])"
 
-# 4) 定位风扰钩子的实现位置
+# 4) Locate the wind-disturbance hook implementation
 grep -n "wind" environments/common/plant.py environments/common/disturbances.py | head -20
 
-# 5) 任一任务的经典基线（默认 1024 envs / 20000 步安全上限 / seed 7，
-#    写 results/<task>/baseline.json；已发布产物用的是各自 JSON 内的较小窗口）
+# 5) A classical baseline for any task (defaults: 1024 envs / 20000-step safety cap / seed 7,
+#    writes results/<task>/baseline.json; shipped artifacts use the smaller window in their own JSON)
 python scripts/baseline_eval.py quadx
 ```
 
 ---
 
-## 代码索引
+## Code index
 
-| 能力 | 文件 |
+| Capability | File |
 |---|---|
-| 基准哈希校验、URDF 惯量解析、`plant_id` | [environments/common/consistency.py](../environments/common/consistency.py) |
-| 纯张量 plant、逐副本随机流 | [environments/common/plant.py](../environments/common/plant.py) |
-| Genesis 兼容后端（BulletClient API） | [environments/common/original_backend.py](../environments/common/original_backend.py) |
-| 原版任务共享场景批处理 | [environments/common/original_batch.py](../environments/common/original_batch.py) |
-| 训练/记录管线、LR 调度对齐 | [algorithms/train_utils.py](../algorithms/train_utils.py) |
-| 10 任务经典基线库（30 个控制器臂） | [algorithms/baselines/baselines.py](../algorithms/baselines/baselines.py) |
-| 基线统一评测入口 | [baseline_eval.py](../scripts/baseline_eval.py) |
-| 基线专项 harness（场景网格/消融） | [eval_docking_lqr.py](../environments/satellite/rendezvous_docking/eval_docking_lqr.py)、[eval_fixedwing_autopilot.py](../environments/fixedwing/eval_fixedwing_autopilot.py)、[eval_rendezvous_baseline.py](../environments/satellite/rendezvous_docking/eval_rendezvous_baseline.py)、[rocket_pdg_test.py](../environments/rocket/rocket_pdg_test.py)、[test_quadx_se3.py](../environments/multirotor/test_quadx_se3.py) |
-| 确定性评测 | [eval.py](../scripts/eval.py) |
+| Reference hash verification, URDF inertia parsing, `plant_id` | [environments/common/consistency.py](../environments/common/consistency.py) |
+| Pure tensor plant, per-replica random streams | [environments/common/plant.py](../environments/common/plant.py) |
+| Genesis compatibility backend (BulletClient API) | [environments/common/original_backend.py](../environments/common/original_backend.py) |
+| Original-task shared-scene batching | [environments/common/original_batch.py](../environments/common/original_batch.py) |
+| Training/record pipeline, LR schedule alignment | [algorithms/train_utils.py](../algorithms/train_utils.py) |
+| 10-task classical baseline library (30 controller arms) | [algorithms/baselines/baselines.py](../algorithms/baselines/baselines.py) |
+| Unified baseline evaluation entry | [baseline_eval.py](../scripts/baseline_eval.py) |
+| Baseline-specific harnesses (scenario grids/ablations) | [eval_docking_lqr.py](../environments/satellite/rendezvous_docking/eval_docking_lqr.py), [eval_fixedwing_autopilot.py](../environments/fixedwing/eval_fixedwing_autopilot.py), [eval_rendezvous_baseline.py](../environments/satellite/rendezvous_docking/eval_rendezvous_baseline.py), [rocket_pdg_test.py](../environments/rocket/rocket_pdg_test.py), [test_quadx_se3.py](../environments/multirotor/test_quadx_se3.py) |
+| Deterministic evaluation | [eval.py](../scripts/eval.py) |

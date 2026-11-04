@@ -1,5 +1,7 @@
 # Rendezvous Baseline: Receding-Horizon CWH Two-Impulse Guidance (`RendezvousTwoImpulseBaseline`)
 
+**English** · [简体中文](baseline-rendezvous-two-impulse.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the rendezvous task is a recursively re-solved

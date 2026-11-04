@@ -1,5 +1,7 @@
 # Satellite Attitude Ablation: Quaternion PD + Ordinary Moore–Penrose CMG Steering (`SatelliteOrdinaryPinvBaseline`)
 
+**English** · [简体中文](baseline-satellite-mp-pinv.zh-CN.md)
+
 ## 1. Overview
 
 This baseline is the steering-law ablation of the frozen classical satellite

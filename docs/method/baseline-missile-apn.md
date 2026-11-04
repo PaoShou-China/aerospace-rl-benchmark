@@ -1,5 +1,7 @@
 # Missile-Intercept Baseline: Augmented Proportional Navigation (`MissileAPNBaseline`)
 
+**English** · [简体中文](baseline-missile-apn.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the Missile-Intercept task is augmented

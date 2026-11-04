@@ -1,5 +1,7 @@
 # References
 
+**English** · [简体中文](references.zh-CN.md)
+
 This suite reproduces or adapts the following published tasks; each
 environment docstring lists the source of its defaults.
 

@@ -1,5 +1,7 @@
 # Fixedwing Baseline: L1 Guidance + TECS Autopilot (`FixedwingAutopilotBaseline`)
 
+**English** · [简体中文](baseline-fixedwing-l1-tecs.zh-CN.md)
+
 ## 1. Overview
 
 The Fixedwing-Waypoints task requires a 2.35 kg, 1.6 m span unmanned aircraft — spawned at $(0,0,10)$ m at

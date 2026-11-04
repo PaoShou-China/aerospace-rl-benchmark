@@ -1,5 +1,7 @@
 # Repository Layout
 
+**English** · [简体中文](repository-layout.zh-CN.md)
+
 ```text
 environments/               # everything that defines a task
 ├── multirotor/             # QuadX-Waypoints + QuadX-Track

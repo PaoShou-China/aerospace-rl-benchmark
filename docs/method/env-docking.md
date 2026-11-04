@@ -1,5 +1,7 @@
 # Docking Environment (`SpaceDockingEnv`)
 
+**English** · [简体中文](env-docking.zh-CN.md)
+
 ## 1. Overview
 
 The docking task reproduces the close-range final-approach benchmark of the

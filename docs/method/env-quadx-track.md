@@ -1,5 +1,7 @@
 # QuadX-Track Environment (`QuadXTrackEnv`)
 
+**English** · [简体中文](env-quadx-track.zh-CN.md)
+
 **Status: implemented** — the environment, the `train_quadx_track.py` entry, the
 KF+SE(3) baseline, and both `baseline_eval.py` / `eval.py` registrations exist
 and have been run; this is not a planned or future task requiring a new civil

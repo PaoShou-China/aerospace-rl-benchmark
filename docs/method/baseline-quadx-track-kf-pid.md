@@ -1,5 +1,7 @@
 # QuadX-Track Baseline: Constant-Velocity Kalman Filter + Fixed-Offset SE(3) Tracking (`QuadXTrackKFBaseline`)
 
+**English** · [简体中文](baseline-quadx-track-kf-pid.zh-CN.md)
+
 ## 1. Overview
 
 The QuadX-Track task requires a Crazyflie 2.x micro-quadrotor to keep a cooperative ground vehicle in a

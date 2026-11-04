@@ -1,5 +1,7 @@
 # Rocket Landing Environment (`RocketLandingEnv`)
 
+**English** · [简体中文](env-rocket-landing.zh-CN.md)
+
 ## 1. Overview
 
 The rocket-landing task is an upstream-faithful port of the PyFlyt 0.29.0

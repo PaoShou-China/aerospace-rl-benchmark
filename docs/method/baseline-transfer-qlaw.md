@@ -1,5 +1,7 @@
 # Low-Thrust Transfer Baseline: Petropoulos Q-Law Feedback Guidance (`TransferQLawBaseline`)
 
+**English** · [简体中文](baseline-transfer-qlaw.zh-CN.md)
+
 ## 1. Overview
 
 The second classical baseline for the low-thrust perigee-raising task is

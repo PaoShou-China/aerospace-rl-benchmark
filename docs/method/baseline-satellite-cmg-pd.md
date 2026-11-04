@@ -1,5 +1,7 @@
 # Satellite Attitude Baseline: Quaternion PD + Singularity-Robust CMG Steering (`SatelliteCMGBaseline`)
 
+**English** · [简体中文](baseline-satellite-cmg-pd.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the CMG attitude-control task is a quaternion

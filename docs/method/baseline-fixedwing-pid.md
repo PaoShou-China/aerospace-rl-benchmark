@@ -1,5 +1,7 @@
 # Fixedwing Baseline: Conventional Cascaded PID Autopilot (`FixedwingPIDBaseline`)
 
+**English** · [简体中文](baseline-fixedwing-pid.zh-CN.md)
+
 ## 1. Overview
 
 `FixedwingPIDBaseline` is a textbook cascaded PID autopilot added as a third classical

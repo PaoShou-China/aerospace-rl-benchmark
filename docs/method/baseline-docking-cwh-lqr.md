@@ -1,5 +1,7 @@
 # Docking Baseline: Symplectic-Exact CWH Discrete LQR with Constraint Layers (`DockingCWHLQRBaseline`)
 
+**English** · [简体中文](baseline-docking-cwh-lqr.zh-CN.md)
+
 ## 1. Overview
 
 The classical baseline for the docking task is a discrete linear–quadratic

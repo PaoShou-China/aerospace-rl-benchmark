@@ -1,5 +1,7 @@
 # Task Overview
 
+**English** · [简体中文](tasks.zh-CN.md)
+
 Ten single-agent aerospace control tasks: six atmospheric vehicles on the
 Genesis rigid-body backend and four spacecraft missions on explicit tensor
 dynamics. Every task exposes the same `step` / `reset` / buffer contract.
@@ -35,4 +37,5 @@ distributions live in each package docstring:
 [orbit_transfer](../environments/satellite/orbit_transfer/__init__.py) ·
 [rendezvous_docking](../environments/satellite/rendezvous_docking/__init__.py).
 Paper-style method write-ups are indexed in
-[method/README.md](method/README.md).
+[method/README.md](method/README.md)
+(Chinese index: [method/README.zh-CN.md](method/README.zh-CN.md)).

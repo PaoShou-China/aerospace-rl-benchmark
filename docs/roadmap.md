@@ -1,5 +1,7 @@
 # Roadmap
 
+**English** · [简体中文](roadmap.zh-CN.md)
+
 Every future task follows the same recipe: tensorized env + spec docstring →
 classical baseline registered in `algorithms/baselines/` → self-contained
 `train_<task>.py` → `results/<task>/` → README update. All tasks are
