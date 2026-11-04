@@ -7,8 +7,9 @@
 </p>
 
 <p align="center">
+  <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/"><b>paoshou-china.github.io/aerospace-rl-benchmark</b></a>
+  <br>
   <a href="README.md">English</a> ·
-  <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">在线展示</a> ·
   <a href="docs/technical-highlights.md">技术要点</a> ·
   <a href="docs/evaluation_protocol.md">评测协议</a> ·
   <a href="benchmark_report.md">基准报告</a>

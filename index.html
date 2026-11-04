@@ -295,7 +295,7 @@
       <img src="assets/brand/mark.svg" alt="" width="26" height="26">
       <span>AerospaceRL <em>Benchmark</em></span>
     </a>
-    <nav class="nav" id="site-nav" aria-label="Main navigation">
+    <nav class="nav" id="site-nav" aria-label="Main navigation" data-i18n-aria="nav.label">
       <a href="#tasks" data-i18n="nav.tasks">Tasks</a>
       <a href="#design" data-i18n="nav.design">Design</a>
       <a href="#baselines" data-i18n="nav.baselines">Baselines</a>
@@ -514,7 +514,7 @@
       <div class="closeups">
         <figure class="closeup">
           <div class="media">
-            <button class="poster" type="button" data-video="showcase/assets/videos/quadx_vis.mp4" data-task="QuadX close-up" aria-label="Play QuadX close-up replay">
+            <button class="poster" type="button" data-video="showcase/assets/videos/quadx_vis.mp4" data-task="QuadX close-up" data-task-zh="QuadX 特写" aria-label="Play QuadX close-up replay">
               <img src="showcase/assets/posters/quadx_vis.jpg" alt="QuadX close-up replay frame" data-i18n-alt="alt.quadx_vis" width="960" height="540" loading="lazy" decoding="async">
               <span class="play" aria-hidden="true"></span>
             </button>
@@ -526,7 +526,7 @@
         </figure>
         <figure class="closeup">
           <div class="media">
-            <button class="poster" type="button" data-video="showcase/assets/videos/docking_vis.mp4" data-task="Docking close-up" aria-label="Play Docking close-up replay">
+            <button class="poster" type="button" data-video="showcase/assets/videos/docking_vis.mp4" data-task="Docking close-up" data-task-zh="Docking 特写" aria-label="Play Docking close-up replay">
               <img src="showcase/assets/posters/docking_vis.jpg" alt="Docking close-up replay frame" data-i18n-alt="alt.docking_vis" width="960" height="540" loading="lazy" decoding="async">
               <span class="play" aria-hidden="true"></span>
             </button>
@@ -538,7 +538,7 @@
         </figure>
         <figure class="closeup">
           <div class="media">
-            <button class="poster" type="button" data-video="showcase/assets/videos/rocket_vis.mp4" data-task="Rocket close-up" aria-label="Play Rocket close-up replay">
+            <button class="poster" type="button" data-video="showcase/assets/videos/rocket_vis.mp4" data-task="Rocket close-up" data-task-zh="Rocket 特写" aria-label="Play Rocket close-up replay">
               <img src="showcase/assets/posters/rocket_vis.jpg" alt="Rocket close-up replay frame" data-i18n-alt="alt.rocket_vis" width="960" height="540" loading="lazy" decoding="async">
               <span class="play" aria-hidden="true"></span>
             </button>
@@ -598,16 +598,16 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>QuadX-Waypoints</td><td class="ctrl">SE(3) geometric control + integral trim</td><td class="num">90.6%</td><td class="cond" data-i18n="cond.quadx">32 replicas, seed 7 · cascade PID arm 99.2%</td></tr>
-            <tr><td>QuadX-Track</td><td class="ctrl">CV Kalman filter + fixed-offset SE(3)</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx_track">128 replicas, seed 21 · visible-time fraction 90.2%</td></tr>
-            <tr><td>Fixedwing-Waypoints</td><td class="ctrl">L1 lateral + TECS longitudinal autopilot</td><td class="num">97.0%</td><td class="cond" data-i18n="cond.fixedwing">128 replicas, seed 13 · window ends before the 120 s limit</td></tr>
-            <tr><td>Quadplane-VTOL</td><td class="ctrl">SE(3) + forward pusher</td><td class="num">89.1%</td><td class="cond" data-i18n="cond.quadplane">128 replicas, seed 13</td></tr>
-            <tr><td>Rocket-Landing</td><td class="ctrl">ZEM/PN PDG + virtual pad + pulse servo</td><td class="num">100%</td><td class="cond" data-i18n="cond.rocket">v2 criterion · 40 Hz · settled for 2 s</td></tr>
-            <tr><td>Missile-Intercept</td><td class="ctrl">Augmented PN (N = 15) → body-rate commands</td><td class="num">71.1%</td><td class="cond" data-i18n="cond.missile">128 replicas, seed 13</td></tr>
-            <tr><td>Satellite Attitude</td><td class="ctrl">Quaternion PD + Schaub–Junkins damped pseudo-inverse</td><td class="num">100%</td><td class="cond" data-i18n="cond.satellite">128 replicas, seed 13</td></tr>
-            <tr><td>Low-Thrust Transfer</td><td class="ctrl">Gauss one-step greedy tangential guidance</td><td class="num">100%</td><td class="cond" data-i18n="cond.transfer">128 replicas, seed 13 · terminal return 0.0067</td></tr>
-            <tr><td>Space Docking</td><td class="ctrl">CWH discrete LQR + shield / fuel derating</td><td class="num">100%</td><td class="cond" data-i18n="cond.docking">128 replicas, seed 13 · 263-step window</td></tr>
-            <tr><td>Space Rendezvous</td><td class="ctrl">Two-impulse CWH ZEM/PN, recursive re-solve</td><td class="num">100%</td><td class="cond" data-i18n="cond.rendezvous">128 replicas, seed 13 · 581-step window</td></tr>
+            <tr><td>QuadX-Waypoints</td><td class="ctrl" data-i18n="ctrl.quadx">SE(3) geometric control + integral trim</td><td class="num">90.6%</td><td class="cond" data-i18n="cond.quadx">32 replicas, seed 7 · cascade PID arm 99.2%</td></tr>
+            <tr><td>QuadX-Track</td><td class="ctrl" data-i18n="ctrl.quadx_track">CV Kalman filter + fixed-offset SE(3)</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx_track">128 replicas, seed 21 · visible-time fraction 90.2%</td></tr>
+            <tr><td>Fixedwing-Waypoints</td><td class="ctrl" data-i18n="ctrl.fixedwing">L1 lateral + TECS longitudinal autopilot</td><td class="num">97.0%</td><td class="cond" data-i18n="cond.fixedwing">128 replicas, seed 13 · window ends before the 120 s limit</td></tr>
+            <tr><td>Quadplane-VTOL</td><td class="ctrl" data-i18n="ctrl.quadplane">SE(3) + forward pusher</td><td class="num">89.1%</td><td class="cond" data-i18n="cond.quadplane">128 replicas, seed 13</td></tr>
+            <tr><td>Rocket-Landing</td><td class="ctrl" data-i18n="ctrl.rocket">ZEM/PN PDG + virtual pad + pulse servo</td><td class="num">100%</td><td class="cond" data-i18n="cond.rocket">v2 criterion · 40 Hz · settled for 2 s</td></tr>
+            <tr><td>Missile-Intercept</td><td class="ctrl" data-i18n="ctrl.missile">Augmented PN (N = 15) → body-rate commands</td><td class="num">71.1%</td><td class="cond" data-i18n="cond.missile">128 replicas, seed 13</td></tr>
+            <tr><td>Satellite Attitude</td><td class="ctrl" data-i18n="ctrl.satellite">Quaternion PD + Schaub–Junkins damped pseudo-inverse</td><td class="num">100%</td><td class="cond" data-i18n="cond.satellite">128 replicas, seed 13</td></tr>
+            <tr><td>Low-Thrust Transfer</td><td class="ctrl" data-i18n="ctrl.transfer">Gauss one-step greedy tangential guidance</td><td class="num">100%</td><td class="cond" data-i18n="cond.transfer">128 replicas, seed 13 · terminal return 0.0067</td></tr>
+            <tr><td>Space Docking</td><td class="ctrl" data-i18n="ctrl.docking">CWH discrete LQR + shield / fuel derating</td><td class="num">100%</td><td class="cond" data-i18n="cond.docking">128 replicas, seed 13 · 263-step window</td></tr>
+            <tr><td>Space Rendezvous</td><td class="ctrl" data-i18n="ctrl.rendezvous">Two-impulse CWH ZEM/PN, recursive re-solve</td><td class="num">100%</td><td class="cond" data-i18n="cond.rendezvous">128 replicas, seed 13 · 581-step window</td></tr>
           </tbody>
         </table>
       </div>
@@ -627,16 +627,16 @@
         <p class="sec-intro" data-i18n="start.intro">Training entries are self-contained: constants live in the file and there are no CLI arguments. Evaluation and baseline scripts restore the recorded configuration.</p>
       </div>
       <div class="start-grid">
-        <pre><code><span class="c"># clone &amp; install</span>
+        <pre><code><span class="c" data-i18n="code.clone"># clone &amp; install</span>
 git clone https://github.com/PaoShou-China/aerospace-rl-benchmark
 cd aerospace-rl-benchmark
 pip install -r requirements.txt
 
-<span class="c"># train: one self-contained entry per task</span>
+<span class="c" data-i18n="code.train"># train: one self-contained entry per task</span>
 python environments/multirotor/train_quadx.py
 python environments/vtol/train_quadplane.py
 
-<span class="c"># evaluate a checkpoint, then the classical baseline</span>
+<span class="c" data-i18n="code.eval"># evaluate a checkpoint, then the classical baseline</span>
 python scripts/eval.py quadx
 python scripts/baseline_eval.py quadx</code></pre>
         <div class="docs">
@@ -720,6 +720,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "skip": "Skip to content",
       "nav.tasks": "Tasks", "nav.design": "Design", "nav.baselines": "Baselines",
       "nav.start": "Quick start", "nav.ack": "Acknowledgments",
+      "nav.label": "Main navigation",
       "hero.eyebrow": "Aerospace control · reinforcement learning",
       "hero.title1": "Ten aerospace tasks.",
       "hero.title2": "One tensor interface.",
@@ -791,6 +792,16 @@ python scripts/baseline_eval.py quadx</code></pre>
       "baselines.caption": "Default classical controller per task, with the evaluation window recorded in the repository.",
       "baselines.thTask": "Task", "baselines.thCtrl": "Classical baseline",
       "baselines.thSuccess": "Success", "baselines.thCond": "Evaluation window & notes",
+      "ctrl.quadx": "SE(3) geometric control + integral trim",
+      "ctrl.quadx_track": "CV Kalman filter + fixed-offset SE(3)",
+      "ctrl.fixedwing": "L1 lateral + TECS longitudinal autopilot",
+      "ctrl.quadplane": "SE(3) + forward pusher",
+      "ctrl.rocket": "ZEM/PN PDG + virtual pad + pulse servo",
+      "ctrl.missile": "Augmented PN (N = 15) → body-rate commands",
+      "ctrl.satellite": "Quaternion PD + Schaub–Junkins damped pseudo-inverse",
+      "ctrl.transfer": "Gauss one-step greedy tangential guidance",
+      "ctrl.docking": "CWH discrete LQR + shield / fuel derating",
+      "ctrl.rendezvous": "Two-impulse CWH ZEM/PN, recursive re-solve",
       "cond.quadx": "32 replicas, seed 7 · cascade PID arm 99.2%",
       "cond.quadx_track": "128 replicas, seed 21 · visible-time fraction 90.2%",
       "cond.fixedwing": "128 replicas, seed 13 · window ends before the 120 s limit",
@@ -806,6 +817,9 @@ python scripts/baseline_eval.py quadx</code></pre>
       "baselines.note2": "<b>Version note.</b> The rocket v1 instantaneous rates quoted in older notes (82.8% / 84.1%) are not comparable with the v2 settled criterion: 40 Hz and two continuous seconds of pad contact, low speed and low spin.",
       "start.title": "Run one task in a few commands",
       "start.intro": "Training entries are self-contained: constants live in the file and there are no CLI arguments. Evaluation and baseline scripts restore the recorded configuration.",
+      "code.clone": "# clone & install",
+      "code.train": "# train: one self-contained entry per task",
+      "code.eval": "# evaluate a checkpoint, then the classical baseline",
       "docs.title": "Documentation",
       "docs.overview": "overview", "docs.reviewer": "infrastructure claims", "docs.protocol": "protocol",
       "docs.method": "per-task methods", "docs.baseline": "multi-seed",
@@ -823,6 +837,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "skip": "跳到正文",
       "nav.tasks": "任务", "nav.design": "设计", "nav.baselines": "基线",
       "nav.start": "快速开始", "nav.ack": "致谢",
+      "nav.label": "主导航",
       "hero.eyebrow": "航空航天控制 · 强化学习",
       "hero.title1": "十个飞行任务，",
       "hero.title2": "同一张量接口。",
@@ -894,21 +909,34 @@ python scripts/baseline_eval.py quadx</code></pre>
       "baselines.caption": "每个任务的默认经典控制器，以及仓库中记录的评测窗口。",
       "baselines.thTask": "任务", "baselines.thCtrl": "经典基线",
       "baselines.thSuccess": "参考成功率", "baselines.thCond": "评测窗口与备注",
-      "cond.quadx": "32 个副本，seed 7 · 级联 PID 臂 99.2%",
-      "cond.quadx_track": "128 个副本，seed 21 · 可见时间占比 90.2%",
-      "cond.fixedwing": "128 个副本，seed 13 · 窗口在 120 s 上限前结束",
-      "cond.quadplane": "128 个副本，seed 13",
+      "ctrl.quadx": "SE(3) 几何控制 + 积分配平",
+      "ctrl.quadx_track": "常速卡尔曼滤波 + 固定偏置 SE(3)",
+      "ctrl.fixedwing": "L1 横向制导 + TECS 纵向自动驾驶仪",
+      "ctrl.quadplane": "SE(3) + 前推电机",
+      "ctrl.rocket": "ZEM/PN 动力下降制导 + 虚拟着陆台 + 脉冲伺服",
+      "ctrl.missile": "增广比例导引（N = 15）→ 体轴角速率指令",
+      "ctrl.satellite": "四元数 PD + Schaub–Junkins 阻尼伪逆",
+      "ctrl.transfer": "Gauss 单步贪心切向制导",
+      "ctrl.docking": "CWH 离散 LQR + 安全盾 / 燃料降额",
+      "ctrl.rendezvous": "双脉冲 CWH ZEM/PN，递推重解",
+      "cond.quadx": "32 个副本，随机种子 7 · 级联 PID 臂 99.2%",
+      "cond.quadx_track": "128 个副本，随机种子 21 · 可见时间占比 90.2%",
+      "cond.fixedwing": "128 个副本，随机种子 13 · 窗口在 120 s 上限前结束",
+      "cond.quadplane": "128 个副本，随机种子 13",
       "cond.rocket": "v2 判据 · 40 Hz · 连续停稳 2 s",
-      "cond.missile": "128 个副本，seed 13",
-      "cond.satellite": "128 个副本，seed 13",
-      "cond.transfer": "128 个副本，seed 13 · 终端返回 0.0067",
-      "cond.docking": "128 个副本，seed 13 · 263 步窗口",
-      "cond.rendezvous": "128 个副本，seed 13 · 581 步窗口",
+      "cond.missile": "128 个副本，随机种子 13",
+      "cond.satellite": "128 个副本，随机种子 13",
+      "cond.transfer": "128 个副本，随机种子 13 · 终端返回 0.0067",
+      "cond.docking": "128 个副本，随机种子 13 · 263 步窗口",
+      "cond.rendezvous": "128 个副本，随机种子 13 · 581 步窗口",
       "baselines.hint": "左右滑动查看全部列 →",
       "baselines.note1": "同一任务内，成功率越高越好。跨任务之间这些数字不构成统一排名：环境、时间尺度与成功判据都不同。",
       "baselines.note2": "<b>版本说明。</b>旧笔记中的火箭 v1 瞬时成功率（82.8% / 84.1%）不能与 v2 停稳判据直接比较：v2 要求 40 Hz 采样下连续 2 秒满足触垫、低速与低角速率。",
       "start.title": "几条命令跑通一个任务",
       "start.intro": "训练入口是自包含的：参数写在文件里，不提供 CLI 参数。评测与基线脚本会恢复记录中的配置。",
+      "code.clone": "# 克隆并安装",
+      "code.train": "# 训练：每个任务一个自包含入口",
+      "code.eval": "# 评测检查点，再评测经典基线",
       "docs.title": "文档入口",
       "docs.overview": "总览", "docs.reviewer": "基础设施说明", "docs.protocol": "评测协议",
       "docs.method": "逐任务方法", "docs.baseline": "多种子复分析",
@@ -960,11 +988,12 @@ python scripts/baseline_eval.py quadx</code></pre>
       if (dict[key]) el.setAttribute('aria-label', dict[key]);
     });
     document.querySelectorAll('.poster').forEach(btn => {
-      const task = btn.dataset.task || '';
+      const task = (lang === 'zh' && btn.dataset.taskZh) || btn.dataset.task || '';
       btn.setAttribute('aria-label', dict['video.play'].replace('{task}', task));
     });
     document.querySelectorAll('.media video').forEach(v => {
-      if (v.dataset.task) v.setAttribute('aria-label', dict['video.play'].replace('{task}', v.dataset.task));
+      const task = (lang === 'zh' && v.dataset.taskZh) || v.dataset.task || '';
+      if (task) v.setAttribute('aria-label', dict['video.play'].replace('{task}', task));
     });
 
     langButtons.forEach(b => {
@@ -1030,6 +1059,7 @@ python scripts/baseline_eval.py quadx</code></pre>
     video.src = src;
     video.setAttribute('aria-label', btn.getAttribute('aria-label') || btn.dataset.task || 'Replay');
     video.dataset.task = btn.dataset.task || '';
+    if (btn.dataset.taskZh) video.dataset.taskZh = btn.dataset.taskZh;
     media.appendChild(video);
     btn.hidden = true;
 

@@ -7,12 +7,12 @@
 </p>
 
 <p align="center">
+  <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/"><b>paoshou-china.github.io/aerospace-rl-benchmark</b></a>
+  <br>
   <a href="README.zh-CN.md">中文</a> ·
-  <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">Live showcase</a> ·
   <a href="docs/technical-highlights.md">Technical highlights</a> ·
   <a href="docs/evaluation_protocol.md">Evaluation protocol</a> ·
   <a href="benchmark_report.md">Benchmark report (中文)</a>
->>>>>>> e677a79 (Redesign the bilingual project site and READMEs)
 </p>
 
 **GPU-parallel reinforcement learning environments for aerospace control.**
