@@ -31,10 +31,10 @@
     --radius-l:26px;
     --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
     --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
-    --max:1200px;
-    --gutter:24px;
+    --max:1360px;
+    --gutter:32px;
     --space-3:22px;
-    --space-6:100px;
+    --space-6:112px;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth;scroll-padding-top:64px;-webkit-text-size-adjust:100%}
@@ -75,10 +75,10 @@
     border-bottom:1px solid rgba(103,215,242,.16);
     color:var(--ink);
   }
-  .top-inner{display:flex;align-items:center;gap:var(--space-3);height:48px}
+  .top-inner{display:flex;align-items:center;gap:var(--space-3);height:68px}
   .brand{display:inline-flex;align-items:center;gap:9px;color:var(--ink);font-size:14.5px;font-weight:500;white-space:nowrap;letter-spacing:-.01em}
   .brand:hover{text-decoration:none;color:#fff}
-  .brand img{width:23px;height:23px}
+  .brand img{width:34px;height:34px;border-radius:6px}
   .brand em{font-style:normal;color:var(--ink-3);font-weight:400}
   .nav{display:flex;gap:28px;margin-left:auto;font-size:12.5px}
   .nav a{color:var(--ink-2);letter-spacing:0}
@@ -102,7 +102,7 @@
   .menu svg{width:16px;height:16px}
   @media (max-width:920px){
     .nav{
-      display:none;position:absolute;top:48px;left:0;right:0;
+      display:none;position:absolute;top:68px;left:0;right:0;
       background:#050a11;
       flex-direction:column;gap:0;padding:8px 24px 20px;margin:0;
       border-bottom:1px solid rgba(103,215,242,.16);
@@ -129,7 +129,7 @@
       radial-gradient(ellipse at 8% 88%,rgba(12,48,78,.18),transparent 52%),
       #02040a;
     border-bottom:1px solid rgba(103,215,242,.08);
-    padding:72px 0 76px;
+    padding:48px 0 62px;
   }
   .hero::before{
     content:"";position:absolute;inset:0;pointer-events:none;opacity:.32;
@@ -144,15 +144,15 @@
     border:1px solid rgba(103,215,242,.1);border-radius:50%;
     transform:rotate(-14deg);pointer-events:none;
   }
-  .hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,.96fr) minmax(0,1.04fr);gap:64px;align-items:center}
+  .hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1fr;gap:36px;align-items:center}
   .eyebrow{
     font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
     color:var(--cyan);margin:0 0 20px;
   }
   html[lang="zh-CN"] .eyebrow{letter-spacing:.08em}
-  h1{font-size:clamp(38px,4.6vw,66px);line-height:1.06;color:var(--ink)}
+  h1{font-size:clamp(40px,5.5vw,76px);line-height:1.06;color:var(--ink)}
   h1 .line-2{color:var(--cyan)}
-  .lede{color:#a9b8c5;font-size:19px;line-height:1.5;max-width:38ch;margin:22px 0 30px;letter-spacing:-.01em}
+  .lede{color:#a9b8c5;font-size:18px;line-height:1.7;max-width:68ch;margin:22px 0 28px;letter-spacing:-.01em}
   html[lang="zh-CN"] .lede{letter-spacing:.01em}
   .cta{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:24px}
   .btn{
@@ -166,18 +166,19 @@
   .btn.ghost{background:transparent;border-color:rgba(238,244,248,.3);color:var(--ink);font-weight:500}
   .btn.ghost:hover{background:rgba(103,215,242,.07);border-color:rgba(103,215,242,.6);box-shadow:none}
   .hero-meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin:0;letter-spacing:.02em}
-  .hero-art{margin:0;position:relative}
-  .hero-art img{width:100%;height:auto;border-radius:var(--radius-l);border:1px solid rgba(103,215,242,.18);box-shadow:0 40px 110px rgba(0,0,0,.7),0 0 70px rgba(29,151,255,.1)}
-  .hero-art figcaption{margin-top:12px;font-size:12px;color:var(--ink-3);text-align:right}
+  .hero-art{margin:0;position:relative;grid-row:1}.hero-copy{text-align:center;max-width:1000px;margin:0 auto}.hero-copy .lede{margin-left:auto;margin-right:auto}.hero-copy .cta{justify-content:center}
+  .hero-art img{width:100%;height:auto;border-radius:14px;border:1px solid rgba(103,215,242,.12);box-shadow:0 24px 70px rgba(0,0,0,.35)}
+  .hero-art figcaption{margin-top:10px;font-size:11px;color:var(--ink-3);text-align:right}
   @media (max-width:980px){
     .hero{padding:56px 0 58px}
     .hero-grid{grid-template-columns:1fr;gap:40px}
-    .hero-copy{max-width:640px}
+    .hero-copy{max-width:760px}
     .lede{max-width:52ch}
-    .hero-art img{aspect-ratio:16/9;object-fit:cover;object-position:center 42%}
+    .hero-art img{height:auto;object-fit:contain}
     .hero-art figcaption{text-align:left}
   }
   @media (max-width:520px){
+    :root{--gutter:20px;--space-6:64px}.hero{padding:24px 0 40px}.hero-grid{gap:28px}.hero-copy{text-align:left}.hero-copy .cta{justify-content:flex-start}.hero-art img{border-radius:8px}.sec-head{margin-bottom:34px}.gallery{gap:22px}.hero-meta{font-size:10px;line-height:1.8}.brand{font-size:13px}
     h1{font-size:clamp(34px,9.2vw,44px)}
     .lede{font-size:17px}
     .btn{font-size:15px;padding:12px 20px}
@@ -186,15 +187,15 @@
 
   /* ---------- sections ---------- */
   .section{padding:var(--space-6) 0}
-  #tasks,#baselines,#acknowledgments{background:var(--bg-alt)}
+  #tasks,#baselines,#acknowledgments{background:var(--bg-alt);border-top:1px solid var(--line-soft)}
   .kicker{
     font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
     color:var(--cyan);margin:0 0 14px;
   }
   html[lang="zh-CN"] .kicker{letter-spacing:.06em}
-  .sec-head{max-width:860px;margin:0 auto 54px;text-align:center}
-  h2{font-size:clamp(32px,4vw,54px);line-height:1.07;color:var(--ink)}
-  .sec-intro{color:var(--ink-2);font-size:19px;line-height:1.5;margin:18px auto 0;max-width:64ch}
+  .sec-head{max-width:860px;margin:0 0 54px;text-align:left}
+  h2{font-size:clamp(30px,4vw,52px);line-height:1.07;color:var(--ink)}
+  .sec-intro{color:var(--ink-2);font-size:19px;line-height:1.5;margin:20px 0 0;max-width:64ch}
   html[lang="zh-CN"] .sec-intro{letter-spacing:.01em}
   .group-title{
     display:flex;align-items:baseline;gap:10px;font-size:13px;font-weight:600;
@@ -206,11 +207,11 @@
   .group-title:first-of-type{margin-top:0}
 
   /* ---------- task gallery ---------- */
-  .gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:6px}
+  .gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;margin-top:6px}
   .task{
     display:flex;flex-direction:column;height:100%;
-    background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius-l);overflow:hidden;
-    box-shadow:0 2px 16px rgba(0,0,0,.22);
+    background:var(--panel);border:1px solid var(--line-soft);border-radius:16px;overflow:hidden;
+    box-shadow:none;
     transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease;
   }
   .task:hover{transform:translateY(-2px);border-color:rgba(103,215,242,.34);box-shadow:0 18px 46px rgba(0,0,0,.35)}
@@ -238,11 +239,11 @@
     border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid var(--ink);
   }
   .media video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain;z-index:3}
-  .task-body{padding:24px 26px 26px;display:flex;flex-direction:column;flex:1;min-width:0}
+  .task-body{padding:27px 28px 28px;display:flex;flex-direction:column;flex:1;min-width:0}
   .cat{font-size:11.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px}
   html[lang="zh-CN"] .cat{letter-spacing:.04em}
   .task h3{font-size:22px;line-height:1.2;color:var(--ink);margin:0 0 9px}
-  .task .desc{color:var(--ink-2);font-size:15px;line-height:1.5;margin:0 0 18px}
+  .task .desc{color:var(--ink-2);font-size:15px;line-height:1.75;margin:0 0 20px}
   .spec{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin:auto 0 0;padding-top:16px;letter-spacing:.01em}
   .spec span{white-space:nowrap}
   .spec span + span::before{content:" · ";color:rgba(103,215,242,.32)}
@@ -265,7 +266,7 @@
   .closeups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:22px}
   .closeup{
     margin:0;background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius);overflow:hidden;
-    box-shadow:0 2px 16px rgba(0,0,0,.22);
+    box-shadow:none;
   }
   .closeup .media{aspect-ratio:16/9}
   .closeup figcaption{padding:18px 20px 20px}
@@ -281,7 +282,7 @@
   .principle .n svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
   .principle .n .num{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
   .principle h3{font-size:25px;line-height:1.2;margin:0 0 12px}
-  .principle p{font-size:16px;line-height:1.5;color:var(--ink-2);margin:0}
+  .principle p{font-size:16px;line-height:1.8;color:var(--ink-2);margin:0}
   .principle p code{font-size:.9em}
   @media (max-width:840px){
     .principles{grid-template-columns:1fr;gap:0}
@@ -395,7 +396,7 @@
         <p class="hero-meta" data-i18n="hero.meta">10 tasks · 6 atmospheric · 4 spacecraft · no Gym dependency</p>
       </div>
       <figure class="hero-art">
-        <img src="assets/brand/hero.svg" width="1200" height="750" alt="Brand illustration: a booster descending toward a lit planetary limb, framed by orbital arcs." data-i18n-alt="hero.artAlt" fetchpriority="high">
+        <img src="docs/assets/aerospacerl-cover.webp" width="1983" height="793" alt="Brand illustration: AerospaceRL with a booster, UAV, quadrotor and satellite above Earth." data-i18n-alt="hero.artAlt" fetchpriority="high">
         <figcaption data-i18n="hero.artCap">Brand illustration — not a simulation capture.</figcaption>
       </figure>
     </div>
@@ -804,7 +805,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "hero.lede": "A lightweight reinforcement-learning benchmark built on batched device tensors: six atmospheric vehicles and four spacecraft missions, each paired with a classical GNC baseline that speaks the same action language.",
       "hero.cta1": "Get started", "hero.cta2": "GitHub repository",
       "hero.meta": "10 tasks · 6 atmospheric · 4 spacecraft · no Gym dependency",
-      "hero.artAlt": "Brand illustration: a booster descending toward a lit planetary limb, framed by orbital arcs.",
+      "hero.artAlt": "Brand illustration: AerospaceRL with a booster, UAV, quadrotor and satellite above Earth.",
       "hero.artCap": "Brand illustration — not a simulation capture.",
       "tasks.title": "Ten environments, one contract",
       "tasks.intro": "Every environment exposes the same step / reset / buffer contract and the same batched tensor API. The replay clips are exported from the repository's visualization scripts and show task dynamics, not benchmark scores.",
@@ -921,7 +922,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "hero.lede": "面向航空航天控制的轻量强化学习基准：6 个大气飞行任务与 4 个航天器任务，全部运行在同一设备上的批量张量内核；每个任务都配有同动作约定的经典 GNC 基线。",
       "hero.cta1": "快速开始", "hero.cta2": "GitHub 仓库",
       "hero.meta": "10 个任务 · 6 个大气 · 4 个航天 · 不依赖 Gym",
-      "hero.artAlt": "品牌插画：助推器朝向被照亮的行星地平线下降，背景为轨道弧线。",
+      "hero.artAlt": "品牌插画：AerospaceRL 标识与地球上方的火箭、固定翼、四旋翼和卫星。",
       "hero.artCap": "品牌插画，不是仿真截图。",
       "tasks.title": "十个环境，一套契约",
       "tasks.intro": "所有环境共享同一套 step / reset / 缓冲区契约与批量张量接口。回放片段由仓库内的可视化脚本导出，用于展示任务动力学，不代表基准得分。",
@@ -1155,3 +1156,4 @@ python scripts/baseline_eval.py quadx</code></pre>
 </script>
 </body>
 </html>
+
