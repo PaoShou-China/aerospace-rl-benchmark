@@ -90,6 +90,9 @@ instantaneous rates and are not comparable to the v2 settled criterion.
 
 ## Acknowledgments
 
+> ### Special thanks · [Baidu Famou](https://cloud.baidu.com/product/famou.html)
+> With special thanks to **Baidu Famou**. [Visit the official website ↗](https://cloud.baidu.com/product/famou.html)
+
 We thank the following teachers and fellow students for their support and help.
 
 **Teachers:** Lin Cheng · Shengping Gong · Peng Shi

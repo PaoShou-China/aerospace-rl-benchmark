@@ -316,6 +316,8 @@
   @media (max-width:860px){.start-grid{grid-template-columns:1fr;gap:40px}}
 
   /* ---------- acknowledgments ---------- */
+  .ack-feature{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:30px 34px;margin:0 0 42px;background:#e7eff8;border:1px solid #b7cce3;border-left:5px solid #00549d;border-radius:6px}.ack-feature .kicker{margin-bottom:10px}.ack-feature h3{font-size:30px;margin-bottom:10px}.ack-feature h3 a{color:#003f7d}.ack-feature p:last-child{margin:0;color:#4e6078;font-size:15px}.ack-feature .btn{flex-shrink:0}@media(max-width:600px){.ack-feature{align-items:flex-start;flex-direction:column;padding:24px}.ack-feature h3{font-size:26px}}
+
   .ack-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:44px;margin-top:8px}
   .ack-grid h3{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin:0 0 12px}
   .ack-grid ul{list-style:none;margin:0;padding:0;font-size:15px;color:var(--ink-2)}
@@ -718,6 +720,7 @@ python scripts/baseline_eval.py quadx</code></pre>
         <p class="kicker">05 / <span data-i18n="nav.ack">Acknowledgments</span></p>
         <h2 data-i18n="ack.title">Thanks</h2>
       </div>
+      <aside class="ack-feature" aria-label="Baidu Famou acknowledgment"><div><p class="kicker" data-i18n="ack.famouLabel">Special thanks</p><h3><a href="https://cloud.baidu.com/product/famou.html" target="_blank" rel="noopener" data-i18n="ack.famouName">Baidu Famou</a></h3><p data-i18n="ack.famouThanks">With special thanks to Baidu Famou.</p></div><a class="btn" href="https://cloud.baidu.com/product/famou.html" target="_blank" rel="noopener" data-i18n="ack.famouLink">Official website ↗</a></aside>
       <div class="ack-grid">
         <div>
           <h3 data-i18n="ack.teachers">Teachers</h3>
@@ -888,6 +891,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "docs.method": "per-task methods", "docs.baseline": "multi-seed",
       "docs.report": "full report", "docs.rocket": "criterion",
       "docs.tasks": "task table", "docs.baselines": "baseline results",
+      "ack.famouLabel": "Special thanks", "ack.famouName": "Baidu Famou", "ack.famouThanks": "With special thanks to Baidu Famou.", "ack.famouLink": "Official website ↗",
       "ack.title": "Thanks", "ack.teachers": "Teachers", "ack.students": "Fellow students", "ack.projects": "Related projects",
       "footer.note": "Replays rendered offline from repository checkpoints · brand illustration is not a capture",
       "video.play": "Play replay: {task}",
@@ -1005,6 +1009,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "docs.method": "逐任务方法", "docs.baseline": "多种子复分析",
       "docs.report": "完整报告", "docs.rocket": "判据说明",
       "docs.tasks": "任务表", "docs.baselines": "基线结果",
+      "ack.famouLabel": "特别致谢", "ack.famouName": "百度伐谋", "ack.famouThanks": "特别感谢百度伐谋。", "ack.famouLink": "访问官方网站 ↗",
       "ack.title": "致谢", "ack.teachers": "导师", "ack.students": "同学", "ack.projects": "相关项目",
       "footer.note": "回放由仓库检查点离线渲染 · 品牌插画不是仿真截图",
       "video.play": "播放回放：{task}",

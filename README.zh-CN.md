@@ -79,6 +79,9 @@ python scripts/baseline_eval.py quadx            # 评测经典基线
 
 ## 致谢
 
+> ### 特别致谢 · [百度伐谋](https://cloud.baidu.com/product/famou.html)
+> 特别感谢 **百度伐谋**。[访问官方网站 ↗](https://cloud.baidu.com/product/famou.html)
+
 感谢以下老师与同学对本项目的支持与帮助。
 
 **老师：** 程林 · 龚胜平 · 师鹏
