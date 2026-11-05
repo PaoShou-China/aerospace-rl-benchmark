@@ -179,18 +179,51 @@ def _install_async_episode_logger(runner):
 
     ``Logger.process_env_step`` runs once per env step and calls
     ``.cpu().numpy().tolist()`` on the completed rows, i.e. a full host
-    synchronisation inside the rollout loop (100 per update).  This keeps the
-    completed sums as GPU tensors and flushes them once per update in
-    ``Logger.log``; the logged values are identical, only their read-back
-    cadence changes.
+    synchronisation inside the rollout loop.  Completions are instead written
+    into fixed ``(num_steps_per_env, num_envs)`` mask/reward/length buffers with
+    boolean-mask writes (no ``nonzero()``, no per-step list building), then
+    selected and copied to the host once per update in ``Logger.log``.
+
+    The writer check lives *inside* the replacement: rsl_rl creates the
+    ``Logger`` in ``OnPolicyRunner.__init__`` but only creates ``writer`` when
+    ``learn()`` calls ``init_logging_writer()``, so gating the installation on
+    ``writer`` would silently keep the original per-step path for first runs.
     """
     logger = getattr(runner, "logger", None)
-    if logger is None or getattr(logger, "writer", None) is None:
+    if logger is None:
         return
-    pending = []
+
+    capacity = max(int(logger.cfg.get("num_steps_per_env", 1)), 1)
+    num_envs = int(getattr(logger, "num_envs", logger.cur_reward_sum.shape[0]))
+    device = logger.device
+    has_intrinsic = hasattr(logger, "cur_ereward_sum")
+
+    state = {"idx": 0, "intrinsic": False}
+    done_buf = torch.zeros((capacity, num_envs), dtype=torch.bool, device=device)
+    rew_buf = torch.zeros((capacity, num_envs), dtype=torch.float, device=device)
+    len_buf = torch.zeros((capacity, num_envs), dtype=torch.float, device=device)
+    if has_intrinsic:
+        erew_buf = torch.zeros_like(rew_buf)
+        irew_buf = torch.zeros_like(rew_buf)
     orig_log = logger.log
 
+    def _flush():
+        """Select the completed rows and copy them to the host once."""
+        idx = state["idx"]
+        if idx == 0:
+            return
+        mask = done_buf[:idx].reshape(-1)
+        logger.rewbuffer.extend(rew_buf[:idx].reshape(-1)[mask].cpu().tolist())
+        logger.lenbuffer.extend(len_buf[:idx].reshape(-1)[mask].cpu().tolist())
+        if state["intrinsic"]:
+            logger.erewbuffer.extend(erew_buf[:idx].reshape(-1)[mask].cpu().tolist())
+            logger.irewbuffer.extend(irew_buf[:idx].reshape(-1)[mask].cpu().tolist())
+            state["intrinsic"] = False
+        state["idx"] = 0
+
     def process_env_step(rewards, dones, extras, intrinsic_rewards=None):
+        if getattr(logger, "writer", None) is None:
+            return
         if "episode" in extras:
             logger.ep_extras.append(extras["episode"])
         elif "log" in extras:
@@ -202,34 +235,27 @@ def _install_async_episode_logger(runner):
         else:
             logger.cur_reward_sum += rewards
         logger.cur_episode_length += 1
-        new_ids = (dones > 0).nonzero(as_tuple=False)
-        if new_ids.numel():
-            pending.append(
-                (
-                    logger.cur_reward_sum[new_ids][:, 0].clone(),
-                    logger.cur_episode_length[new_ids][:, 0].clone(),
-                    None
-                    if intrinsic_rewards is None
-                    else logger.cur_ereward_sum[new_ids][:, 0].clone(),
-                    None
-                    if intrinsic_rewards is None
-                    else logger.cur_ireward_sum[new_ids][:, 0].clone(),
-                )
-            )
-            logger.cur_reward_sum[new_ids] = 0
-            logger.cur_episode_length[new_ids] = 0
-            if intrinsic_rewards is not None:
-                logger.cur_ereward_sum[new_ids] = 0
-                logger.cur_ireward_sum[new_ids] = 0
+        # rsl_rl calls log() every num_steps_per_env; flush early only if not.
+        if state["idx"] == capacity:
+            _flush()
+        idx = state["idx"]
+        done = dones > 0
+        done_buf[idx].copy_(done)
+        rew_buf[idx].copy_(logger.cur_reward_sum)
+        len_buf[idx].copy_(logger.cur_episode_length)
+        if intrinsic_rewards is not None:
+            erew_buf[idx].copy_(logger.cur_ereward_sum)
+            irew_buf[idx].copy_(logger.cur_ireward_sum)
+            state["intrinsic"] = True
+        logger.cur_reward_sum[done] = 0
+        logger.cur_episode_length[done] = 0
+        if intrinsic_rewards is not None:
+            logger.cur_ereward_sum[done] = 0
+            logger.cur_ireward_sum[done] = 0
+        state["idx"] = idx + 1
 
     def log(*args, **kwargs):
-        if pending:
-            logger.rewbuffer.extend(torch.cat([p[0] for p in pending]).cpu().tolist())
-            logger.lenbuffer.extend(torch.cat([p[1] for p in pending]).cpu().tolist())
-            if pending[0][2] is not None:
-                logger.erewbuffer.extend(torch.cat([p[2] for p in pending]).cpu().tolist())
-                logger.irewbuffer.extend(torch.cat([p[3] for p in pending]).cpu().tolist())
-            pending.clear()
+        _flush()
         return orig_log(*args, **kwargs)
 
     logger.process_env_step = process_env_step
@@ -855,6 +881,10 @@ def run_training(
             )
     else:
         runner.learn(updates)
+    if torch.cuda.is_available() and "cuda" in str(env.device):
+        # Single end-of-run sync so the wall clock includes the queued GPU tail.
+        # Never per step: staged timings below stay host-side submission times.
+        torch.cuda.synchronize()
     elapsed = time.perf_counter() - start
     _save_runner(runner, out / "checkpoint.pt")
     # keep results concise: drop periodic mid-training checkpoints, only the
@@ -875,6 +905,11 @@ def run_training(
             max(elapsed - _timing["env_step"] - _timing["ppo_update"], 0.0), 2
         ),
         "total_seconds": round(time.perf_counter() - _t0, 2),
+        "basis": (
+            "host perf_counter wall clock, no per-step CUDA sync; stage values "
+            "include host-side kernel launch/submission time, so they rank "
+            "bottlenecks but are not GPU-only durations"
+        ),
     }
     for _k in ("env_step", "reset", "ppo_update"):
         timing.pop(_k, None)

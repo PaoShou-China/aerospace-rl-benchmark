@@ -45,8 +45,11 @@ class FirstEpisodes:
 
     def report(self):
         seen = self.seen.cpu().tolist()
+        # Two bulk device->host copies instead of two scalar reads per replica
+        # (1024 envs used to mean 2048 ``.item()`` synchronisations).
+        success_flags = self.success.to(torch.float32).cpu().tolist()
+        returns = self.returns.cpu().tolist()
         n = sum(seen)
-        successes = int(self.success.sum().item())
         metrics = {k: v.cpu().tolist() for k, v in self.metrics.items()}
         # Per-replica rows are kept lean: only success flag and episode return.
         # The full per-metric breakdown is reported as the aggregate metric_counts
@@ -56,8 +59,8 @@ class FirstEpisodes:
             dict(
                 replica=i,
                 complete=seen[i],
-                success=bool(self.success[i].item()),
-                episode_return=float(self.returns[i].item()),
+                success=bool(success_flags[i]),
+                episode_return=returns[i],
             )
             for i in range(len(seen))
         ]
@@ -66,9 +69,9 @@ class FirstEpisodes:
             complete=all(seen),
             episodes_finished=n,
             episodes_expected=len(seen),
-            successes=successes,
-            success_rate=successes / n if n else None,
-            mean_episode_return=float(self.returns.sum().item()) / n if n else None,
+            successes=int(sum(success_flags)),
+            success_rate=sum(success_flags) / n if n else None,
+            mean_episode_return=(sum(returns) / n) if n else None,
             metric_counts={k: sum(v) for k, v in metrics.items()},
             global_metric_counts={k: float(v.cpu()) for k, v in self.global_metrics.items()},
             episodes_completed_total=int(self.episodes_completed.sum().item()),

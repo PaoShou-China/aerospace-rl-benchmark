@@ -175,6 +175,7 @@ class TensorPlant:
         vel_clamp=None,
         rocket_variation="nominal",
         rocket_benchmark="v2",
+        warmup_iterations=None,
     ):
         if vehicle not in ("quadx", "fixedwing", "rocket", "missile", "quadplane"):
             raise ValueError(vehicle)
@@ -192,6 +193,12 @@ class TensorPlant:
         # 1 whenever the state is already inside the cap, so nominal trajectories
         # (hover |v|<2 m/s, |w|<10 rad/s) are untouched.
         self.vel_clamp = None if vel_clamp is None else (float(vel_clamp[0]), float(vel_clamp[1]))
+        # Reset warmup length in "Aviary steps" (upstream default 10).  Every
+        # iteration advances the WHOLE scene ``physics_per_control`` times, so a
+        # single-replica reset costs the same as a full reset regardless of the
+        # mask.  Kept configurable for the reset-cost ablation; the default is
+        # the upstream value so benchmark numbers stay comparable.
+        self.warmup_iterations = 10 if warmup_iterations is None else int(warmup_iterations)
         # Geometry/metadata loading is construction-only. No compatibility API is
         # called by physics_step, auxiliary, or the reset primitives.
         from .original_backend import engine_configuration
@@ -1106,8 +1113,13 @@ class TensorPlant:
                 if self.rocket_variation is not None:
                     self.rocket_variation.sample(mask)
 
-    def warmup(self, mask, iterations=10):
-        """Original 10-Aviary-step warmup with zero command on the masked slots."""
+    def warmup(self, mask, iterations=None):
+        """Original 10-Aviary-step warmup with zero command on the masked slots.
+
+        ``iterations`` defaults to ``self.warmup_iterations`` (10, the upstream
+        value).  See that attribute for why lowering it is a task-semantics
+        change, not a free optimisation.
+        """
         # An empty warmup must not advance the global scene: physics_step runs
         # scene.step() for every replica, and with an all-False mask the
         # pause-restore below is skipped (uniform shortcut), so the caller would
@@ -1115,6 +1127,9 @@ class TensorPlant:
         # gravity for the 6-substep quadx agent step). Same root cause as the
         # fixedwing reset_idx bug fixed on 2026-10-20.
         if not bool(mask.any()):
+            return
+        iterations = self.warmup_iterations if iterations is None else int(iterations)
+        if iterations <= 0:
             return
         command = torch.zeros((self.n, self.command_width), device=self.device, dtype=COMPUTE_DTYPE)
         for _ in range(iterations):

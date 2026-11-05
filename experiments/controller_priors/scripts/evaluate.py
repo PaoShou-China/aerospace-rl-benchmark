@@ -180,10 +180,22 @@ def _rollout(
     first_terminal = torch.zeros(n, device=env.device, dtype=torch.bool)
     perturb_sq = torch.zeros((), device=env.device, dtype=torch.float64)
     perturb_count = torch.zeros((), device=env.device, dtype=torch.float64)
-    trajectories = {
-        int(i): {"obs": [], "applied": [], "nominal": [], "residual": [], "done": []}
-        for i in (dump_replicas or [])
-    }
+    # Trajectory dumps live in preallocated device buffers; the host copy and
+    # the JSON/npz export happen once after the rollout.
+    dump_ids = sorted(int(i) for i in (dump_replicas or []))
+    dump_index = (
+        torch.tensor(dump_ids, device=env.device, dtype=torch.long) if dump_ids else None
+    )
+    cap = int(max_steps)
+    if dump_ids:
+        d_obs = torch.zeros(
+            (cap, len(dump_ids), obs["policy"].shape[-1]), device=env.device, dtype=torch.float32
+        )
+        d_applied = torch.zeros(
+            (cap, len(dump_ids), int(env.num_actions)), device=env.device, dtype=torch.float32
+        )
+        d_done = torch.zeros((cap, len(dump_ids)), device=env.device, dtype=torch.bool)
+    d_nominal = d_residual = None
     torch.manual_seed(int(eval_seed) * 101 + (0 if deterministic else 1))
     start = time.perf_counter()
     t = 0
@@ -233,15 +245,26 @@ def _rollout(
                 dt_control=dt_control,
             )
             # dump first-episode trajectories for the selected replicas
-            for i, tr in trajectories.items():
-                if t < int(max_steps) and not bool(cohort.seen[i]):
-                    tr["obs"].append(pre_obs["policy"][i].detach().cpu())
-                    tr["applied"].append(applied[i].detach().cpu())
-                    if nominal is not None:
-                        tr["nominal"].append(nominal[i].detach().cpu())
-                    if residual is not None:
-                        tr["residual"].append(residual[i].detach().cpu())
-                    tr["done"].append(bool(done[i]))
+            if dump_ids:
+                d_obs[t] = pre_obs["policy"][dump_index]
+                d_applied[t] = applied[dump_index]
+                if nominal is not None:
+                    if d_nominal is None:
+                        d_nominal = torch.zeros(
+                            (cap, len(dump_ids), nominal.shape[-1]),
+                            device=env.device,
+                            dtype=torch.float32,
+                        )
+                    d_nominal[t] = nominal[dump_index]
+                if residual is not None:
+                    if d_residual is None:
+                        d_residual = torch.zeros(
+                            (cap, len(dump_ids), residual.shape[-1]),
+                            device=env.device,
+                            dtype=torch.float32,
+                        )
+                    d_residual[t] = residual[dump_index]
+                d_done[t] = done[dump_index]
             cohort.update(env)
             new = cohort.seen & ~pre_seen
             first_steps[new] = t + 1
@@ -251,6 +274,23 @@ def _rollout(
             if t % 32 == 0 and cohort.finished():
                 break
     wall = time.perf_counter() - start
+    # Slice the dumps at each replica's first episode end (inclusive) -- one
+    # host read for the whole cohort instead of per-step/per-replica copies.
+    trajectories = {}
+    if dump_ids and t:
+        done_seen = d_done[:t]
+        first_true = done_seen.to(torch.int32).argmax(dim=0)
+        has = done_seen.any(dim=0)
+        ends = torch.where(has, first_true + 1, torch.full_like(first_true, t)).tolist()
+        for j, i in enumerate(dump_ids):
+            k = int(ends[j])
+            trajectories[i] = {
+                "obs": d_obs[:k, j].contiguous().cpu(),
+                "applied": d_applied[:k, j].contiguous().cpu(),
+                "nominal": None if d_nominal is None else d_nominal[:k, j].contiguous().cpu(),
+                "residual": None if d_residual is None else d_residual[:k, j].contiguous().cpu(),
+                "done": d_done[:k, j].cpu(),
+            }
     physical = finalize(task, env, acc, dt_control=dt_control)
     report = cohort.report()
     rows = []
@@ -318,15 +358,15 @@ def _rollout(
 def _save_trajectories(path, trajectories, task):
     arrays = {}
     for i, tr in trajectories.items():
-        if not tr["obs"]:
+        if tr["obs"] is None or tr["obs"].numel() == 0:
             continue
-        arrays[f"obs_{i}"] = torch.stack(tr["obs"]).numpy()
-        arrays[f"applied_{i}"] = torch.stack(tr["applied"]).numpy()
-        if tr["nominal"]:
-            arrays[f"nominal_{i}"] = torch.stack(tr["nominal"]).numpy()
-        if tr["residual"]:
-            arrays[f"residual_{i}"] = torch.stack(tr["residual"]).numpy()
-        arrays[f"done_{i}"] = np.asarray(tr["done"], dtype=np.bool_)
+        arrays[f"obs_{i}"] = tr["obs"].numpy()
+        arrays[f"applied_{i}"] = tr["applied"].numpy()
+        if tr["nominal"] is not None:
+            arrays[f"nominal_{i}"] = tr["nominal"].numpy()
+        if tr["residual"] is not None:
+            arrays[f"residual_{i}"] = tr["residual"].numpy()
+        arrays[f"done_{i}"] = tr["done"].numpy()
     if arrays:
         np.savez_compressed(path, **arrays)
 

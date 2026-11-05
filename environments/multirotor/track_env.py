@@ -173,7 +173,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
     bounds_radius = BOUNDS_RADIUS
 
     def __init__(self, num_envs=64, backend="cpu", seed=7, residual=False,
-                 param_mismatch=None, domain_randomize=None):
+                 param_mismatch=None, domain_randomize=None, warmup_iterations=None):
         """Initialize the QuadX tracking environment.
 
         Construct the Genesis-backed quadrotor plant at 40 Hz agent / 120 Hz
@@ -195,7 +195,10 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         self.clip_actions = 1.0
 
         # same plant, rate-PID and solver guard as QuadX-Waypoints
-        self.plant = TensorPlant("quadx", num_envs, backend, seed, vel_clamp=(15.0, 30.0))
+        self.plant = TensorPlant(
+            "quadx", num_envs, backend, seed, vel_clamp=(15.0, 30.0),
+            warmup_iterations=warmup_iterations,
+        )
         self.device = self.plant.device
         self.agent_hz = 40
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)

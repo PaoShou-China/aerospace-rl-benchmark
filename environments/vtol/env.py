@@ -111,6 +111,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         residual=False,
         param_mismatch=None,
         domain_randomize=None,
+        warmup_iterations=None,
     ):
         """Initialize the Quadplane VTOL waypoints environment.
 
@@ -128,7 +129,9 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
             "task": "quadplane-waypoints-vtol",
         }
         self.clip_actions = 1.0
-        self.plant = TensorPlant("quadplane", num_envs, backend, seed)
+        self.plant = TensorPlant(
+            "quadplane", num_envs, backend, seed, warmup_iterations=warmup_iterations
+        )
         self.device = self.plant.device
         self.agent_hz = 40
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)  # 3

@@ -103,6 +103,7 @@ class FixedwingWaypointsEnv(BaseEnv, ResidualActionMixin):
         residual=False,
         param_mismatch=None,
         domain_randomize=None,
+        warmup_iterations=None,
     ):
         """Initialize the fixedwing waypoints environment.
 
@@ -121,7 +122,9 @@ class FixedwingWaypointsEnv(BaseEnv, ResidualActionMixin):
         }
         self.clip_actions = 1.0
 
-        self.plant = TensorPlant("fixedwing", num_envs, backend, seed)
+        self.plant = TensorPlant(
+            "fixedwing", num_envs, backend, seed, warmup_iterations=warmup_iterations
+        )
         self.device = self.plant.device
         self.agent_hz = 30
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)

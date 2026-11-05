@@ -115,6 +115,7 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
         residual=False,
         param_mismatch=None,
         domain_randomize=None,
+        warmup_iterations=None,
     ):
         """Initialize the QuadX waypoints environment.
 
@@ -142,7 +143,10 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
         # ("invalid accelerations"). Caps sit far above nominal trajectories
         # (waypoint flight |v|<2 m/s, |w|<10 rad/s), so only already-unphysical
         # crash states are affected. Disabled (None) unless this task opts in.
-        self.plant = TensorPlant("quadx", num_envs, backend, seed, vel_clamp=(15.0, 30.0))
+        self.plant = TensorPlant(
+            "quadx", num_envs, backend, seed, vel_clamp=(15.0, 30.0),
+            warmup_iterations=warmup_iterations,
+        )
         self.device = self.plant.device
         self.agent_hz = 40
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)

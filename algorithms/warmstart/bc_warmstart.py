@@ -253,6 +253,7 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
         actor.update_normalization({'policy': flat_obs})
 
     critic_opt, flat_ret, valid = None, None, None
+    flat_obs_c, flat_ret_c, m_critic = None, None, 0
     if fit_critic:
         if terminated is not None:
             targets, valid = returns_to_go(rews, dones, gamma,
@@ -265,17 +266,23 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
             valid = torch.ones_like(targets, dtype=torch.bool)
         flat_ret = targets.reshape(T * N)
         flat_valid = valid.reshape(T * N)
+        # Filter the valid pairs ONCE: the critic never sees an excluded pair,
+        # so no per-minibatch ``bool(keep.any())`` host sync or re-masking.
+        flat_obs_c = flat_obs[flat_valid]
+        flat_ret_c = flat_ret[flat_valid]
+        m_critic = int(flat_obs_c.shape[0])
         critic.train()
         critic_opt = torch.optim.Adam(critic.parameters(), lr=lr)
         if normalizer_mode == 'fit_once':
-            critic.update_normalization({'policy': flat_obs[flat_valid]})
+            critic.update_normalization({'policy': flat_obs_c})
 
     start = time.perf_counter()
     a_losses, c_losses = [], []
     last_val = None
     for epoch in range(epochs):
         perm = torch.randperm(M, device=device)
-        a_epoch, c_epoch = [], []
+        a_sum = torch.zeros((), device=device)
+        a_batches = 0
         for i in range(0, M, batch_size):
             idx = perm[i:i + batch_size]
             b_obs = flat_obs[idx]
@@ -293,23 +300,28 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
             actor_opt.zero_grad(set_to_none=True)
             a_loss.backward()
             actor_opt.step()
-            a_epoch.append(float(a_loss.detach()))
-            if fit_critic:
-                keep = flat_valid[idx]
-                if bool(keep.any()):
-                    b_obs_c = b_obs[keep]
-                    td_c = {'policy': b_obs_c}
-                    if normalizer_mode == 'per_batch':
-                        critic.update_normalization({'policy': b_obs_c})
-                    v = critic(td_c).squeeze(-1)
-                    c_loss = torch.nn.functional.mse_loss(v, flat_ret[idx][keep])
-                    critic_opt.zero_grad(set_to_none=True)
-                    c_loss.backward()
-                    critic_opt.step()
-                    c_epoch.append(float(c_loss.detach()))
-        a_losses.append(sum(a_epoch) / len(a_epoch))
-        if fit_critic and c_epoch:
-            c_losses.append(sum(c_epoch) / len(c_epoch))
+            # Accumulate on-device; one host read per epoch instead of per batch.
+            a_sum += a_loss.detach()
+            a_batches += 1
+        a_losses.append(float(a_sum / max(a_batches, 1)))
+        c_epoch_batches, c_sum = 0, torch.zeros((), device=device)
+        if fit_critic and m_critic:
+            c_perm = torch.randperm(m_critic, device=device)
+            for i in range(0, m_critic, batch_size):
+                idx = c_perm[i:i + batch_size]
+                b_obs_c = flat_obs_c[idx]
+                td_c = {'policy': b_obs_c}
+                if normalizer_mode == 'per_batch':
+                    critic.update_normalization({'policy': b_obs_c})
+                v = critic(td_c).squeeze(-1)
+                c_loss = torch.nn.functional.mse_loss(v, flat_ret_c[idx])
+                critic_opt.zero_grad(set_to_none=True)
+                c_loss.backward()
+                critic_opt.step()
+                c_sum += c_loss.detach()
+                c_epoch_batches += 1
+        if c_epoch_batches:
+            c_losses.append(float(c_sum / c_epoch_batches))
         if (epoch + 1) % max(1, epochs // 10) == 0:
             msg = (f'[bc] epoch {epoch + 1}/{epochs} '
                    f'actor_mse {a_losses[-1]:.5f}')

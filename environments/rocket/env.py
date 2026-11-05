@@ -217,6 +217,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         residual=False,
         param_mismatch=None,
         domain_randomize=None,
+        warmup_iterations=None,
     ):
         """Initialize the RocketLanding environment.
 
@@ -273,6 +274,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             seed,
             rocket_variation=variation,
             rocket_benchmark=benchmark_version,
+            warmup_iterations=warmup_iterations,
         )
         self.device = self.plant.device
         # agent_hz validation: must divide the plant control loop. All rates

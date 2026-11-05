@@ -203,6 +203,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         residual=False,
         param_mismatch=None,
         domain_randomize=None,
+        warmup_iterations=None,
     ):
         """Initialize the MissileIntercept environment.
 
@@ -226,7 +227,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             "reward_variant": reward_variant,
         }
         self.clip_actions = 1.0
-        self.plant = TensorPlant("missile", num_envs, backend, seed, vel_clamp=(1200.0, 40.0))
+        self.plant = TensorPlant(
+            "missile", num_envs, backend, seed, vel_clamp=(1200.0, 40.0),
+            warmup_iterations=warmup_iterations,
+        )
         self.device = self.plant.device
         self.agent_hz = 60
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)
