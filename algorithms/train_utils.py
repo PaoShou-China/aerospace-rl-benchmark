@@ -174,6 +174,68 @@ def build_cfg(
     }
 
 
+def _install_async_episode_logger(runner):
+    """Keep rsl_rl's per-step episode bookkeeping device-side.
+
+    ``Logger.process_env_step`` runs once per env step and calls
+    ``.cpu().numpy().tolist()`` on the completed rows, i.e. a full host
+    synchronisation inside the rollout loop (100 per update).  This keeps the
+    completed sums as GPU tensors and flushes them once per update in
+    ``Logger.log``; the logged values are identical, only their read-back
+    cadence changes.
+    """
+    logger = getattr(runner, "logger", None)
+    if logger is None or getattr(logger, "writer", None) is None:
+        return
+    pending = []
+    orig_log = logger.log
+
+    def process_env_step(rewards, dones, extras, intrinsic_rewards=None):
+        if "episode" in extras:
+            logger.ep_extras.append(extras["episode"])
+        elif "log" in extras:
+            logger.ep_extras.append(extras["log"])
+        if intrinsic_rewards is not None:
+            logger.cur_ereward_sum += rewards
+            logger.cur_ireward_sum += intrinsic_rewards
+            logger.cur_reward_sum += rewards + intrinsic_rewards
+        else:
+            logger.cur_reward_sum += rewards
+        logger.cur_episode_length += 1
+        new_ids = (dones > 0).nonzero(as_tuple=False)
+        if new_ids.numel():
+            pending.append(
+                (
+                    logger.cur_reward_sum[new_ids][:, 0].clone(),
+                    logger.cur_episode_length[new_ids][:, 0].clone(),
+                    None
+                    if intrinsic_rewards is None
+                    else logger.cur_ereward_sum[new_ids][:, 0].clone(),
+                    None
+                    if intrinsic_rewards is None
+                    else logger.cur_ireward_sum[new_ids][:, 0].clone(),
+                )
+            )
+            logger.cur_reward_sum[new_ids] = 0
+            logger.cur_episode_length[new_ids] = 0
+            if intrinsic_rewards is not None:
+                logger.cur_ereward_sum[new_ids] = 0
+                logger.cur_ireward_sum[new_ids] = 0
+
+    def log(*args, **kwargs):
+        if pending:
+            logger.rewbuffer.extend(torch.cat([p[0] for p in pending]).cpu().tolist())
+            logger.lenbuffer.extend(torch.cat([p[1] for p in pending]).cpu().tolist())
+            if pending[0][2] is not None:
+                logger.erewbuffer.extend(torch.cat([p[2] for p in pending]).cpu().tolist())
+                logger.irewbuffer.extend(torch.cat([p[3] for p in pending]).cpu().tolist())
+            pending.clear()
+        return orig_log(*args, **kwargs)
+
+    logger.process_env_step = process_env_step
+    logger.log = log
+
+
 def _save_runner(runner, path):
     """Save a runner even before the logger has been initialised (BC-only)."""
     logger = getattr(runner, "logger", None)
@@ -281,6 +343,7 @@ def run_training(
     vary exactly the variables under test while everything else stays at the
     shared fair-comparison defaults.
     """
+    _t0 = time.perf_counter()
     torch.manual_seed(seed)
     root = Path(__file__).resolve().parents[1]  # repo root (this file: algorithms/train_utils.py)
     out = Path(out_dir) if out_dir is not None else root / "results" / task
@@ -364,6 +427,7 @@ def run_training(
             resumed = False
     else:
         resumed = False
+    _init_seconds = time.perf_counter() - _t0
     if bc_warmstart:
         if algo != "ppo":
             raise ValueError("bc_warmstart is PPO-only")
@@ -448,6 +512,7 @@ def run_training(
                     f"pairs={obs.shape[0]} val_pairs={0 if val is None else val['obs'].shape[0]}",
                     flush=True,
                 )
+                _t_fit = time.perf_counter()
                 bc_report = fit_behavior_cloning(
                     runner,
                     obs,
@@ -467,6 +532,7 @@ def run_training(
                     cut=cut,
                     sample_weights=sample_weights,
                 )
+                bc_report["fit_wall_seconds"] = round(time.perf_counter() - _t_fit, 1)
                 bc_report["dataset_path"] = str(bc_cfg["dataset"])
                 bc_report["extra_datasets"] = list(bc_cfg.get("extra_datasets") or [])
                 bc_report["sample_weighting"] = bc_cfg.get("sample_weighting")
@@ -487,6 +553,7 @@ def run_training(
                     f"{time.perf_counter() - t0:.1f}s",
                     flush=True,
                 )
+                _t_fit = time.perf_counter()
                 bc_report = fit_behavior_cloning(
                     runner,
                     obs,
@@ -500,6 +567,7 @@ def run_training(
                     fit_critic=bc_cfg["fit_critic"],
                 )
                 bc_report["collect_wall_seconds"] = round(collect_wall, 1)
+                bc_report["fit_wall_seconds"] = round(time.perf_counter() - _t_fit, 1)
             bc_warmstart = {**bc_cfg, **bc_report}
             if bc_cfg.get("save_checkpoint"):
                 _save_runner(runner, bc_cfg["save_checkpoint"])
@@ -574,6 +642,51 @@ def run_training(
         # stage 0 = the initialization under test (random / BC / zero residual),
         # evaluated with the same protocol as every learned stage.
         _save_runner(runner, out / "stage_0.pt")
+    # Staged timing: env.step / reset / PPO update are instrumented per call so
+    # run.json reports where the wall clock actually goes (init, BC, sampling,
+    # PPO update, reset).  The wrapper overhead is ~1us per call.
+    _install_async_episode_logger(runner)
+    _timing = {"env_step": 0.0, "reset": 0.0, "ppo_update": 0.0}
+    _orig_env_step = env.step
+
+    def _timed_env_step(*a, **kwargs):
+        t = time.perf_counter()
+        result = _orig_env_step(*a, **kwargs)
+        _timing["env_step"] += time.perf_counter() - t
+        return result
+
+    env.step = _timed_env_step
+    for _name in ("reset", "reset_idx"):
+        _fn = getattr(base_env, _name, None)
+        if _fn is None:
+            continue
+
+        def _timed_reset(_fn=_fn):
+            def _wrapper(*a, **kwargs):
+                t = time.perf_counter()
+                result = _fn(*a, **kwargs)
+                _timing["reset"] += time.perf_counter() - t
+                return result
+
+            return _wrapper
+
+        setattr(base_env, _name, _timed_reset())
+    _orig_update = runner.alg.update
+
+    def _timed_update(*a, **kwargs):
+        t = time.perf_counter()
+        result = _orig_update(*a, **kwargs)
+        _timing["ppo_update"] += time.perf_counter() - t
+        return result
+
+    runner.alg.update = _timed_update
+    _timing["init_seconds"] = round(_init_seconds, 2)
+    if isinstance(bc_warmstart, dict):
+        _timing["bc_seconds"] = round(
+            float(bc_warmstart.get("collect_wall_seconds", 0.0))
+            + float(bc_warmstart.get("fit_wall_seconds", 0.0)),
+            2,
+        )
     start = time.perf_counter()
     stage_saved = []
     hook_history = None
@@ -749,6 +862,23 @@ def run_training(
     for p in out.glob("model_*.pt"):
         p.unlink()
 
+    # Phase breakdown of the wall clock (seconds).  ``sampling_seconds`` and
+    # ``reset_seconds`` are subsets of ``learn_seconds``; ``learn_other`` covers
+    # rollout bookkeeping and per-update logging.
+    timing = {
+        **_timing,
+        "learn_seconds": round(elapsed, 2),
+        "sampling_seconds": round(_timing["env_step"], 2),
+        "reset_seconds": round(_timing["reset"], 2),
+        "ppo_update_seconds": round(_timing["ppo_update"], 2),
+        "learn_other_seconds": round(
+            max(elapsed - _timing["env_step"] - _timing["ppo_update"], 0.0), 2
+        ),
+        "total_seconds": round(time.perf_counter() - _t0, 2),
+    }
+    for _k in ("env_step", "reset", "ppo_update"):
+        timing.pop(_k, None)
+
     report = {
         "task": env.cfg,
         "device": str(env.device),
@@ -767,6 +897,7 @@ def run_training(
         "completed_episodes": env.completed_episodes.detach().cpu().tolist(),
         "completed_successes": env.completed_successes.detach().cpu().tolist(),
         "physics_step_calls": getattr(getattr(env, "plant", None), "physics_steps", None),
+        "timing": timing,
         "note": "Original default tasks on device-resident tensors; NumPy seeded RNG bitstreams and physics engine numerics are not identical to PyFlyt.",  # noqa: E501
     }
     if getattr(env, "completed_metrics", None):

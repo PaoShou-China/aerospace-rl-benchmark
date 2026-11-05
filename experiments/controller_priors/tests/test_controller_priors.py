@@ -392,7 +392,8 @@ def test_first_episode_accounting():
             a = ctrl.actions(obs)
         obs, _, term, trunc, _ = env.step(a)
         ctrl.reset_idx(term | trunc)
-        if cohort.update(env):
+        cohort.update(env)
+        if (t + 1) % 32 == 0 and cohort.finished():
             break
     rep = cohort.report()
     assert rep["protocol"] == "first_episode_per_replica"

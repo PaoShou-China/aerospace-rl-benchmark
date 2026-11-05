@@ -247,7 +247,8 @@ def _rollout(
             first_steps[new] = t + 1
             first_terminal |= new
             t += 1
-            if bool(cohort.seen.all()):
+            # Coarse completion check: seen.all() is the only host sync.
+            if t % 32 == 0 and cohort.finished():
                 break
     wall = time.perf_counter() - start
     physical = finalize(task, env, acc, dt_control=dt_control)

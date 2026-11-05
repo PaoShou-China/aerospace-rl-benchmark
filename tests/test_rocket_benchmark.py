@@ -58,18 +58,21 @@ class ProtocolTests(unittest.TestCase):
         c = FirstEpisodes(env)
         env.completed_episodes[0] = 1
         env.completed_returns[0] = -10
-        self.assertFalse(c.update(env))
+        c.update(env)
+        self.assertFalse(c.finished())
         # Fast replica succeeds in its SECOND episode, slow one still flying.
         env.completed_episodes[0] = 2
         env.completed_successes[0] = 1
         env.completed_returns[0] = 90
         env.completed_metrics["ever_stable_2s"][0] = 1
-        self.assertFalse(c.update(env))
+        c.update(env)
+        self.assertFalse(c.finished())
         env.completed_episodes[1] = 1
         env.completed_successes[1] = 1
         env.completed_returns[1] = 50
         env.completed_metrics["ever_stable_2s"][1] = 1
-        self.assertTrue(c.update(env))
+        c.update(env)
+        self.assertTrue(c.finished())
         r = c.report()
         self.assertEqual(r["successes"], 1)
         self.assertEqual(r["mean_episode_return"], 20)

@@ -60,7 +60,8 @@ def main():
                 if step >= max(0, env.max_steps - a.agent_hz):
                     v = env.plant.state()[2].norm(dim=-1)
                     speeds.extend(v[~cohort.seen & ~env.reset_buf].cpu().tolist())
-                if cohort.update(env):
+                cohort.update(env)
+                if step % 32 == 0 and cohort.finished():
                     break
         report = cohort.report()
         report.update(

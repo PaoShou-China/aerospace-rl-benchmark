@@ -36,8 +36,10 @@ def run_one(task, seed, domain_randomize):
             while steps < cap and not done:
                 actions = controller.actions(obs)
                 obs, _, _, _, _ = env.step(actions)
-                done = cohort.update(env)
+                cohort.update(env)
                 steps += 1
+                if steps % 32 == 0 and cohort.finished():
+                    done = True
         r = cohort.report()
         return r["successes"] / r["episodes_finished"] if r["episodes_finished"] else 0.0
     finally:

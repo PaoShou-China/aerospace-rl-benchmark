@@ -107,7 +107,8 @@ def main():
             for step in range(env.max_steps):
                 obs, _, term, trunc, _ = env.step(controller.actions(obs))
                 controller.reset_idx(term | trunc)
-                if cohort.update(env):
+                cohort.update(env)
+                if step % 32 == 0 and cohort.finished():
                     break
         report = cohort.report()
         report.update(

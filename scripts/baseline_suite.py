@@ -121,7 +121,8 @@ def run_cell(
             obs, _, term, trunc, _ = env.step(actions)
             controller.reset_idx(term | trunc)
             steps += 1
-            if cohort.update(env):
+            cohort.update(env)
+            if steps % 32 == 0 and cohort.finished():
                 break
     wall = time.perf_counter() - start
     report = {

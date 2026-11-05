@@ -117,7 +117,10 @@ def main():
             reset_buf = term | trunc
             controller.reset_idx(reset_buf)
             steps += 1
-            if cohort.update(env):
+            cohort.update(env)
+            # Completion is checked every 32 steps: the per-step stats above
+            # stay device-side, and bool(seen.all()) is the only host sync.
+            if steps % 32 == 0 and cohort.finished():
                 break
     wall = time.perf_counter() - start
 

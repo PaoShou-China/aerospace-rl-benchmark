@@ -23,6 +23,12 @@ class FirstEpisodes:
         }
 
     def update(self, env):
+        """Refresh the per-replica first-episode stats (device ops only).
+
+        Deliberately returns nothing: ``bool(self.seen.all())`` is a host
+        synchronisation that stalls the GPU queue on every step.  Call
+        ``finished()`` at a coarse cadence instead.
+        """
         new = ~self.seen & (env.completed_episodes > self.ep0)
         self.success.copy_(torch.where(new, env.completed_successes - self.ok0, self.success))
         self.returns.copy_(torch.where(new, env.completed_returns - self.ret0, self.returns))
@@ -32,6 +38,9 @@ class FirstEpisodes:
             value.copy_(env.completed_metrics[k] - self.metric0[k])
         self.seen |= new
         self.episodes_completed = env.completed_episodes - self.ep0
+
+    def finished(self):
+        """True once every replica has completed a full episode (one host sync)."""
         return bool(self.seen.all())
 
     def report(self):

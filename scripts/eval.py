@@ -75,7 +75,14 @@ def _eval_wrapper(cfg, vehicle):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("vehicle", choices=list(ENVS))
-    parser.add_argument("--num-envs", type=int, default=1024)
+    parser.add_argument("--num-envs", type=int, default=None)
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="graded check: fixed small validation cohort (64 envs, same seed "
+        "and same completion criterion) writing eval_quick.json; use it during "
+        "training and run the full default evaluation once at the end",
+    )
     parser.add_argument(
         "--max-steps",
         type=int,
@@ -92,10 +99,16 @@ def main():
     )
     parser.add_argument(
         "--report-name",
-        default="eval.json",
-        help="report filename written into --out (the 5-seed protocol writes one per eval seed)",
+        default=None,
+        help="report filename written into --out (default eval.json; --quick "
+        "defaults to eval_quick.json so the graded check never overwrites a "
+        "full report)",
     )
     args = parser.parse_args()
+    if args.num_envs is None:
+        args.num_envs = 64 if args.quick else 1024
+    if args.report_name is None:
+        args.report_name = "eval_quick.json" if args.quick else "eval.json"
 
     out = args.out or Path(__file__).resolve().parent.parent / "results" / args.vehicle
     ckpt = out / "checkpoint.pt"
@@ -112,6 +125,7 @@ def main():
         cfg["actor"]["distribution_cfg"]["init_std"] = torch.tensor(init_std)
 
     torch.manual_seed(args.seed)
+    _setup_t0 = time.perf_counter()
     # restore the exact env construction used at training time
     env_kwargs = dict(cfg.get("env_kwargs") or {})
     env = ENVS[args.vehicle](
@@ -152,6 +166,7 @@ def main():
 
     cohort = FirstEpisodes(env)
     obs = env.get_observations()
+    setup_seconds = time.perf_counter() - _setup_t0
     start = time.perf_counter()
     steps = 0
     with torch.no_grad():
@@ -159,7 +174,10 @@ def main():
             actions = policy(obs)
             obs, _, _, _, _ = env.step(actions)
             steps += 1
-            if cohort.update(env):
+            cohort.update(env)
+            # Completion is checked every 32 steps: the per-step stats above
+            # stay device-side, and bool(seen.all()) is the only host sync.
+            if steps % 32 == 0 and cohort.finished():
                 break
     wall = time.perf_counter() - start
 
@@ -169,6 +187,8 @@ def main():
         "env_steps": steps,
         "num_envs": args.num_envs,
         "env_kwargs": env_kwargs,
+        "quick": bool(args.quick),
+        "setup_seconds": setup_seconds,
         "eval_wall_seconds": wall,
     }
     if cfg.get("experiment_meta"):
