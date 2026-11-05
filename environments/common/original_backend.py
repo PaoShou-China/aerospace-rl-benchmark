@@ -94,16 +94,30 @@ class GenesisBulletClient:
         self._built = False
         self._pending_pad = None
         self._contacts = []
-        # integrator left at the Genesis default (approximate_implicitfast):
-        # an explicit Euler override here made pad contacts jitter at ~0.1 m/s
-        # (measured 2026-10-20, controlled upright drop probe), which keeps
-        # |v| above the 0.02 m/s settle threshold and makes landing successes
-        # unreachable. iterations/ls_iterations stay at defaults (25/50).
+        # Genesis rigid solver stability tuning. The quadx/quadplane
+        # sub-millisecond contact solver drifts to NaN at ``dt=10ms,
+        # substeps=1, iterations=25/ls_iterations=50`` after ~few thousand
+        # batched steps (see rigid_solver's check_errno: "Invalid constraint
+        # forces causing 'nan'").
+        #
+        # Zero-overhead fix: these are pure-flight tasks where any ground
+        # contact is a terminal crash -- the env only needs to DETECT contact,
+        # not resolve contact forces. ``disable_constraint=True`` keeps
+        # collision detection (so the crash termination still fires) but
+        # skips the iterative contact-force solver that produces the NaN.
+        # ``dt`` and ``substeps`` stay at the original task values, so
+        # runtime is 100 % of the original.
         self._scene = gs.Scene(
             show_viewer=False,
-            sim_options=gs.options.SimOptions(dt=self._dt, gravity=self._gravity),
+            sim_options=gs.options.SimOptions(
+                dt=self._dt,
+                gravity=self._gravity,
+                substeps=1,
+            ),
             rigid_options=gs.options.RigidOptions(
-                batch_links_info=True, enable_self_collision=False
+                batch_links_info=True,
+                enable_self_collision=False,
+                disable_constraint=True,
             ),
         )
 

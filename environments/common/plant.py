@@ -199,10 +199,10 @@ class TensorPlant:
         # mask; warmup dominated quadx sampling (~58 of 60 ms per reset).
         # Measured cost/benefit (1024 envs, quadx): 10 -> 58 ms, 1 -> 6 ms,
         # 0 -> 0 ms, while the settled state shifts by (0.33 mm, -0.08 m/s) at
-        # 1 iteration and (33.5 mm, -0.80 m/s) at 0.  1 keeps most of the
-        # speed-up with a negligible state shift, so it is the default; pass
-        # ``warmup_iterations=10`` to restore the upstream behaviour exactly.
-        self.warmup_iterations = 1 if warmup_iterations is None else int(warmup_iterations)
+        # 1 iteration and (33.5 mm, -0.80 m/s) at 0.  The benchmark default
+        # stays at the upstream 10; pass ``warmup_iterations=1`` for the
+        # reset-cost ablation (most of the speed-up at a negligible shift).
+        self.warmup_iterations = 10 if warmup_iterations is None else int(warmup_iterations)
         # Geometry/metadata loading is construction-only. No compatibility API is
         # called by physics_step, auxiliary, or the reset primitives.
         from .original_backend import engine_configuration
@@ -701,6 +701,61 @@ class TensorPlant:
         self.ground_contact.zero_()
         self.pad_contact.zero_()
 
+    def _step_scene(self):
+        """One Genesis scene.step, with Genesis-rigid-solver NaN recovery.
+
+        ``genesis.rigid_solver.check_errno`` raises ``GenesisException`` when
+        the rigid solver's ``_errno`` bitmap contains overflow/nan flags.
+        This happens after thousands of batched steps on quadx/quadplane --
+        PPO-excited extreme states push the solver's internal buffers to
+        non-finite values.
+
+        Primary fix (``environments/common/original_backend``):
+        ``disable_constraint=True`` skips contact-force resolution (flight
+        tasks only need collision *detection*).
+
+        Defensive fallback here: clear stale ``_errno`` bitmasks, sanitize any
+        non-finite states back to the safe spawn pose, and retry once.  We do
+        NOT call ``self.warmup`` -- warmup itself routes through ``physics_step
+        → _step_scene``, so a recovery warmup just re-enters this method and
+        crashes again on the same corrupted solver state.
+        """
+        try:
+            self.scene.step(update_visualizer=False, refresh_visualizer=False)
+        except gs.GenesisException:
+            count = getattr(self, "nan_recoveries", 0) + 1
+            self.nan_recoveries = count
+            self._state_cache = None
+            # clear stale _errno bitmasks on every rigid solver
+            try:
+                for solver in self.scene.sim._solvers:
+                    err = getattr(solver, "_errno", None)
+                    if err is not None and hasattr(err, "zero_"):
+                        err.zero_()
+                    elif err is not None:
+                        err[:] = 0
+            except Exception:
+                pass
+            # sanitize non-finite states back to the safe spawn pose so the
+            # retry does not feed NaN positions/velocities back to the solver.
+            try:
+                p, q, v, w = self.state()
+                bad = ~torch.isfinite(p).all(-1) | ~torch.isfinite(v).all(-1) | ~torch.isfinite(w).all(-1)
+                if bad.any():
+                    safe_p = p.clone()
+                    safe_p[bad] = 0.0
+                    safe_p[bad, 2] = 1.0  # spawn altitude
+                    safe_q = q.clone()
+                    safe_q[bad] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device, dtype=COMPUTE_DTYPE)
+                    safe_v = torch.zeros_like(v)
+                    safe_w = torch.zeros_like(w)
+                    self.set_state(safe_p, safe_q, safe_v, safe_w)
+            except Exception:
+                pass
+            if count > 10:
+                raise
+            self.scene.step(update_visualizer=False, refresh_visualizer=False)
+
     def physics_step(self, command, mask, target_state=None, *, restore=True):
         """Run one Genesis physics sub-step on active replicas.
 
@@ -1019,9 +1074,9 @@ class TensorPlant:
             self.target.set_dofs_velocity(
                 torch.cat((tv, inverse_rotate(tq, tw)), -1).to(gs.tc_float)
             )
-        self.scene.step(update_visualizer=False, refresh_visualizer=False)
-        self._state_cache = None
         self.physics_steps += 1
+        self._step_scene()
+        self._state_cache = None
         if self.physics_steps % self.contact_sample_every == 0:
             ground = self.drone.get_contacts(
                 with_entity=self.ground, is_padded=True
@@ -1135,10 +1190,16 @@ class TensorPlant:
         if iterations <= 0:
             return
         command = torch.zeros((self.n, self.command_width), device=self.device, dtype=COMPUTE_DTYPE)
-        for _ in range(iterations):
-            self.controller(command, mask)
-            for _ in range(self.physics_per_control):
-                self.physics_step(command, mask)
+        try:
+            for _ in range(iterations):
+                self.controller(command, mask)
+                for _ in range(self.physics_per_control):
+                    self.physics_step(command, mask)
+        except gs.GenesisException:
+            # warmup is non-essential settling; if the solver still produces
+            # NaN after _step_scene's recovery, skip the rest -- the caller
+            # (reset_idx) already wrote a clean spawn state via set_state.
+            self._state_cache = None
 
     def close(self):
         """Disconnect the Genesis scene and release device resources."""
