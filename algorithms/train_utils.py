@@ -892,9 +892,9 @@ def run_training(
     for p in out.glob("model_*.pt"):
         p.unlink()
 
-    # Phase breakdown of the wall clock (seconds).  ``sampling_seconds`` and
-    # ``reset_seconds`` are subsets of ``learn_seconds``; ``learn_other`` covers
-    # rollout bookkeeping and per-update logging.
+    # Phase breakdown of the wall clock (seconds).  ``reset_seconds`` is a
+    # subset of ``sampling_seconds`` (resets run inside env.step()), not an
+    # additive stage; ``learn_other`` covers rollout bookkeeping and logging.
     timing = {
         **_timing,
         "learn_seconds": round(elapsed, 2),

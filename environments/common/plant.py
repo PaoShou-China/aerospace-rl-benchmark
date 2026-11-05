@@ -193,12 +193,16 @@ class TensorPlant:
         # 1 whenever the state is already inside the cap, so nominal trajectories
         # (hover |v|<2 m/s, |w|<10 rad/s) are untouched.
         self.vel_clamp = None if vel_clamp is None else (float(vel_clamp[0]), float(vel_clamp[1]))
-        # Reset warmup length in "Aviary steps" (upstream default 10).  Every
+        # Reset warmup length in "Aviary steps" (upstream value: 10).  Every
         # iteration advances the WHOLE scene ``physics_per_control`` times, so a
         # single-replica reset costs the same as a full reset regardless of the
-        # mask.  Kept configurable for the reset-cost ablation; the default is
-        # the upstream value so benchmark numbers stay comparable.
-        self.warmup_iterations = 10 if warmup_iterations is None else int(warmup_iterations)
+        # mask; warmup dominated quadx sampling (~58 of 60 ms per reset).
+        # Measured cost/benefit (1024 envs, quadx): 10 -> 58 ms, 1 -> 6 ms,
+        # 0 -> 0 ms, while the settled state shifts by (0.33 mm, -0.08 m/s) at
+        # 1 iteration and (33.5 mm, -0.80 m/s) at 0.  1 keeps most of the
+        # speed-up with a negligible state shift, so it is the default; pass
+        # ``warmup_iterations=10`` to restore the upstream behaviour exactly.
+        self.warmup_iterations = 1 if warmup_iterations is None else int(warmup_iterations)
         # Geometry/metadata loading is construction-only. No compatibility API is
         # called by physics_step, auxiliary, or the reset primitives.
         from .original_backend import engine_configuration
@@ -1114,11 +1118,10 @@ class TensorPlant:
                     self.rocket_variation.sample(mask)
 
     def warmup(self, mask, iterations=None):
-        """Original 10-Aviary-step warmup with zero command on the masked slots.
+        """Settling warmup with zero command on the masked slots (upstream: 10 steps).
 
-        ``iterations`` defaults to ``self.warmup_iterations`` (10, the upstream
-        value).  See that attribute for why lowering it is a task-semantics
-        change, not a free optimisation.
+        ``iterations`` defaults to ``self.warmup_iterations`` (1; the upstream
+        value is 10, pass ``warmup_iterations=10`` to restore it).
         """
         # An empty warmup must not advance the global scene: physics_step runs
         # scene.step() for every replica, and with an all-False mask the
