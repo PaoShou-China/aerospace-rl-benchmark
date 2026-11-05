@@ -44,13 +44,32 @@ class RslVecEnv(VecEnv):
 
     def __init__(self, env):
         self.__dict__["env"] = env  # bypass __getattr__ during construction
+        self._obs_buffers = None
+        self._obs_signature = None
+        self._obs_slot = 0
+
+    def _own_observations(self, obs):
+        # Main reuses the environment's observation storage. RSL retains s_t
+        # until after env.step, so keep it alive while filling s_(t+1). These
+        # two buffers are borrowed through one following step, not full history.
+        signature = (torch.is_inference_mode_enabled(),
+                     tuple((key, tuple(value.shape), value.dtype, value.device)
+                           for key, value in obs.items()))
+        if signature != self._obs_signature:
+            self._obs_buffers = [obs.clone(), obs.clone()]
+            self._obs_signature = signature
+            self._obs_slot = 0
+        else:
+            self._obs_slot = 1 - self._obs_slot
+            self._obs_buffers[self._obs_slot].copy_(obs)
+        return self._obs_buffers[self._obs_slot]
 
     def get_observations(self):
-        return self.env.get_observations()
+        return self._own_observations(self.env.get_observations())
 
     def step(self, actions):
         obs, rew, term, trunc, extras = self.env.step(actions)
-        return obs, rew, term | trunc, extras
+        return self._own_observations(obs), rew, term | trunc, extras
 
     def __getattr__(self, name):
         return getattr(self.env, name)
@@ -308,6 +327,7 @@ def run_training(
     segment_updates=None,
     segment_hook=None,
     env_curriculum=None,
+    performance=False,
     **algo_overrides,
 ):
     """Train one task end-to-end and write checkpoint.pt / run.json / config.json.
@@ -368,6 +388,9 @@ def run_training(
     Extra keyword arguments are forwarded to ``build_cfg`` so a task entry can
     vary exactly the variables under test while everything else stays at the
     shared fair-comparison defaults.
+    performance: opt-in CUDA tensor graphs/fusion for the existing task and
+    BC and fixed-schedule MLP Beta PPO. Collection/BC optimize their own
+    phases; PPO is configured after BC and checkpoint loading.
     """
     _t0 = time.perf_counter()
     torch.manual_seed(seed)
@@ -557,6 +580,7 @@ def run_training(
                     truncated=trunc_eff,
                     cut=cut,
                     sample_weights=sample_weights,
+                    performance=performance,
                 )
                 bc_report["fit_wall_seconds"] = round(time.perf_counter() - _t_fit, 1)
                 bc_report["dataset_path"] = str(bc_cfg["dataset"])
@@ -572,7 +596,7 @@ def run_training(
                     flush=True,
                 )
                 t0 = time.perf_counter()
-                obs, acts, rews, dones = collect_expert(env, bc_cfg["steps"])
+                obs, acts, rews, dones = collect_expert(env, bc_cfg["steps"], performance=performance)
                 collect_wall = time.perf_counter() - t0
                 print(
                     f"[bc] collected {obs.shape[0] * num_envs} pairs in "
@@ -591,6 +615,7 @@ def run_training(
                     lr=bc_cfg["lr"],
                     gamma=bc_cfg["gamma"],
                     fit_critic=bc_cfg["fit_critic"],
+                    performance=performance,
                 )
                 bc_report["collect_wall_seconds"] = round(collect_wall, 1)
                 bc_report["fit_wall_seconds"] = round(time.perf_counter() - _t_fit, 1)
@@ -664,6 +689,10 @@ def run_training(
         # the improvement-schedule branch applies lr_cosine per chunk itself and
         # still honours stage milestones, so only the plain branches conflict
         raise ValueError("stage_updates cannot be combined with a custom lr schedule")
+    if performance:
+        from algorithms.performance import enable_performance
+        cfg["performance"] = enable_performance(base_env, runner)
+        (out / "config.json").write_text(json.dumps(cfg, indent=2))
     if save_initial_checkpoint:
         # stage 0 = the initialization under test (random / BC / zero residual),
         # evaluated with the same protocol as every learned stage.

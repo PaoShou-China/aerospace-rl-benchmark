@@ -294,13 +294,18 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
         self._cache_terminal_observations()
-        if bool(done.any()):
+        done_any = bool(done.any())
+        if done_any:
             self.extras['episode']={'success_rate':(done&self.complete).to(COMPUTE_DTYPE).sum()/done.sum().clamp_min(1),
                                     'init_range_hi':torch.tensor(self.init_range[1],device=self.device,dtype=COMPUTE_DTYPE)}
         else:
             self.extras.pop('episode',None)
 
-        self.reset_idx(self.reset_buf)
+        if done_any or not getattr(self, "_skip_empty_resets", False):
+            self.reset_idx(self.reset_buf)
+        elif self._domain_randomize:
+            # Preserve the original per-step randomization seed sequence.
+            self._dr_counter += 1
         self._update_observation()
         return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
 

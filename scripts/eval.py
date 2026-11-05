@@ -91,6 +91,8 @@ def main():
     )
     parser.add_argument("--backend", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--performance", action="store_true",
+                        help="use a frozen CUDA policy snapshot and supported environment optimizations")
     parser.add_argument(
         "--out",
         type=Path,
@@ -163,6 +165,15 @@ def main():
     runner.load(str(ckpt))
     actor = runner.alg.actor.eval()
     policy = actor
+    performance_paths = []
+    if args.performance:
+        from algorithms.inference import InferencePolicy
+        from algorithms.performance import enable_environment
+
+        policy = InferencePolicy(actor)
+        performance_paths.append(policy.backend + "_inference")
+        if torch.device(env.device).type == "cuda" and type(env) in ENVS.values():
+            performance_paths += enable_environment(env, compile_step=False, compile_aerodynamics=False)
 
     cohort = FirstEpisodes(env)
     obs = env.get_observations()
@@ -190,6 +201,7 @@ def main():
         "quick": bool(args.quick),
         "setup_seconds": setup_seconds,
         "eval_wall_seconds": wall,
+        "performance_paths": performance_paths,
     }
     if cfg.get("experiment_meta"):
         report["experiment_meta"] = cfg["experiment_meta"]

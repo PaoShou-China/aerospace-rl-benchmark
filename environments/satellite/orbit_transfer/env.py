@@ -361,7 +361,8 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         # parity with the other environments).
         self.extras["time_outs"] = torch.zeros_like(self.truncated)
         self._cache_terminal_observations()
-        if bool(done.any()):
+        done_any = bool(done.any())
+        if done_any:
             self.extras["episode"] = {
                 "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum() / n_done,
                 "perigee_raise_km": drp_km.sum() / n_done,
@@ -371,7 +372,11 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         else:
             self.extras.pop("episode", None)
 
-        self.reset_idx(self.reset_buf)
+        if done_any or not getattr(self, "_skip_empty_resets", False):
+            self.reset_idx(self.reset_buf)
+        elif self._domain_randomize:
+            # Preserve the original per-step randomization seed sequence.
+            self._dr_counter += 1
         self._update_observation()
         return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
 
