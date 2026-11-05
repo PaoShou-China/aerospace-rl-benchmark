@@ -18,7 +18,7 @@ import math
 
 import torch
 
-from environments.common.dynamics import COMPUTE_DTYPE
+from algorithms.dtypes import COMPUTE_DTYPE
 
 from algorithms.baselines.baselines import (
     Baseline,

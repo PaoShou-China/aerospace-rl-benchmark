@@ -157,7 +157,7 @@ def test_actual_applied_action_bookkeeping():
     ctrl.reset_idx(torch.ones(8, dtype=torch.bool, device=env.device))
     u = torch.ones(8, 3)  # large positive residual, saturating on some channels
     w.step(u)
-    applied = w.last_applied.to(torch.float64)
+    applied = w.last_applied.to(ctrl.fuel_est.dtype)
     # The controller integrates its NOMINAL design model, not the randomized
     # per-env plant constants (env.f_max is a (num_envs,) tensor under DR).
     design = env.controller_design
@@ -398,7 +398,10 @@ def test_first_episode_accounting():
     rep = cohort.report()
     assert rep["protocol"] == "first_episode_per_replica"
     assert rep["complete"] and rep["episodes_finished"] == 6
-    assert rep["successes"] == int(env.completed_successes.sum())
+    # Completion is checked every 32 steps, so replicas may roll into further
+    # episodes after the cohort finishes; the report only counts first episodes.
+    assert rep["successes"] == int(cohort.success.sum())
+    assert int(env.completed_successes.sum()) >= rep["successes"]
 
 
 # --------------------------------------------------------------------------
@@ -537,7 +540,7 @@ def test_dataset_compact_roundtrip_restores_training_dtypes(tmp_path):
     for k in ("obs", "act"):
         assert loaded["data"][k].dtype == torch.float32
         assert torch.allclose(loaded["data"][k], ds["data"][k], atol=2e-3)
-    assert loaded["data"]["rew"].dtype == torch.float64
+    assert loaded["data"]["rew"].dtype == torch.float32
     assert loaded["data"]["episode_id"].dtype == torch.long
     assert loaded["data"]["t_in_episode"].dtype == torch.long
     assert len(loaded["episodes"]) == len(ds["episodes"])

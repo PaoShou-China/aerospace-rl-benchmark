@@ -40,7 +40,7 @@ import math
 
 import torch
 
-from environments.common.dynamics import COMPUTE_DTYPE
+from algorithms.dtypes import COMPUTE_DTYPE
 
 from algorithms.baselines.baselines import Baseline, _vec, _quat_to_R, _vee, _wrap, _rot_to_rpy
 
