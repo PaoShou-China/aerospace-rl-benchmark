@@ -54,7 +54,8 @@ def _controller_config(ctrl):
 @torch.no_grad()
 def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
                            max_steps=20000, controller=None, seed=None,
-                           policy=None, beta=0.0, select_episodes=None, log=print):
+                           policy=None, beta=0.0, select_episodes=None, log=print,
+                           performance=False):
     """Roll the task env under its conventional controller and record episodes.
 
     Provide either ``steps`` (fixed-length collection, unfinished tails are
@@ -70,6 +71,9 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
     """
     if env.conventional_controller is None and controller is None:
         raise RuntimeError(f'{type(env).__name__} declares no conventional_controller')
+    if performance:
+        from algorithms.warmstart.performance import prepare_collection
+        prepare_collection(env)
     ctrl = controller or env.conventional_controller(env)
     if steps is not None and max_steps is not None:
         max_steps = int(steps)
@@ -101,7 +105,6 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
     ep_count = torch.zeros(n_env, device=device, dtype=torch.long)
     current_ep = torch.zeros_like(ep_count)
     t_ep = torch.zeros_like(ep_count)
-    episodes_done = 0
     t_used = 0
     start_wall = time.perf_counter()
     checked = False
@@ -145,11 +148,13 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
         t_ep = torch.where(episode_done, torch.zeros_like(t_ep), t_ep + 1)
         current_ep = current_ep + episode_done.to(torch.long)
         ep_count = ep_count + episode_done.to(torch.long)
-        episodes_done += int(episode_done.sum())
         ctrl.reset_idx(episode_done)
         t_used = t + 1
         if steps is None and bool((ep_count >= episodes_per_replica).all()):
             break
+    # One final transfer counts episodes and completes queued collection work
+    # before reporting wall time; avoid a device read on every time step.
+    episodes_done = int(ep_count.sum())
     wall = time.perf_counter() - start_wall
 
     T = t_used
@@ -158,40 +163,7 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
         success=success, episode_id=ep_id, t_in_episode=t_in_ep,
         terminal_obs=terminal_obs).items()}
 
-    # ---------------- episode table (one host pass over boundary indices) ----
-    starts = {(int(i), int(data['episode_id'][t, i])): int(t)
-              for t, i in torch.nonzero((data['t_in_episode'] == 0), as_tuple=False).cpu().tolist()}
-    episodes = []
-    for t, i in torch.nonzero(data['done'], as_tuple=False).cpu().tolist():
-        e = int(data['episode_id'][t, i])
-        start = starts.get((i, e))
-        if start is None:
-            raise RuntimeError(f'missing episode start for replica {i} episode {e}')
-        segment = slice(start, t + 1)
-        ep = dict(replica=i, episode_id=e, start=start, end=t,
-                  complete=True,
-                  terminated=bool(data['terminated'][t, i]),
-                  truncated=bool(data['truncated'][t, i]),
-                  success=bool(data['success'][t, i]),
-                  cut=False, steps=t - start + 1,
-                  episode_return=float(data['rew'][segment, i].sum()),
-                  initial_obs=[float(x) for x in data['obs'][start, i]],
-                  terminal_obs=[float(x) for x in data['terminal_obs'][t, i]])
-        episodes.append(ep)
-    # unfinished tails (fixed-length collection only)
-    unfinished = 0
-    complete_keys = {(ep['replica'], ep['episode_id']) for ep in episodes}
-    for t, i in torch.nonzero((data['t_in_episode'] == 0), as_tuple=False).cpu().tolist():
-        e = int(data['episode_id'][t, i])
-        if (i, e) not in complete_keys:
-            end = int(data['episode_id'][:, i].eq(e).nonzero()[-1])
-            episodes.append(dict(replica=i, episode_id=e, start=t, end=end,
-                                 complete=False, terminated=False, truncated=False,
-                                 success=False, cut=True, steps=end - t + 1,
-                                 episode_return=float(data['rew'][t:end + 1, i].sum()),
-                                 initial_obs=[float(x) for x in data['obs'][t, i]],
-                                 terminal_obs=[float(x) for x in data['terminal_obs'][end, i]]))
-            unfinished += 1
+    episodes, unfinished = _episode_table(data)
 
     # The per-step terminal observation doubles the observation tensor on disk
     # and is never used by the BC targets (the episode table above already
@@ -208,7 +180,7 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
                                 complete_episodes=sum(1 for ep in episodes if ep['complete']),
                                 unfinished_episodes=unfinished,
                                 dropped_unfinished_tails=True,
-                                episodes_done=int(episodes_done),
+                                episodes_done=episodes_done,
                                 collection_wall_seconds=round(wall, 2)),
                 boundary_semantics=('terminated = task violation; truncated = timeout OR success '
                                     '(success recorded separately and treated as terminal for '
@@ -221,6 +193,50 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
         # thousands of near-duplicate rollouts
         out = select_representative_episodes(out, int(select_episodes))
     return out
+
+
+def _episode_table(data):
+    """Export contiguous collected episodes with bounded device-to-host reads.
+
+    Episode IDs increase only at a done boundary in collect_expert_dataset;
+    an episode without a done therefore ends at the collection's last row.
+    Keep the original per-segment reward reduction on the original device.
+    """
+    start_t, start_i = torch.nonzero(data['t_in_episode'] == 0, as_tuple=True)
+    start_rows = torch.stack((start_t, start_i, data['episode_id'][start_t, start_i]), 1).cpu().tolist()
+    end_t, end_i = torch.nonzero(data['done'], as_tuple=True)
+    end_rows = torch.stack((end_t, end_i, data['episode_id'][end_t, end_i],
+                            data['terminated'][end_t, end_i], data['truncated'][end_t, end_i],
+                            data['success'][end_t, end_i]), 1).cpu().tolist()
+    starts = {(i, e): t for t, i, e in start_rows}
+    episodes, returns = [], []
+    for t, i, e, terminated, truncated, success in end_rows:
+        start = starts.get((i, e))
+        if start is None:
+            raise RuntimeError(f'missing episode start for replica {i} episode {e}')
+        episodes.append(dict(replica=i, episode_id=e, start=start, end=t,
+                             complete=True, terminated=bool(terminated), truncated=bool(truncated),
+                             success=bool(success), cut=False, steps=t - start + 1))
+        returns.append(data['rew'][start:t + 1, i].sum())
+    complete_keys = {(ep['replica'], ep['episode_id']) for ep in episodes}
+    unfinished = 0
+    end = data['episode_id'].shape[0] - 1
+    for t, i, e in start_rows:
+        if (i, e) not in complete_keys:
+            episodes.append(dict(replica=i, episode_id=e, start=t, end=end,
+                                 complete=False, terminated=False, truncated=False,
+                                 success=False, cut=True, steps=end - t + 1))
+            returns.append(data['rew'][t:end + 1, i].sum())
+            unfinished += 1
+    if episodes:
+        indices = torch.tensor([(ep['start'], ep['end'], ep['replica']) for ep in episodes],
+                               dtype=torch.long, device=data['obs'].device)
+        initial_obs = data['obs'][indices[:, 0], indices[:, 2]].cpu().tolist()
+        terminal_obs = data['terminal_obs'][indices[:, 1], indices[:, 2]].cpu().tolist()
+        values = torch.stack(returns).cpu().tolist()
+        for ep, value, initial, terminal in zip(episodes, values, initial_obs, terminal_obs):
+            ep.update(episode_return=float(value), initial_obs=initial, terminal_obs=terminal)
+    return episodes, unfinished
 
 
 @torch.no_grad()

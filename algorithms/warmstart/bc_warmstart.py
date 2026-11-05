@@ -21,6 +21,7 @@ PPO-only by design: the tanh-bounded actor head of off-policy methods is a
 different regression target and their runner is not touched here.
 """
 import time
+from contextlib import nullcontext
 
 import torch
 
@@ -85,7 +86,7 @@ BC_DEFAULTS = {'steps': 512, 'epochs': 100, 'batch_size': 8192, 'lr': 1e-3,
                'gamma': None, 'fit_critic': True}
 
 
-def collect_expert(env, steps):
+def collect_expert(env, steps, *, performance=False):
     """Roll the env for `steps` vectorized steps under the task's classical
     controller (``env.conventional_controller``), instantiated here and driven
     directly; the env never sees it.
@@ -97,6 +98,9 @@ def collect_expert(env, steps):
     """
     if env.conventional_controller is None:
         raise RuntimeError(f'{type(env).__name__} declares no conventional_controller')
+    if performance:
+        from algorithms.warmstart.performance import prepare_collection
+        prepare_collection(env)
     ctrl = env.conventional_controller(env, design=getattr(env, "controller_design", None))
     obs = env.get_observations()
     N, A = env.num_envs, env.num_actions
@@ -119,7 +123,8 @@ def collect_expert(env, steps):
                 raise ValueError('expert action violates finiteness/action range')
             checked = True
         obss[t], acts[t] = obs['policy'], expert
-        _, rew, term, trunc, _ = env.step(expert)
+        with torch.no_grad() if performance else nullcontext():
+            _, rew, term, trunc, _ = env.step(expert)
         rews[t], dones[t] = rew, term | trunc
         obs = env.get_observations()
         ctrl.reset_idx(term | trunc)
@@ -191,7 +196,7 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
                          gamma, fit_critic=True, log=print, val=None,
                          normalizer_mode='per_batch', freeze_normalizer=False,
                          terminated=None, truncated=None, cut=None,
-                         bootstrap_values=None, sample_weights=None):
+                         bootstrap_values=None, sample_weights=None, performance=False):
     """Supervised warm start of the runner's actor (and critic).
 
     obs/acts: (T, N, d) pairs from collect_expert; rews/dones feed the
@@ -276,6 +281,18 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
         if normalizer_mode == 'fit_once':
             critic.update_normalization({'policy': flat_obs_c})
 
+    actor_step, critic_step = None, None
+    if performance and device.type == 'cuda':
+        from algorithms.warmstart.performance import make_bc_step
+
+        actor_step = make_bc_step(actor, actor_opt, normalize=normalizer_mode == 'per_batch',
+                                  weighted=flat_w is not None)
+        if fit_critic and m_critic:
+            # Main filters invalid targets once before the independent critic
+            # pass. Preserve its permutation, batch boundaries and RNG order.
+            critic_step = make_bc_step(critic, critic_opt,
+                                       normalize=normalizer_mode == 'per_batch', critic=True)
+
     start = time.perf_counter()
     a_losses, c_losses = [], []
     last_val = None
@@ -286,21 +303,25 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
         for i in range(0, M, batch_size):
             idx = perm[i:i + batch_size]
             b_obs = flat_obs[idx]
-            td = {'policy': b_obs}  # model.obs_groups select this key
-            if normalizer_mode == 'per_batch':
-                actor.update_normalization({'policy': b_obs})
-            pred = actor(td)  # deterministic forward -> policy mean
-            if flat_w is None:
-                a_loss = torch.nn.functional.mse_loss(pred, flat_act[idx])
+            if actor_step is not None:
+                weights = () if flat_w is None else (flat_w[idx],)
+                a_loss = actor_step(b_obs, flat_act[idx], *weights)
             else:
-                # weighted per-pair MSE; the weights are normalized to mean 1
-                w = flat_w[idx].unsqueeze(-1)
-                per_pair = (pred - flat_act[idx]).pow(2).mean(dim=-1)
-                a_loss = (w.squeeze(-1) * per_pair).sum() / w.sum().clamp_min(1e-12)
-            actor_opt.zero_grad(set_to_none=True)
-            a_loss.backward()
-            actor_opt.step()
-            # Accumulate on-device; one host read per epoch instead of per batch.
+                td = {'policy': b_obs}
+                if normalizer_mode == 'per_batch':
+                    actor.update_normalization({'policy': b_obs})
+                pred = actor(td)
+                if flat_w is None:
+                    a_loss = torch.nn.functional.mse_loss(pred, flat_act[idx])
+                else:
+                    w = flat_w[idx].unsqueeze(-1)
+                    per_pair = (pred - flat_act[idx]).pow(2).mean(dim=-1)
+                    a_loss = (w.squeeze(-1) * per_pair).sum() / w.sum().clamp_min(1e-12)
+                actor_opt.zero_grad(set_to_none=True)
+                a_loss.backward()
+                actor_opt.step()
+            # Consume borrowed graph outputs before the next replay overwrites
+            # them; retain main's accumulation dtype and reduction order.
             a_sum += a_loss.detach()
             a_batches += 1
         a_losses.append(float(a_sum / max(a_batches, 1)))
@@ -310,14 +331,17 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
             for i in range(0, m_critic, batch_size):
                 idx = c_perm[i:i + batch_size]
                 b_obs_c = flat_obs_c[idx]
-                td_c = {'policy': b_obs_c}
-                if normalizer_mode == 'per_batch':
-                    critic.update_normalization({'policy': b_obs_c})
-                v = critic(td_c).squeeze(-1)
-                c_loss = torch.nn.functional.mse_loss(v, flat_ret_c[idx])
-                critic_opt.zero_grad(set_to_none=True)
-                c_loss.backward()
-                critic_opt.step()
+                if critic_step is not None:
+                    c_loss = critic_step(b_obs_c, flat_ret_c[idx])
+                else:
+                    td_c = {'policy': b_obs_c}
+                    if normalizer_mode == 'per_batch':
+                        critic.update_normalization({'policy': b_obs_c})
+                    v = critic(td_c).squeeze(-1)
+                    c_loss = torch.nn.functional.mse_loss(v, flat_ret_c[idx])
+                    critic_opt.zero_grad(set_to_none=True)
+                    c_loss.backward()
+                    critic_opt.step()
                 c_sum += c_loss.detach()
                 c_epoch_batches += 1
         if c_epoch_batches:
@@ -352,5 +376,11 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
                'sample_weight_mean': (float(flat_w.mean()) if flat_w is not None else None)}
     if fit_critic:
         summary['final_critic_mse'] = c_losses[-1] if c_losses else None
+    if performance:
+        summary['performance_paths'] = (["graphed_bc_actor"] if actor_step is not None else [])
+        if critic_step is not None:
+            summary['performance_paths'].append("graphed_bc_critic")
+        if fit_critic:
+            summary['performance_paths'].append("prefiltered_critic")
     log(f'[bc] warm start done in {wall:.1f}s: {summary}')
     return summary

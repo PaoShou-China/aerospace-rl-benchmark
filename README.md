@@ -40,6 +40,50 @@ Dryden wind interface are in
 entries, run artifacts and the repository tree are in
 [repository-layout.md](docs/repository-layout.md).
 
+## CUDA acceleration
+
+All ten tasks support opt-in execution adapters for expert data collection,
+behavior cloning (BC) and PPO training. CUDA Graphs and fused Adam reduce
+kernel launch overhead; deterministic inference uses a frozen policy snapshot.
+Task equations, rewards, model precision and training budgets keep their
+existing configuration. FP32 environment computations retain native arithmetic
+ordering. There are no GPU-model or VRAM-capacity branches.
+
+From the repository root, enable training acceleration through the task's
+existing `main` function (Rocket-Landing shown here):
+
+```python
+from environments.rocket.train_rocket import main
+main(performance=True, out_dir="results/cuda_rocket", clean=False)
+```
+
+Evaluate the resulting checkpoint:
+
+```bash
+python scripts/eval.py rocket --performance --out results/cuda_rocket
+```
+
+These acceleration options default to off. Unsupported PPO configurations
+retain the upstream update implementation. Batched expert episode exports and
+lazy Genesis imports also apply in the default mode. Standalone inference uses
+`algorithms.inference.InferencePolicy(actor.eval())`: recreate the snapshot
+after changing source weights, call each instance serially, and match the
+input device and dtype to the snapshot.
+
+Based on [`4439708`](https://github.com/PaoShou-China/aerospace-rl-benchmark/commit/4439708d3bfaf97c585be84727fd7df48eedefaa), paired measurements on one NVIDIA GPU reached
+**1.88–15.29×** PPO update throughput relative to main across 9 completed comparisons, with
+1024 parallel environments, seed 7, original per-task training budgets and
+64 host threads. Timings are the median of three updates after two warmup
+updates, including rollout and logging but excluding startup and BC.
+All ten optimized runs completed; main returned NaN for `quadx_track`,
+so no speedup is reported for those incomplete baselines.
+Time to convergence and success-rate equivalence over complete training runs
+remain unvalidated; long BC fits can accumulate floating-point differences.
+
+Measurements used Python 3.12.3, PyTorch 2.8.0+cu128, Genesis 1.4.4,
+Quadrants 1.3.3 and rsl-rl 5.3.0. The PyTorch 2.11 pin in `requirements.txt`
+has not been validated for these acceleration paths.
+
 ## Task overview
 
 ### Atmospheric flight · 6 tasks

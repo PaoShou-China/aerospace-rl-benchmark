@@ -11,7 +11,6 @@ replicas.
 from pathlib import Path
 import math
 import torch
-import genesis as gs
 import yaml
 from .dynamics import COMPUTE_DTYPE, inverse_rotate
 from .aerodynamics import LiftingSurfaceBatch
@@ -183,6 +182,11 @@ class TensorPlant:
             raise ValueError("n must be positive")
         if rocket_benchmark not in ("v1", "v2"):
             raise ValueError(rocket_benchmark)
+        # TensorRandom is also used by tensor-only spacecraft tasks. Load the
+        # native engine only when a rigid plant actually needs it.
+        global gs
+        import genesis as gs
+
         self.vehicle = vehicle
         self.n = n
         self.rocket_benchmark = rocket_benchmark
@@ -576,7 +580,8 @@ class TensorPlant:
         Body-frame angular velocity ``w`` is rotated into the body frame
         before being handed to the Genesis DOF-velocity setters.
         """
-        self.drone.set_pos(p.to(gs.tc_float), zero_velocity=False)
+        self.drone.set_pos(p.to(gs.tc_float), zero_velocity=False,
+                           skip_forward=getattr(self, "_defer_position_forward", False))
         self.drone.set_quat(q.to(gs.tc_float), zero_velocity=False)
         self.drone.set_dofs_velocity(torch.cat((v, inverse_rotate(q, w)), -1).to(gs.tc_float))
         self._state_cache = (p, q, v, w)
