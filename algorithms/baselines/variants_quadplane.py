@@ -40,6 +40,8 @@ import math
 
 import torch
 
+from environments.common.dynamics import COMPUTE_DTYPE
+
 from algorithms.baselines.baselines import Baseline, _vec, _quat_to_R, _vee, _wrap, _rot_to_rpy
 
 
@@ -119,16 +121,16 @@ class QuadplaneSE3PusherBaseline(Baseline):
         for _k in self.TUNABLE_PARAMS:
             setattr(self, _k, self._param(_k))
         d = self.device
-        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=torch.float64)
-        self.kr = torch.tensor(self.KR, device=d, dtype=torch.float64)
-        self.kom = torch.tensor(self.KOM, device=d, dtype=torch.float64)
-        self.J = torch.tensor(self.INERTIA, device=d, dtype=torch.float64)
-        self.kp = torch.tensor(self.KP_RATE, device=d, dtype=torch.float64)
-        self.mix = torch.tensor(self.MIXER_TAU, device=d, dtype=torch.float64)
+        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=COMPUTE_DTYPE)
+        self.kr = torch.tensor(self.KR, device=d, dtype=COMPUTE_DTYPE)
+        self.kom = torch.tensor(self.KOM, device=d, dtype=COMPUTE_DTYPE)
+        self.J = torch.tensor(self.INERTIA, device=d, dtype=COMPUTE_DTYPE)
+        self.kp = torch.tensor(self.KP_RATE, device=d, dtype=COMPUTE_DTYPE)
+        self.mix = torch.tensor(self.MIXER_TAU, device=d, dtype=COMPUTE_DTYPE)
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         delta = o[:, 31:43].reshape(-1, 4, 3)
         R = _quat_to_R(q)  # body -> world
@@ -158,7 +160,7 @@ class QuadplaneSE3PusherBaseline(Baseline):
         psi_d = torch.atan2(target[:, 1] - p[:, 1], target[:, 0] - p[:, 0])
         c = torch.stack((torch.cos(psi_d), torch.sin(psi_d), torch.zeros_like(psi_d)), -1)
         b1_d = c - (c * b3_d).sum(-1, keepdim=True) * b3_d
-        e2 = torch.tensor((0.0, 1.0, 0.0), device=o.device, dtype=torch.float64).expand_as(b3_d)
+        e2 = torch.tensor((0.0, 1.0, 0.0), device=o.device, dtype=COMPUTE_DTYPE).expand_as(b3_d)
         # 航向投影退化（b3_d ≈ ±c）时回退到 e2
         b1_d = torch.where(
             (b1_d * b1_d).sum(-1, keepdim=True) < 1e-8,
@@ -307,19 +309,19 @@ class QuadplaneL1WingBaseline(Baseline):
         self.dt = 1.0 / env.agent_hz
         d = self.device
         self.k_att = torch.tensor(
-            (self.KP_ATT, self.KP_ATT, self.KP_YAW), device=d, dtype=torch.float64
+            (self.KP_ATT, self.KP_ATT, self.KP_YAW), device=d, dtype=COMPUTE_DTYPE
         )
         self.kd_att = torch.tensor(
-            (self.KD_ATT, self.KD_ATT, self.KD_YAW), device=d, dtype=torch.float64
+            (self.KD_ATT, self.KD_ATT, self.KD_YAW), device=d, dtype=COMPUTE_DTYPE
         )
-        self.i_pitch = torch.zeros(self.num_envs, device=d, dtype=torch.float64)
+        self.i_pitch = torch.zeros(self.num_envs, device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.i_pitch.masked_fill_(mask, 0.0)
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         delta = o[:, 31:43].reshape(-1, 4, 3)
         R = _quat_to_R(q)

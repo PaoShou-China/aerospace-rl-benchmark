@@ -69,7 +69,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant, TensorRandom
-from environments.common.dynamics import inverse_rotate
+from environments.common.dynamics import COMPUTE_DTYPE, inverse_rotate
 from algorithms.baselines.baselines import QuadXTrackKFBaseline
 from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
@@ -204,21 +204,21 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         self.num_actions = 4
         self.dt = 1.0 / self.agent_hz
         self.action_low = torch.tensor(
-            [-math.pi, -math.pi, -math.pi, 0.0], device=self.device, dtype=torch.float64
+            [-math.pi, -math.pi, -math.pi, 0.0], device=self.device, dtype=COMPUTE_DTYPE
         )
         self.action_high = torch.tensor(
-            [math.pi, math.pi, math.pi, 0.8], device=self.device, dtype=torch.float64
+            [math.pi, math.pi, math.pi, 0.8], device=self.device, dtype=COMPUTE_DTYPE
         )
         # a separate counter stream keeps the camera noise from perturbing the
         # plant's motor-noise sequence
         self.sensor_rng = TensorRandom(num_envs, self.device, seed + 7919)
         self.tan_fov = math.tan(math.radians(FOV_HALF_DEG))
-        self.ref_offset = torch.tensor(REF_OFFSET_XY, device=self.device, dtype=torch.float64)
+        self.ref_offset = torch.tensor(REF_OFFSET_XY, device=self.device, dtype=COMPUTE_DTYPE)
 
         d = self.device
 
         def zeros(*s):
-            return torch.zeros(*s, device=d, dtype=torch.float64)
+            return torch.zeros(*s, device=d, dtype=COMPUTE_DTYPE)
 
         self.action = zeros(num_envs, self.num_actions)
         self.reward = zeros(num_envs)
@@ -277,7 +277,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
             "range_loss_steps",
             "occlusion_steps",
         )
-        self.completed_metrics = {k: torch.zeros((), device=d, dtype=torch.float64) for k in keys}
+        self.completed_metrics = {k: torch.zeros((), device=d, dtype=COMPUTE_DTYPE) for k in keys}
 
         self._seed = seed
         self.extras = dict()
@@ -297,7 +297,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
     # ------------------------------------------------------------------ #
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical action bounds."""
-        raw = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     # ------------------------------------------------------------------ #
@@ -379,7 +379,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
                 self.action,
                 self.plant.auxiliary(),
                 rel_meas,
-                vis.to(torch.float64)[:, None],
+                vis.to(COMPUTE_DTYPE)[:, None],
             ),
             -1,
         )
@@ -398,7 +398,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
-        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     # ------------------------------------------------------------------ #
     # step
@@ -425,10 +425,13 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         crash = torch.zeros_like(self.terminated)
         for _ in range(self.inner_steps):
             active = ~(self.terminated | self.truncated)
+            # Constant for the whole control step: one sync here lets every
+            # substep skip the no-op pause-restore write-back.
+            restore = not bool(active.all())
             self.plant.clear_contacts()
             self.plant.controller(physical, active)
             for _ in range(self.plant.physics_per_control):
-                self.plant.physics_step(physical, active)
+                self.plant.physics_step(physical, active, restore=restore)
             p, _, v, _ = self.plant.state()
             collision = self.plant.ground_contact
             bounds = p.norm(dim=-1) > BOUNDS_RADIUS
@@ -453,19 +456,19 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         self.reward.copy_(
             torch.where(
                 active0,
-                VIS_BONUS * vis.to(torch.float64)
-                - LOST_PENALTY * (~vis).to(torch.float64)
-                - TRACK_GAIN * ref_err * vis.to(torch.float64)
+                VIS_BONUS * vis.to(COMPUTE_DTYPE)
+                - LOST_PENALTY * (~vis).to(COMPUTE_DTYPE)
+                - TRACK_GAIN * ref_err * vis.to(COMPUTE_DTYPE)
                 - ALT_GAIN * alt_err * alt_err
                 - ACTION_GAIN * physical.square().sum(-1)
-                - CRASH_PENALTY * crash.to(torch.float64),
+                - CRASH_PENALTY * crash.to(COMPUTE_DTYPE),
                 torch.zeros_like(self.reward),
             )
         )
 
         # per-episode metric accumulation
-        self.ep_visible += vis.to(torch.float64)
-        self.ep_invisible += (active0 & ~vis).to(torch.float64)
+        self.ep_visible += vis.to(COMPUTE_DTYPE)
+        self.ep_invisible += (active0 & ~vis).to(COMPUTE_DTYPE)
         self.ep_dropout.copy_(
             torch.where(
                 active0,
@@ -479,16 +482,16 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
             )
         )
         self.ep_ref_err += torch.where(vis, ref_err, torch.zeros_like(ref_err))
-        self.ep_visible_steps += vis.to(torch.float64)
+        self.ep_visible_steps += vis.to(COMPUTE_DTYPE)
         self.ep_path += torch.where(
             active0, v.norm(dim=-1) * self.dt, torch.zeros_like(self.ep_path)
         )
-        self.ep_fov_loss += (active0 & ~in_fov).to(torch.float64)
-        self.ep_range_loss += (active0 & in_fov & ~in_range).to(torch.float64)
-        self.ep_occlusion += (active0 & in_fov & in_range & occ).to(torch.float64)
+        self.ep_fov_loss += (active0 & ~in_fov).to(COMPUTE_DTYPE)
+        self.ep_range_loss += (active0 & in_fov & ~in_range).to(COMPUTE_DTYPE)
+        self.ep_occlusion += (active0 & in_fov & in_range & occ).to(COMPUTE_DTYPE)
 
         # success = full visible-time fraction at the natural time limit, no crash
-        vis_frac = self.ep_visible / self.count.to(torch.float64).clamp_min(1)
+        vis_frac = self.ep_visible / self.count.to(COMPUTE_DTYPE).clamp_min(1)
         self.complete |= timeout & (vis_frac >= SUCCESS_VISIBLE_FRACTION)
 
         self.reset_buf = self.terminated | self.truncated
@@ -502,14 +505,12 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
 
         self.extras["time_outs"] = self.truncated & ~self.terminated
-        self.extras["terminal_observations"] = TensorDict(
-            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
-        )
+        self._cache_terminal_observations()
 
         done_any = bool(done.any())
         if done_any:
             n = done.sum().clamp_min(1)
-            steps = self.count[done].to(torch.float64).clamp_min(1)
+            steps = self.count[done].to(COMPUTE_DTYPE).clamp_min(1)
             self.completed_metrics["visible_fraction"] += (self.ep_visible[done] / steps).sum()
             self.completed_metrics["lost_seconds"] += (self.ep_invisible[done] * self.dt).sum()
             self.completed_metrics["max_dropout_seconds"] += self.ep_max_dropout[done].sum()
@@ -517,18 +518,18 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
                 self.ep_ref_err[done] / self.ep_visible_steps[done].clamp_min(1)
             ).sum()
             self.completed_metrics["flight_distance"] += self.ep_path[done].sum()
-            self.completed_metrics["collisions"] += (done & self.collision).to(torch.float64).sum()
+            self.completed_metrics["collisions"] += (done & self.collision).to(COMPUTE_DTYPE).sum()
             self.completed_metrics["out_of_bounds"] += (
-                (done & self.out_of_bounds).to(torch.float64).sum()
+                (done & self.out_of_bounds).to(COMPUTE_DTYPE).sum()
             )
             self.completed_metrics["timeouts"] += (
-                (done & self.truncated & ~self.complete).to(torch.float64).sum()
+                (done & self.truncated & ~self.complete).to(COMPUTE_DTYPE).sum()
             )
             self.completed_metrics["fov_loss_steps"] += self.ep_fov_loss[done].sum()
             self.completed_metrics["range_loss_steps"] += self.ep_range_loss[done].sum()
             self.completed_metrics["occlusion_steps"] += self.ep_occlusion[done].sum()
             self.extras["episode"] = {
-                "success_rate": (done & self.complete).to(torch.float64).sum() / n,
+                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum() / n,
                 "visible_fraction": (self.ep_visible[done] / steps).mean(),
                 "lost_seconds": (self.ep_invisible[done] * self.dt).mean(),
                 "max_dropout_seconds": self.ep_max_dropout[done].mean(),
@@ -536,7 +537,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
                     self.ep_ref_err[done] / self.ep_visible_steps[done].clamp_min(1)
                 ).mean(),
                 "flight_distance": self.ep_path[done].mean(),
-                "collision_rate": (done & self.collision).to(torch.float64).sum() / n,
+                "collision_rate": (done & self.collision).to(COMPUTE_DTYPE).sum() / n,
             }
         else:
             self.extras.pop("episode", None)

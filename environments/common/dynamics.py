@@ -9,6 +9,11 @@ import torch
 from pathlib import Path
 import yaml
 
+# Hot-path compute dtype, fixed to float32: consumer GPUs (e.g. RTX 3090)
+# run FP64 at 1/64 of FP32 throughput.  Measured 2026-11-04: quadx baseline
+# success and episode return match the old fp64 path to ~1e-7.
+COMPUTE_DTYPE = torch.float32
+
 
 @dataclass(frozen=True)
 class QuadParams:
@@ -57,7 +62,12 @@ class QuadParams:
 
 
 def inverse_rotate(q, v):
-    """World vector to body coordinates; quaternion order w,x,y,z."""
+    """World vector to body coordinates; quaternion order w,x,y,z.
+
+    The double cross-product form is kept deliberately: a direct R(q)^T
+    expansion was measured 5.8x slower in this launch-bound codebase
+    (more small kernels), and torch.compile gave no further speedup.
+    """
     xyz = -q[..., 1:]
     t = 2 * torch.linalg.cross(xyz, v)
     return v + q[..., :1] * t + torch.linalg.cross(xyz, t)

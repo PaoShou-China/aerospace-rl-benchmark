@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 
 import torch
+from tensordict import TensorDict
 
 from .spaces import Box
 
@@ -52,6 +53,38 @@ class BaseEnv:
 
     def get_observations(self):
         raise NotImplementedError
+
+    def _observations_from_buf(self):
+        """Zero-copy ``'policy'`` TensorDict over ``obs_buf``.
+
+        The TensorDict is cached and aliases the live buffer (updated in
+        place via copy_): one less full-batch device copy and one less
+        TensorDict construction per step.  Consumers must not retain the
+        observation expecting a snapshot; rsl_rl copies it into its rollout
+        storage, and the baselines/residual wrappers only read it.
+        """
+        td = getattr(self, "_obs_td", None)
+        if td is None:
+            td = TensorDict({"policy": self.obs_buf}, batch_size=[self.num_envs])
+            self._obs_td = td
+        return td
+
+    def _cache_terminal_observations(self):
+        """Update ``extras['terminal_observations']`` through cached buffers.
+
+        Same content as building a fresh float32 TensorDict every step, but
+        without the per-step allocation; consumed by rsl_rl before the next
+        step overwrites the buffer.
+        """
+        if getattr(self, "_terminal_obs", None) is None:
+            self._terminal_obs = torch.zeros(
+                self._observation.shape, device=self.device, dtype=torch.float32
+            )
+            self._terminal_obs_td = TensorDict(
+                {"policy": self._terminal_obs}, batch_size=[self.num_envs]
+            )
+        self._terminal_obs.copy_(self._observation)
+        self.extras["terminal_observations"] = self._terminal_obs_td
 
     # -- space descriptors (policy-facing action space is uniform) ----------
     @property

@@ -274,6 +274,15 @@ def main():
     parser.add_argument("--workers", type=int, default=3)
     args = parser.parse_args()
 
+    # Measured 2026-11-04 on one RTX 3090: 6 workers doubled per-job wall time
+    # vs 3 (quadx 4.9h -> 9.1h) with zero throughput gain -- the GPU is the
+    # bottleneck and each worker also burns a full CPU core launching kernels.
+    if args.workers > 3:
+        _log(
+            f"WARNING: --workers {args.workers} > 3 on a single GPU historically "
+            "reduced total throughput; recommend --workers 3 (or 2)"
+        )
+
     t0 = time.perf_counter()
     if args.phase in ("train", "all"):
         jobs = _train_jobs(args.tasks, args.seeds, args.methods)

@@ -116,17 +116,17 @@ class GainSchedulingVecEnv:
         lows = torch.tensor(
             [controller.TUNABLE_PARAMS[k]["low"] for k in self.param_names],
             device=d,
-            dtype=torch.float64,
+            dtype=torch.float32,
         )
         highs = torch.tensor(
             [controller.TUNABLE_PARAMS[k]["high"] for k in self.param_names],
             device=d,
-            dtype=torch.float64,
+            dtype=torch.float32,
         )
         nominals = torch.tensor(
             [controller.TUNABLE_PARAMS[k]["default"] for k in self.param_names],
             device=d,
-            dtype=torch.float64,
+            dtype=torch.float32,
         )
         self.low = lows
         self.high = highs
@@ -169,7 +169,7 @@ class GainSchedulingVecEnv:
                     f"must be in (0, 1], got {s}"
                 )
             scales.append(s)
-        self.scale = torch.tensor(scales, device=d, dtype=torch.float64)
+        self.scale = torch.tensor(scales, device=d, dtype=torch.float32)
         hi_lin = self.scale * (highs - nominals)
         lo_lin = self.scale * (nominals - lows)
         hi_log = self.scale * (self.log_high - self.log_nominal)
@@ -209,7 +209,7 @@ class GainSchedulingVecEnv:
         ``u = 0`` always yields the nominal value; ``u = +/-1`` reaches the
         scaled bound.
         """
-        a = policy_action.to(torch.float64).clamp(-1.0, 1.0)
+        a = policy_action.to(torch.float32).clamp(-1.0, 1.0)
         # signed authority: positive side uses hi_dist, negative side uses lo_dist
         signed = torch.where(a >= 0.0, a * self.hi_dist.unsqueeze(0), a * self.lo_dist.unsqueeze(0))
         # linear params: g = nominal + signed ; log params: g = exp(log_nom + signed)

@@ -37,6 +37,8 @@ import numpy as np
 import torch
 from scipy.linalg import logm
 
+from environments.common.dynamics import COMPUTE_DTYPE
+
 from algorithms.baselines.baselines import Baseline, _vec, _SatelliteCMGPDBase
 
 __all__ = [
@@ -127,7 +129,7 @@ class SatelliteWeightedPinvBaseline(_SatelliteCMGPDBase):
         self.g_axes = torch.linalg.cross(self.rotor_ref, self.g_cross_r0, dim=-1)
 
         def z():
-            return torch.zeros((), device=self.device, dtype=torch.float64)
+            return torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE)
 
         self.metrics.update({"ns_clamp_envsteps": z(), "ns_norm_sum": z(), "w_align_max": z()})
 
@@ -141,8 +143,8 @@ class SatelliteWeightedPinvBaseline(_SatelliteCMGPDBase):
         return -m_norm[:, None] * (r_ax * Minv_c.transpose(1, 2)).sum(-1)
 
     def _steer(self, tau, gr, m_norm):
-        eye3 = torch.eye(3, device=self.device, dtype=torch.float64)
-        eye_n = torch.eye(self.n_cmg, device=self.device, dtype=torch.float64)
+        eye3 = torch.eye(3, device=self.device, dtype=COMPUTE_DTYPE)
+        eye_n = torch.eye(self.n_cmg, device=self.device, dtype=COMPUTE_DTYPE)
         J = gr.transpose(1, 2)  # (n, 3, N)
         b = (-tau / self.kappa).unsqueeze(-1)  # (n, 3, 1)
 
@@ -257,11 +259,11 @@ class TransferEdelbaumBaseline(Baseline):
         self.isp = self._design_scalar("isp", env.isp)
         self.g0 = self._design_scalar("g0", env.g0)
         self.arc_cos = -math.cos(math.radians(self.APOGEE_HALF_ARC_DEG))
-        self.dv_used = torch.zeros(env.num_envs, device=self.device, dtype=torch.float64)
+        self.dv_used = torch.zeros(env.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         # per-replica latched initial perigee/apogee, computed from the
         # FIRST obs frame after each reset (avoids env.rp0/ra0 side-channel).
-        self.rp0 = torch.zeros(env.num_envs, device=self.device, dtype=torch.float64)
-        self.ra0 = torch.zeros(env.num_envs, device=self.device, dtype=torch.float64)
+        self.rp0 = torch.zeros(env.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
+        self.ra0 = torch.zeros(env.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.dv_used.masked_fill_(mask, 0.0)
@@ -270,7 +272,7 @@ class TransferEdelbaumBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         r, v, m = o[:, 1:4], o[:, 4:7], o[:, 7:8]
         rm = r.norm(dim=-1, keepdim=True).clamp_min(1e-9)
         hvec = torch.linalg.cross(r, v, dim=-1)
@@ -421,18 +423,18 @@ class DockingZEMZEVBaseline(Baseline):
             if np.abs(L.imag).max() > 1e-9:
                 raise ValueError("symplectic Ad has eigenvalues on the negative real axis")
             L = L.real
-        self.gen = torch.as_tensor(L / dt, device=self.device, dtype=torch.float64)
+        self.gen = torch.as_tensor(L / dt, device=self.device, dtype=COMPUTE_DTYPE)
         # shield / guard thresholds (LQR-default values)
         self.d_corridor = 0.8 * self.range_fail
         self.d_brake = 0.95 * self.range_fail
         self.a_brake = 0.5 * self.a_max
         self.fuel_soft = 0.75 * self.fuel0
         d = self.device
-        self.fuel_est = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
+        self.fuel_est = torch.zeros(env.num_envs, device=d, dtype=COMPUTE_DTYPE)
         self.steps_left = torch.full((env.num_envs,), self.max_steps, device=d, dtype=torch.long)
-        self.stat_shield = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
-        self.stat_capture = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
-        self.stat_fuel_cap = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
+        self.stat_shield = torch.zeros(env.num_envs, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_capture = torch.zeros(env.num_envs, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_fuel_cap = torch.zeros(env.num_envs, device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.fuel_est.masked_fill_(mask, 0.0)
@@ -447,7 +449,7 @@ class DockingZEMZEVBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, v = o[:, :3], o[:, 3:6]
         d = p.norm(dim=-1)
         d_k = d[:, None]
@@ -455,7 +457,7 @@ class DockingZEMZEVBaseline(Baseline):
         # ---- receding-horizon schedule + two-pulse solve
         t_go = (self.K_T * torch.sqrt(d.clamp_min(1e-6) / self.a_max)).clamp(self.T_MIN, self.T_MAX)
         Phi_rr, Phi_rv, _, _ = self._stm(t_go)
-        eye = torch.eye(3, device=self.device, dtype=torch.float64).expand_as(Phi_rv)
+        eye = torch.eye(3, device=self.device, dtype=COMPUTE_DTYPE).expand_as(Phi_rv)
         det = torch.linalg.det(Phi_rv).abs()
         bad = det < 1e-10 / self.N**3
         Phi_rv = torch.where(bad[:, None, None], Phi_rv + (1e-6 / self.N) * eye, Phi_rv)
@@ -470,7 +472,7 @@ class DockingZEMZEVBaseline(Baseline):
         stop = d_k + v_out.clamp_min(0.0) ** 2 / (2 * self.a_brake)
         hard = (v_out > 0) & (stop > self.d_brake)
         a_cmd = torch.where(hard, -self.a_max * p_hat, a_cmd)
-        self.stat_shield += hard.squeeze(-1).to(torch.float64)
+        self.stat_shield += hard.squeeze(-1).to(COMPUTE_DTYPE)
         a_out = (a_cmd * p_hat).sum(-1, keepdim=True)
         soft = (d_k > self.d_corridor) & (a_out > 0)
         a_cmd = torch.where(soft, a_cmd - a_out * p_hat, a_cmd)
@@ -479,10 +481,10 @@ class DockingZEMZEVBaseline(Baseline):
         v_close = -(v * p_hat).sum(-1, keepdim=True)
         near = (d_k < 2 * self.pos_goal) & (v_close > self.vel_goal)
         a_cmd = torch.where(near, self.a_max * p_hat, a_cmd)
-        self.stat_capture += near.squeeze(-1).to(torch.float64)
+        self.stat_capture += near.squeeze(-1).to(COMPUTE_DTYPE)
 
         # ---- 3) fuel derate (budget must outlast the horizon)
-        remaining = self.steps_left.clamp_min(1).to(torch.float64)[:, None]
+        remaining = self.steps_left.clamp_min(1).to(COMPUTE_DTYPE)[:, None]
         f_allow = (
             (self.fuel0 - self.fuel_est[:, None]).clamp_min(0.0)
             * self.isp
@@ -493,7 +495,7 @@ class DockingZEMZEVBaseline(Baseline):
         f_cmd = a_cmd.norm(dim=-1, keepdim=True) * self.mass
         over = (f_cmd > f_allow) & (self.fuel_est > self.fuel_soft)[:, None]
         a_cmd = torch.where(over, a_cmd * (f_allow / f_cmd.clamp_min(1e-12)), a_cmd)
-        self.stat_fuel_cap += over.squeeze(-1).to(torch.float64)
+        self.stat_fuel_cap += over.squeeze(-1).to(COMPUTE_DTYPE)
 
         action = (a_cmd * self.mass / self.f_max).clamp(-1.0, 1.0)
         self.fuel_est += action.norm(dim=-1) * self.f_max * self.dt / (self.isp * self.g0)
@@ -581,7 +583,7 @@ class RendezvousGlideslopeBaseline(Baseline):
         self.n = 0.0011314003283155144  # LEO mean motion, hardcoded (400 km orbit)
         self.hold = 5.0 + 0.8 * (10.0 - 5.0)  # 9 m hold radius (env.keep_out=5, pos_goal=10)
         d = self.device
-        self.u0 = torch.zeros((env.num_envs, 3), device=d, dtype=torch.float64)
+        self.u0 = torch.zeros((env.num_envs, 3), device=d, dtype=COMPUTE_DTYPE)
         self.count = torch.zeros(env.num_envs, device=d, dtype=torch.long)
 
     def reset_idx(self, mask):
@@ -590,7 +592,7 @@ class RendezvousGlideslopeBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, v = o[:, :3], o[:, 3:6]
         # latch the initial line of sight (first call of every episode)
         first = self.count == 0

@@ -86,7 +86,7 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
     obs_dim = int(env.get_observations()['policy'].shape[-1])
     obss = torch.empty(T_cap, n_env, obs_dim, device=device, dtype=torch.float32)
     acts = torch.empty(T_cap, n_env, num_actions, device=device, dtype=torch.float32)
-    rews = torch.empty(T_cap, n_env, device=device, dtype=torch.float64)
+    rews = torch.empty(T_cap, n_env, device=device, dtype=torch.float32)
     term = torch.zeros(T_cap, n_env, device=device, dtype=torch.bool)
     trunc = torch.zeros_like(term)
     done = torch.zeros_like(term)
@@ -232,7 +232,7 @@ def _farthest_point_indices(features, n):
     already chosen, so the selection spans the feature space instead of
     repeating its densest region.
     """
-    x = torch.as_tensor(features, dtype=torch.float64)
+    x = torch.as_tensor(features, dtype=torch.float32)
     if x.ndim != 2 or x.shape[0] == 0:
         raise ValueError('features must be a non-empty (M, d) matrix')
     std = x.std(dim=0, unbiased=False).clamp_min(1e-6)
@@ -310,7 +310,7 @@ def select_representative_episodes(dataset, n_episodes, method='farthest_point')
         return dataset
     if method != 'farthest_point':
         raise ValueError(f'unknown episode selection method {method!r}')
-    feats = torch.tensor([ep['initial_obs'] for ep in complete], dtype=torch.float64)
+    feats = torch.tensor([ep['initial_obs'] for ep in complete], dtype=torch.float32)
     keep = [complete[i] for i in _farthest_point_indices(feats, n_want)]
     out = _repack_episodes(dataset, keep)
     out['meta']['selection'] = dict(method=method, requested=n_want,
@@ -324,7 +324,7 @@ def _compact_data(data):
     narrowest integer width that fits the id columns.
 
     ``load_expert_dataset`` restores the canonical training dtypes
-    (float32 states/actions, float64 rewards, int64 ids), so nothing downstream
+    (float32 states/actions, float32 rewards, int64 ids), so nothing downstream
     of the file format sees the compact encoding."""
     out = {}
     for k, v in data.items():
@@ -347,7 +347,7 @@ def _restore_data(data):
         if k in ('obs', 'act', 'terminal_obs'):
             out[k] = v.to(torch.float32)
         elif k == 'rew':
-            out[k] = v.to(torch.float64)
+            out[k] = v.to(torch.float32)
         elif k in ('episode_id', 't_in_episode'):
             out[k] = v.to(torch.long)
         else:

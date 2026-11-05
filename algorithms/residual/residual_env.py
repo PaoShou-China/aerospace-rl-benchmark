@@ -60,7 +60,7 @@ __all__ = [
 ]
 
 
-def _as_channel_vector(value, num_actions, device, dtype=torch.float64):
+def _as_channel_vector(value, num_actions, device, dtype=torch.float32):
     if isinstance(value, (int, float)):
         return torch.full((num_actions,), float(value), device=device, dtype=dtype)
     tensor = torch.as_tensor(value, device=device, dtype=dtype).flatten()
@@ -229,15 +229,19 @@ class ResidualVecEnv:
         self._obs = env.get_observations()
         self._steps = 0
         self._first_check = True
+        # Host-device syncs (float()/bool() on GPU tensors) stall the CPU until
+        # the whole GPU queue drains; doing them every step made residual arms
+        # CPU-bound.  Validate on the first step and periodically thereafter.
+        self._validate_every = 100
         self._stats = self._new_stats(d)
 
     # ------------------------------------------------------------------ stats
     def _new_stats(self, device):
         def z():
-            return torch.zeros((), device=device, dtype=torch.float64)
+            return torch.zeros((), device=device, dtype=torch.float32)
 
         def per_channel():
-            return torch.zeros(self.num_actions, device=device, dtype=torch.float64)
+            return torch.zeros(self.num_actions, device=device, dtype=torch.float32)
 
         return {
             "steps": z(),
@@ -267,19 +271,19 @@ class ResidualVecEnv:
         s["nominal_abs_sum"] += nominal.abs().sum()
         s["composed_abs_sum"] += composed.abs().sum()
         s["applied_abs_sum"] += applied.abs().sum()
-        s["residual_abs_sum_channel"] += r_abs.sum(0).to(torch.float64)
-        s["applied_abs_sum_channel"] += applied.abs().sum(0).to(torch.float64)
-        s["nominal_abs_sum_channel"] += nominal.abs().sum(0).to(torch.float64)
+        s["residual_abs_sum_channel"] += r_abs.sum(0).to(torch.float32)
+        s["applied_abs_sum_channel"] += applied.abs().sum(0).to(torch.float32)
+        s["nominal_abs_sum_channel"] += nominal.abs().sum(0).to(torch.float32)
         clipped = composed.abs() > (self.action_upper + 1e-6)
-        s["composed_clip_envsteps"] += clipped.any(-1).sum().to(torch.float64)
+        s["composed_clip_envsteps"] += clipped.any(-1).sum().to(torch.float32)
         at_limit = r_abs > (self.residual_limit.abs().to(r_abs.dtype) - 1e-4)
-        s["residual_clip_envsteps"] += at_limit.any(-1).sum().to(torch.float64)
+        s["residual_clip_envsteps"] += at_limit.any(-1).sum().to(torch.float32)
         # residual opposing the nominal action on at least one channel
         cancelling = (residual * nominal).sum(-1) < 0
-        s["cancellation_envsteps"] += cancelling.sum().to(torch.float64)
-        s["residual_active_envsteps"] += (r_abs > 1e-6).any(-1).sum().to(torch.float64)
+        s["cancellation_envsteps"] += cancelling.sum().to(torch.float32)
+        s["residual_active_envsteps"] += (r_abs > 1e-6).any(-1).sum().to(torch.float32)
         s["nominal_sat_envsteps"] += (
-            (nominal.abs() >= self.action_upper - 1e-6).any(-1).sum().to(torch.float64)
+            (nominal.abs() >= self.action_upper - 1e-6).any(-1).sum().to(torch.float32)
         )
 
     def stats_snapshot(self):
@@ -342,7 +346,7 @@ class ResidualVecEnv:
             g = torch.sigmoid((float(gate["near"]) - phase) / max(soft, 1e-6))
             gain = float(gate.get("gain", 1.0))
             scale = scale * (1.0 + gain * g).unsqueeze(-1)
-        self.last_authority_scale = float(scale.mean())
+        self.last_authority_scale = scale.mean()  # stay on device; no host sync
         return scale
 
     def physics_limits(self):
@@ -398,10 +402,11 @@ class ResidualVecEnv:
                 f"controller action shape {tuple(nominal.shape)} != "
                 f"({self.num_envs}, {self.num_actions})"
             )
-        if not torch.isfinite(nominal).all():
-            raise ValueError("conventional controller produced a non-finite action")
-        if float(nominal.abs().max()) > self.action_upper + 1e-6:
-            raise ValueError("conventional controller action violates the env bound")
+        if self._first_check or self._steps % self._validate_every == 0:
+            if not torch.isfinite(nominal).all():
+                raise ValueError("conventional controller produced a non-finite action")
+            if float(nominal.abs().max()) > self.action_upper + 1e-6:
+                raise ValueError("conventional controller action violates the env bound")
         return nominal
 
     def step(self, policy_action):
@@ -417,7 +422,9 @@ class ResidualVecEnv:
                 f"policy action shape {tuple(policy_action.shape)} != "
                 f"({self.num_envs}, {self.num_actions})"
             )
-        if not torch.isfinite(policy_action).all():
+        if (self._first_check or self._steps % self._validate_every == 0) and not torch.isfinite(
+            policy_action
+        ).all():
             raise ValueError("policy produced a non-finite action (context saved before step)")
         nominal = self._nominal()  # exactly once per step
         limit = self.residual_limit.to(policy_action.dtype) * self._authority_scale(
@@ -445,6 +452,7 @@ class ResidualVecEnv:
         self.controller.reset_idx(done)
         self._obs = obs
         self._steps += 1
+        self._first_check = False
         return obs, rew, term, trunc, extras
 
     def reset(self):

@@ -29,6 +29,8 @@ or below the tuned defaults, and that gap is the measurement being taken.
 
 import torch
 
+from environments.common.dynamics import COMPUTE_DTYPE
+
 from algorithms.baselines.baselines import (
     Baseline,
     QuadXSE3Baseline,
@@ -64,9 +66,9 @@ class _MissileRateBaseline(Baseline):
         from environments.missile.env import OMEGA_MAX, OMEGA_LAT
 
         self.omega_scale = torch.tensor(
-            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=d, dtype=torch.float64
+            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=d, dtype=COMPUTE_DTYPE
         )
-        self.lam_filt = torch.zeros((env.num_envs, 3), device=d, dtype=torch.float64)
+        self.lam_filt = torch.zeros((env.num_envs, 3), device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.lam_filt.masked_fill_(mask[:, None], 0.0)
@@ -85,9 +87,9 @@ class _MissileRateBaseline(Baseline):
         """World specific-acceleration command -> normalized rate action."""
         a_lat_b = torch.einsum("nji,nj->ni", R, a_cmd_w)
         a_lat_b = a_lat_b - a_lat_b[:, 0:1] * torch.tensor(
-            (1.0, 0.0, 0.0), device=self.device, dtype=torch.float64
+            (1.0, 0.0, 0.0), device=self.device, dtype=COMPUTE_DTYPE
         )
-        b_x = torch.tensor((1.0, 0.0, 0.0), device=self.device, dtype=torch.float64).expand_as(
+        b_x = torch.tensor((1.0, 0.0, 0.0), device=self.device, dtype=COMPUTE_DTYPE).expand_as(
             a_lat_b
         )
         w_cmd = _cross_cols(b_x, a_lat_b) / V[:, None]
@@ -143,7 +145,7 @@ class MissilePPNBaseline(_MissileRateBaseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         q, vb = o[:, 3:7], o[:, 7:10]
         r_b, lam, vc = o[:, 23:26], o[:, 29:32], o[:, 32].clamp_min(0.0)
         R = _quat_to_matrix(q)
@@ -156,7 +158,7 @@ class MissilePPNBaseline(_MissileRateBaseline):
         # velocity-frame pure pursuit: rotate the heading onto the LOS
         e = _cross_cols(v_hat_w, r_hat_w)
         a_pp = self.K_PURSUIT * V[:, None] * _cross_cols(e, v_hat_w)
-        g = torch.tensor((0.0, 0.0, -9.81), device=self.device, dtype=torch.float64).expand_as(
+        g = torch.tensor((0.0, 0.0, -9.81), device=self.device, dtype=COMPUTE_DTYPE).expand_as(
             r_hat_w
         )
         a_cmd = a_pp - self.GRAV_COMP * g  # point-mass compensation toward -g
@@ -203,14 +205,14 @@ class MissileTPNBaseline(_MissileRateBaseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         q, vb = o[:, 3:7], o[:, 7:10]
         r_b, lam, vc = o[:, 23:26], o[:, 29:32], o[:, 32].clamp_min(0.0)
         R = _quat_to_matrix(q)
         lam_w = torch.einsum("nij,nj->ni", R, self._filter_los(lam, vc))
         rng = r_b.norm(dim=-1).clamp_min(1e-3)
         r_hat_w = torch.einsum("nij,nj->ni", R, r_b / rng[:, None])
-        g = torch.tensor((0.0, 0.0, -9.81), device=self.device, dtype=torch.float64).expand_as(
+        g = torch.tensor((0.0, 0.0, -9.81), device=self.device, dtype=COMPUTE_DTYPE).expand_as(
             r_hat_w
         )
         g_perp = g - (g * r_hat_w).sum(-1, keepdim=True) * r_hat_w
@@ -267,12 +269,12 @@ class QuadXTrackPursuitBaseline(QuadXSE3Baseline):
     def __init__(self, env):
         super().__init__(env)
         d = self.device
-        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=torch.float64)
-        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=torch.float64)
-        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=torch.float64)
+        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=COMPUTE_DTYPE)
+        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=COMPUTE_DTYPE)
+        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=COMPUTE_DTYPE)
         n = env.num_envs
         self.seen = torch.zeros(n, device=d, dtype=torch.bool)
-        self.since_seen = torch.zeros(n, device=d, dtype=torch.float64)
+        self.since_seen = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
         self.ref_hold = self.home.expand(n, 3).clone()
 
     def reset_idx(self, mask):
@@ -284,7 +286,7 @@ class QuadXTrackPursuitBaseline(QuadXSE3Baseline):
         )
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, rel, vis = o[:, 10:13], o[:, 21:24], o[:, 24] > 0.5
         # raw reference: own position + relative measurement (world axes)
         meas_ref = torch.cat(
@@ -349,14 +351,14 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
     def __init__(self, env):
         super().__init__(env)
         d = self.device
-        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=torch.float64)
-        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=torch.float64)
-        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=torch.float64)
+        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=COMPUTE_DTYPE)
+        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=COMPUTE_DTYPE)
+        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=COMPUTE_DTYPE)
         n = env.num_envs
-        self.est = torch.zeros((n, 3), device=d, dtype=torch.float64)
-        self.v_est = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        self.est = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
+        self.v_est = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
         self.initialized = torch.zeros(n, device=d, dtype=torch.bool)
-        self.since_seen = torch.zeros(n, device=d, dtype=torch.float64)
+        self.since_seen = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
         self.frozen = torch.zeros(n, device=d, dtype=torch.bool)
         self.hold = self.home.expand(n, 3).clone()
 
@@ -370,7 +372,7 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
         self.hold.copy_(torch.where(mask[:, None], self.home.expand_as(self.hold), self.hold))
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, rel, vis = o[:, 10:13], o[:, 21:24], o[:, 24] > 0.5
         dt = self.dt
         y = p + rel  # world-axes measurement
@@ -401,7 +403,7 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
         v_ff = torch.cat(
             (
                 self.v_est[:, :2],
-                torch.zeros((self.est.shape[0], 1), device=o.device, dtype=torch.float64),
+                torch.zeros((self.est.shape[0], 1), device=o.device, dtype=COMPUTE_DTYPE),
             ),
             -1,
         )

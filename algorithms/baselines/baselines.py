@@ -38,6 +38,8 @@ from scipy.linalg import logm, solve_discrete_are
 from scipy.optimize import linear_sum_assignment
 from scipy.signal import place_poles
 
+from environments.common.dynamics import COMPUTE_DTYPE
+
 
 # --------------------------------------------------------------------------- #
 # small batched helpers
@@ -180,11 +182,11 @@ def _cwh_lqr(env, q_pos, q_vel, r_acc, dt=None, method="symplectic"):
         R = np.eye(3) * r_acc
         P = solve_discrete_are(Ad, Bd, Q, R)
         K = np.linalg.solve(R + Bd.T @ P @ Bd, Bd.T @ P @ Ad)
-        return torch.as_tensor(K, device=env.device, dtype=torch.float64)
+        return torch.as_tensor(K, device=env.device, dtype=COMPUTE_DTYPE)
 
     # ---- batched path: each env has its own (q_pos, q_vel, r_acc) --------
     dev = env.device
-    f64 = torch.float64
+    f64 = COMPUTE_DTYPE
     Ad_t = torch.as_tensor(Ad, device=dev, dtype=f64)  # [6, 6]
     Bd_t = torch.as_tensor(Bd, device=dev, dtype=f64)  # [6, 3]
     I3t = torch.eye(3, device=dev, dtype=f64)
@@ -339,7 +341,7 @@ def _cwh_pole_gain(env, wn, zeta=0.9, ratios=(0.8, 1.0), dt=None):
         "max_abs_eig": max_eig,
         "gain": K.tolist(),
     }
-    return torch.as_tensor(K, device=env.device, dtype=torch.float64), report
+    return torch.as_tensor(K, device=env.device, dtype=COMPUTE_DTYPE), report
 
 
 # --------------------------------------------------------------------------- #
@@ -434,7 +436,7 @@ class Baseline:
         """
         value = self._design(name, default)
         if torch.is_tensor(value):
-            flat = value.detach().to(torch.float64).reshape(-1)
+            flat = value.detach().to(COMPUTE_DTYPE).reshape(-1)
             if flat.numel() != 1:
                 raise ValueError(
                     f"{type(self).__name__}: design constant {name!r} resolved to a "
@@ -448,7 +450,7 @@ class Baseline:
     def _gain(self, name):
         """Return a scalar or per-env gain as a ``(num_envs,)`` tensor."""
         value = getattr(self, name)
-        tensor = torch.as_tensor(value, device=self.device, dtype=torch.float64).reshape(-1)
+        tensor = torch.as_tensor(value, device=self.device, dtype=COMPUTE_DTYPE).reshape(-1)
         return tensor.expand(self.num_envs) if tensor.shape[0] == 1 else tensor
 
     def _param(self, name, default=None):
@@ -597,35 +599,35 @@ class QuadXSE3Baseline(Baseline):
         self.I_MAX = self._param("I_MAX")
         # setpoint = the env's active waypoint (env.current_target); the same
         # PD law tracks it as a stationary setpoint per control step
-        self.e1 = torch.tensor((1.0, 0.0, 0.0), device=d, dtype=torch.float64).expand(n, 3)
-        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=torch.float64).expand(n, 3)
-        self.J = torch.tensor(self.INERTIA, device=d, dtype=torch.float64)
-        self.kp = torch.tensor(self.KP_RATE, device=d, dtype=torch.float64)
+        self.e1 = torch.tensor((1.0, 0.0, 0.0), device=d, dtype=COMPUTE_DTYPE).expand(n, 3)
+        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=COMPUTE_DTYPE).expand(n, 3)
+        self.J = torch.tensor(self.INERTIA, device=d, dtype=COMPUTE_DTYPE)
+        self.kp = torch.tensor(self.KP_RATE, device=d, dtype=COMPUTE_DTYPE)
         # rotor geometry: motor order (+x,-y), (-x,+y), (+x,+y), (-x,-y)
-        ay = torch.tensor((-1.0, 1.0, 1.0, -1.0), device=d, dtype=torch.float64)  # arm_y / d
-        ax = torch.tensor((1.0, -1.0, 1.0, -1.0), device=d, dtype=torch.float64)  # arm_x / d
-        sp = torch.tensor((-1.0, -1.0, 1.0, 1.0), device=d, dtype=torch.float64)  # spin signs
+        ay = torch.tensor((-1.0, 1.0, 1.0, -1.0), device=d, dtype=COMPUTE_DTYPE)  # arm_y / d
+        ax = torch.tensor((1.0, -1.0, 1.0, -1.0), device=d, dtype=COMPUTE_DTYPE)  # arm_x / d
+        sp = torch.tensor((-1.0, -1.0, 1.0, 1.0), device=d, dtype=COMPUTE_DTYPE)  # spin signs
         self.rotor_xy = torch.stack((ay, -ax), -1)  # (4, 2) unit arms
         self.mixer_t = torch.stack((ay, -ax, sp), -1)  # (4, 3) mixer torque columns
         self.t_min = self.TOTAL_THRUST * self.PWM_MIN**2  # per-rotor floor
         self.t_max = self.TOTAL_THRUST * 0.25  # per-rotor ceiling
         self.f_min = 4.0 * self.t_min
         self.f_max = self.TOTAL_THRUST * self.THR_MAX**2
-        self.trim = torch.zeros(n, device=d, dtype=torch.float64)
-        self.sat_total = torch.zeros(n, device=d, dtype=torch.float64)
-        self.sat_rotor = torch.zeros((n, 4), device=d, dtype=torch.float64)
-        self.sat_rate = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        self.trim = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.sat_total = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.sat_rotor = torch.zeros((n, 4), device=d, dtype=COMPUTE_DTYPE)
+        self.sat_rate = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.trim.masked_fill_(mask, 0.0)
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         R = _quat_to_R(o[:, 3:7])
         return self._track(_quadx_current_target(o, R), obs)
 
     def _track(self, reference, obs, v_ff=None):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         R = _quat_to_R(q)  # body -> world
         b3 = R[:, :, 2]  # body thrust axis in world
@@ -651,20 +653,20 @@ class QuadXSE3Baseline(Baseline):
         # every approach; the trim only exists to cancel millimeter-scale
         # hover residuals)
         near = e_x.norm(dim=-1) < 0.5
-        trim_dot = -self._gain("KI_POS") * (e_x * b3).sum(-1) * near.to(torch.float64)
+        trim_dot = -self._gain("KI_POS") * (e_x * b3).sum(-1) * near.to(COMPUTE_DTYPE)
         trim_dot = torch.where(f_raw > self.f_max, trim_dot.clamp_max(0.0), trim_dot)
         trim_dot = torch.where(f_raw < self.f_min, trim_dot.clamp_min(0.0), trim_dot)
         self.trim += trim_dot * self.dt
         i_max = self._gain("I_MAX")
         self.trim = self._clamp(self.trim, -i_max, i_max)
         sat = (f_raw < self.f_min) | (f_raw > self.f_max)
-        self.sat_total += sat.to(torch.float64)
+        self.sat_total += sat.to(COMPUTE_DTYPE)
         f = f_raw.clamp(self.f_min, self.f_max)
 
         # desired attitude: b3_d from the (unclipped) force direction, yaw = 0
         n2 = F_des.norm(dim=-1)
         b3_d = torch.where((n2 > 1e-6)[:, None], F_des / n2[:, None].clamp_min(1e-6), b3)
-        e2 = torch.tensor((0.0, 1.0, 0.0), device=o.device, dtype=torch.float64).expand_as(b3_d)
+        e2 = torch.tensor((0.0, 1.0, 0.0), device=o.device, dtype=COMPUTE_DTYPE).expand_as(b3_d)
         b1 = self.e1 - (self.e1 * b3_d).sum(-1, keepdim=True) * b3_d
         # heading projection degenerates only for b3_d ~ +-e1; fall back to e2
         b1 = torch.where(
@@ -688,17 +690,17 @@ class QuadXSE3Baseline(Baseline):
             + M[:, 2:3] * (self.mixer_t[:, 2:3] / (4.0 * self.KM_KF)).T
         )
         r_sat = (t < self.t_min) | (t > self.t_max)
-        self.sat_rotor += r_sat.to(torch.float64)
+        self.sat_rotor += r_sat.to(COMPUTE_DTYPE)
         t = t.clamp(self.t_min, self.t_max)
         pwm = torch.sqrt(4.0 * t / self.TOTAL_THRUST) / self.PWM_GAIN
         thr_raw = pwm.mean(-1)
         thr = thr_raw.clamp(0.0, self.THR_MAX)  # collective channel bound
-        self.sat_total += (thr_raw > self.THR_MAX).to(torch.float64)
+        self.sat_total += (thr_raw > self.THR_MAX).to(COMPUTE_DTYPE)
         diff = pwm - thr[:, None]
         tau = diff @ self.mixer_t * 0.25  # normalized pid torque
         w_cmd = wb + tau / self.kp
         w_sat = w_cmd.abs() > math.pi
-        self.sat_rate += w_sat.to(torch.float64)
+        self.sat_rate += w_sat.to(COMPUTE_DTYPE)
         w_cmd = w_cmd.clamp(-math.pi, math.pi)
         return (
             torch.cat((w_cmd / math.pi, (thr / self.THR_MAX * 2.0 - 1.0)[:, None]), -1)
@@ -796,14 +798,14 @@ class QuadXTrackKFBaseline(QuadXSE3Baseline):
         self.KX = self._param("KX")
         self.KV = self._param("KV")
 
-        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=torch.float64)
-        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=torch.float64)
-        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=torch.float64)
-        self.eye3 = torch.eye(3, device=d, dtype=torch.float64)
-        self.mu = torch.zeros((n, 6), device=d, dtype=torch.float64)
-        self.P = torch.eye(6, device=d, dtype=torch.float64).expand(n, 6, 6).clone() * 1e6
+        self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=COMPUTE_DTYPE)
+        self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=COMPUTE_DTYPE)
+        self.alt = torch.tensor(env.ALT_REF, device=d, dtype=COMPUTE_DTYPE)
+        self.eye3 = torch.eye(3, device=d, dtype=COMPUTE_DTYPE)
+        self.mu = torch.zeros((n, 6), device=d, dtype=COMPUTE_DTYPE)
+        self.P = torch.eye(6, device=d, dtype=COMPUTE_DTYPE).expand(n, 6, 6).clone() * 1e6
         self.initialized = torch.zeros(n, device=d, dtype=torch.bool)
-        self.since_seen = torch.zeros(n, device=d, dtype=torch.float64)
+        self.since_seen = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
         self.frozen = torch.zeros(n, device=d, dtype=torch.bool)
         self.hold = self.home.expand(n, 3).clone()
         self._build_filter()
@@ -811,7 +813,7 @@ class QuadXTrackKFBaseline(QuadXSE3Baseline):
     def _build_filter(self):
         dt = self.dt
         d = self.device
-        f64 = torch.float64
+        f64 = COMPUTE_DTYPE
         n = self.num_envs
         # F stays [6, 6] -- it broadcasts over the batch dim in matmul
         F = torch.eye(6, device=d, dtype=f64)
@@ -847,7 +849,7 @@ class QuadXTrackKFBaseline(QuadXSE3Baseline):
         self.mu.masked_fill_(mask[:, None], 0.0)
         self.P = torch.where(
             mask[:, None, None],
-            torch.eye(6, device=self.device, dtype=torch.float64).expand_as(self.P) * 1e6,
+            torch.eye(6, device=self.device, dtype=COMPUTE_DTYPE).expand_as(self.P) * 1e6,
             self.P,
         )
         self.initialized.masked_fill_(mask, False)
@@ -860,7 +862,7 @@ class QuadXTrackKFBaseline(QuadXSE3Baseline):
         self._build_filter()
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p = o[:, 10:13]
         rel = o[:, 21:24]
         vis = o[:, 24] > 0.5
@@ -875,7 +877,7 @@ class QuadXTrackKFBaseline(QuadXSE3Baseline):
         fresh = vis & ~self.initialized
         y = p + rel
         init_mu = torch.cat(
-            (y, torch.zeros((y.shape[0], 3), device=o.device, dtype=torch.float64)), -1
+            (y, torch.zeros((y.shape[0], 3), device=o.device, dtype=COMPUTE_DTYPE)), -1
         )
         self.mu = torch.where(fresh[:, None], init_mu, self.mu)
         self.P = torch.where(fresh[:, None, None], self.prior.expand_as(self.P), self.P)
@@ -907,7 +909,7 @@ class QuadXTrackKFBaseline(QuadXSE3Baseline):
         v_ff = torch.cat(
             (
                 self.mu[:, 3:5],
-                torch.zeros((self.mu.shape[0], 1), device=o.device, dtype=torch.float64),
+                torch.zeros((self.mu.shape[0], 1), device=o.device, dtype=COMPUTE_DTYPE),
             ),
             -1,
         )
@@ -1006,24 +1008,24 @@ class QuadXCascadePIDBaseline(Baseline):
         self.kp_pos, self.ki_pos, self.kd_pos = g["kp_pos"], g["ki_pos"], g["kd_pos"]
         self.a_max, self.i_max = g["a_max"], g["i_max"]
         self.rate_max = self.RATE_MAX
-        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=torch.float64)
+        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=COMPUTE_DTYPE)
         # attitude gains per axis: roll, pitch, yaw
         self.k_att = torch.tensor(
-            (g["kp_att"], g["kp_att"], g["kp_yaw"]), device=d, dtype=torch.float64
+            (g["kp_att"], g["kp_att"], g["kp_yaw"]), device=d, dtype=COMPUTE_DTYPE
         )
         self.kd_att = torch.tensor(
-            (g["kd_att"], g["kd_att"], g["kd_yaw"]), device=d, dtype=torch.float64
+            (g["kd_att"], g["kd_att"], g["kd_yaw"]), device=d, dtype=COMPUTE_DTYPE
         )
         self.f_max = self.TOTAL_THRUST * self.THR_MAX**2
-        self.i_acc = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        self.i_acc = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
         # waypoint-handoff detector: delta0 jump (body-frame relative to
         # current waypoint) > 1.0 m means the env advanced target_index
         # between two steps; we clear the position integral then.
-        self.last_delta0 = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        self.last_delta0 = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
         # cumulative clipped-command fractions (diagnostics only)
-        self.sat_acc = torch.zeros(n, device=d, dtype=torch.float64)
-        self.sat_rate = torch.zeros(n, device=d, dtype=torch.float64)
-        self.sat_thrust = torch.zeros(n, device=d, dtype=torch.float64)
+        self.sat_acc = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.sat_rate = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.sat_thrust = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.i_acc.masked_fill_(mask[:, None], 0.0)
@@ -1031,7 +1033,7 @@ class QuadXCascadePIDBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         R = _quat_to_R(q)  # body -> world
         roll, pitch, yaw = _rot_to_rpy(R)
@@ -1053,13 +1055,13 @@ class QuadXCascadePIDBaseline(Baseline):
         a_raw = -self.kp_pos * e_p - self.kd_pos * v_w + self.i_acc
         a_norm = a_raw.norm(dim=-1)
         clipped = a_norm > self.a_max
-        self.sat_acc += clipped.to(torch.float64)
+        self.sat_acc += clipped.to(COMPUTE_DTYPE)
         a_des = a_raw * (self.a_max / a_norm.clamp_min(self.a_max))[:, None]
 
         # gravity compensation -> desired roll/pitch and total thrust
         a_cmd = a_des + self.G * self.e3
         f_cmd = self.MASS * a_cmd.norm(dim=-1)
-        self.sat_thrust += (f_cmd > self.f_max).to(torch.float64)
+        self.sat_thrust += (f_cmd > self.f_max).to(COMPUTE_DTYPE)
         f = f_cmd.clamp_max(self.f_max)
         # env collective: quadratic thrust with the measured lag/noise dc gain
         throttle = (torch.sqrt(f / self.TOTAL_THRUST) / self.PWM_GAIN).clamp(0.0, self.THR_MAX)
@@ -1080,7 +1082,7 @@ class QuadXCascadePIDBaseline(Baseline):
             -1,
         )
         w_cmd = self.k_att * e_att - self.kd_att * wb
-        self.sat_rate += (w_cmd.abs() > self.rate_max).to(torch.float64).sum(-1)
+        self.sat_rate += (w_cmd.abs() > self.rate_max).to(COMPUTE_DTYPE).sum(-1)
         w_cmd = w_cmd.clamp(-self.rate_max, self.rate_max)
 
         # inverse of the env action scaling: [-pi, pi] rates, [0, 0.8] throttle
@@ -1173,15 +1175,15 @@ class FixedwingAutopilotBaseline(Baseline):
         self.k_pitch, self.kd_pitch = float(lon["k_pitch"]), float(lon["kd_pitch"])
         self.k_pitch_i = float(lon["k_pitch_i"])
         self.dt = 1.0 / 30.0  # agent control period
-        self.integral = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
-        self.i_pitch = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
+        self.integral = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
+        self.i_pitch = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.integral.masked_fill_(mask, 0.0)
         self.i_pitch.masked_fill_(mask, 0.0)
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         delta = o[:, 23:35].reshape(-1, 4, 3)
         R = _quat_to_R(q)
@@ -1453,7 +1455,7 @@ class FixedwingPIDBaseline(Baseline):
         self.throttle_min = float(spd.get("throttle_min", 0.0))
         self.throttle_max = float(spd.get("throttle_max", 1.0))
         # integrators (one scalar per replica, float64, device-resident)
-        self.i_course = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
+        self.i_course = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.i_roll_rate = torch.zeros_like(self.i_course)
         self.i_altitude = torch.zeros_like(self.i_course)
         self.i_pitch_rate = torch.zeros_like(self.i_course)
@@ -1470,7 +1472,7 @@ class FixedwingPIDBaseline(Baseline):
             state.masked_fill_(mask, 0.0)
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         delta = o[:, 23:35].reshape(-1, 4, 3)
         R = _quat_to_R(q)
@@ -1758,14 +1760,14 @@ class RocketPDGBaseline(Baseline):
         for _k in self.TUNABLE_PARAMS:
             v = self._param(_k)
             if not torch.is_tensor(v):
-                v = torch.full((self.num_envs,), float(v), device=self.device, dtype=torch.float64)
+                v = torch.full((self.num_envs,), float(v), device=self.device, dtype=COMPUTE_DTYPE)
             else:
-                v = v.to(device=self.device, dtype=torch.float64).reshape(-1)
+                v = v.to(device=self.device, dtype=COMPUTE_DTYPE).reshape(-1)
                 if v.shape[0] == 1:
                     v = v.expand(self.num_envs).clone()
             setattr(self, _k, v)
         d = self.device
-        f64 = torch.float64
+        f64 = COMPUTE_DTYPE
         self.ez = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=f64)
         self.rf = torch.tensor((0.0, 0.0, self.REST_Z), device=d, dtype=f64)
         self.gvec = torch.tensor((0.0, 0.0, self.G), device=d, dtype=f64)
@@ -1789,7 +1791,7 @@ class RocketPDGBaseline(Baseline):
     def actions(self, obs):
         if self._f9_controller is not None:
             return self._f9_controller.actions(obs)
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         # aux tail: [13:20] 7-dim action echo, [20:24] FOUR finlet actuation
         # states, then ignited=24, fuel=25, throttle=26, gimbal=27:29, pad=29
@@ -1811,7 +1813,7 @@ class RocketPDGBaseline(Baseline):
         a_net = (self.T_MAX / m - self.G).clamp_min(1.0)
         a_brake = 0.6 * a_net
         t_go = self._clamp((s - self.V_TOUCH) / a_brake, self.TGO_FLOOR, 30.0)
-        self.diag["floor"] += (t_go <= self.TGO_FLOOR + 1e-9).to(torch.float64)
+        self.diag["floor"] += (t_go <= self.TGO_FLOOR + 1e-9).to(COMPUTE_DTYPE)
 
         # ---- ZEM/ZEV acceleration toward rf with zero terminal velocity.
         # Optimal quadratic solution for fixed final position and zero final
@@ -1838,7 +1840,7 @@ class RocketPDGBaseline(Baseline):
         T_raw = m * a_mag
         T_cmd = T_raw.clamp(0.0, self.T_MAX)
         T_min = self.MIN_RATIO * self.T_MAX
-        self.diag["infeasible"] += (T_raw > self.T_MAX).to(torch.float64)
+        self.diag["infeasible"] += (T_raw > self.T_MAX).to(COMPUTE_DTYPE)
         ign_mid = torch.where(ignited_obs, T_cmd >= 0.97 * T_min, T_cmd >= 1.03 * T_min)
 
         # ---- endgame: two-stage suicide burn.  Stage 1 brakes along the
@@ -1873,7 +1875,7 @@ class RocketPDGBaseline(Baseline):
         pulse = endg & (s <= self.S_PULSE) & (h_agl <= self.H_PULSE)
         a_vert_end = torch.where(pulse, self.G + A_END, a_req)
         T_end = (m * a_vert_end).clamp(0.0, self.T_MAX)
-        self.diag["infeasible"] += (endg & ~pulse & (m * a_req > self.T_MAX)).to(torch.float64)
+        self.diag["infeasible"] += (endg & ~pulse & (m * a_req > self.T_MAX)).to(COMPUTE_DTYPE)
         T_min = self.MIN_RATIO * self.T_MAX
         a_lat_end = -1.5 * v_w[:, :2] - (p[:, :2] - self.rf[:2])
         if self.M_DRY > 1000.0:
@@ -1926,13 +1928,13 @@ class RocketPDGBaseline(Baseline):
             self.touchdown |= pad_c
             h_agl = (p[:, 2] - self.REST_Z).clamp_min(0.0)
             ign = torch.where(endg, ign_end, ign_mid) & (h_agl > 0.5) & ~self.touchdown
-        self.diag["ignitions"] += (ign & ~ignited_obs).to(torch.float64)
-        self.diag["coast"] += (~ign).to(torch.float64)
+        self.diag["ignitions"] += (ign & ~ignited_obs).to(COMPUTE_DTYPE)
+        self.diag["coast"] += (~ign).to(COMPUTE_DTYPE)
         T_cmd = torch.where(endg, T_end, T_cmd)
         a_thr = torch.where(endg[:, None], a_thr_end, a_thr)
         a_mag = torch.where(endg, a_thr_end.norm(dim=-1).clamp_min(1e-6), a_mag)
         u_thr = ((T_cmd / self.T_MAX - self.MIN_RATIO) / (1.0 - self.MIN_RATIO)).clamp(0.0, 1.0)
-        self.diag["sat_max"] += (ign & (u_thr >= 0.999)).to(torch.float64)
+        self.diag["sat_max"] += (ign & (u_thr >= 0.999)).to(COMPUTE_DTYPE)
 
         # ---- desired thrust direction.  Keep the guidance tilt across
         # coast/burn transitions: forcing the setpoint upright at every
@@ -2032,7 +2034,7 @@ class RocketPDGBaseline(Baseline):
         T_now = torch.where(ign, T_cmd, torch.zeros_like(T_cmd))
         fin_a_cap = (0.3 * self.FIN_K * V2 / m)[:, None]
         a_fin_w = (a_thr[:, :2] - a_lat_thr - a_lat_gim).clamp(-fin_a_cap, fin_a_cap)
-        self.diag["fin_sat"] += (a_fin_w.abs() >= fin_a_cap - 1e-12).any(-1).to(torch.float64)
+        self.diag["fin_sat"] += (a_fin_w.abs() >= fin_a_cap - 1e-12).any(-1).to(COMPUTE_DTYPE)
         a_fin_b = torch.einsum(
             "nji,nj->ni", R, torch.cat((a_fin_w, torch.zeros_like(a_fin_w[:, :1])), -1)
         )[:, :2]
@@ -2206,7 +2208,7 @@ class RocketPDLandingBaseline(Baseline):
             self.KD_ATT = 4.0e6
             self.KD_YAW = 2000.0
         d = self.device
-        f64 = torch.float64
+        f64 = COMPUTE_DTYPE
         self.ez = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=f64)
         # started: edge latch for the braking-distance ignition switch (cleared
         # by reset_idx, mirroring the env)
@@ -2233,7 +2235,7 @@ class RocketPDLandingBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         ignited_obs = o[:, 24] > 0.5
         fuel = o[:, 25].clamp(0.0, 1.0)
@@ -2263,7 +2265,7 @@ class RocketPDLandingBaseline(Baseline):
         # the legs across the pad -- the drift must simply stop.
         a_lat_pulse = (-self.KV_LAT * v_w[:, :2]).clamp(-self.A_LAT_PULSE, self.A_LAT_PULSE)
         a_xy = torch.where((h < self.H_TERM)[:, None], a_lat_pulse, a_xy)
-        self.diag["lat_cap"] += (n_xy[:, 0] > lat_cap).to(torch.float64)
+        self.diag["lat_cap"] += (n_xy[:, 0] > lat_cap).to(COMPUTE_DTYPE)
 
         # ---- 5. ignition by braking distance (fixed hysteresis, no learning)
         v_dn = (-v_w[:, 2]).clamp_min(0.0)
@@ -2297,10 +2299,10 @@ class RocketPDLandingBaseline(Baseline):
             self.touchdown |= pad_c
             ign &= (h > 0.5) & ~self.touchdown
         self.started |= ign
-        n_on = ign.sum().to(torch.float64)
-        self.diag["ignitions"] += (ign & ~ignited_obs).to(torch.float64).sum()
+        n_on = ign.sum().to(COMPUTE_DTYPE)
+        self.diag["ignitions"] += (ign & ~ignited_obs).to(COMPUTE_DTYPE).sum()
         self.diag["coast"] += self.num_envs - n_on
-        self.diag["pad_cut"] += pad_c.sum().to(torch.float64)
+        self.diag["pad_cut"] += pad_c.sum().to(COMPUTE_DTYPE)
 
         # ---- 3. thrust magnitude and desired axis
         sig = torch.cat((a_xy, f_z.clamp_min(0.0)[:, None]), -1)
@@ -2308,7 +2310,7 @@ class RocketPDLandingBaseline(Baseline):
         T_min = self.MIN_RATIO * self.T_MAX
         T_cmd = torch.where(ign, T_req.clamp(T_min, self.T_MAX), torch.zeros_like(T_req))
         u_thr = ((T_cmd / self.T_MAX - self.MIN_RATIO) / (1.0 - self.MIN_RATIO)).clamp(0.0, 1.0)
-        self.diag["sat_max"] += (ign & (u_thr >= 0.999)).to(torch.float64).sum()
+        self.diag["sat_max"] += (ign & (u_thr >= 0.999)).to(COMPUTE_DTYPE).sum()
 
         # ---- desired thrust axis: the specific-thrust vector the engine
         # produces when lit, s = T/m = clamp(|sigma|, T_min/m, T_MAX/m) with
@@ -2361,10 +2363,10 @@ class RocketPDLandingBaseline(Baseline):
         )
         self.diag["fin_sat"] += (
             (tau_fin.abs() >= self.FIN_CAP * k_fin[:, None] - 1e-12).any(-1) & (V2 > 0.04)
-        ).to(torch.float64)
+        ).to(COMPUTE_DTYPE)
         self.diag["gim_sat"] += (
             (tau_gim.abs() >= self.GIM_CAP * k_gim[:, None] - 1e-12).any(-1) & (T_cmd > 1.0)
-        ).to(torch.float64)
+        ).to(COMPUTE_DTYPE)
         fx = tau_fin[:, 1] / k_fin
         fy = -tau_fin[:, 0] / k_fin
         gx = torch.where(T_cmd > 1.0, -tau_gim[:, 0] / k_gim, torch.zeros_like(k_gim))
@@ -2436,29 +2438,29 @@ class _SatelliteCMGPDBase(Baseline):
         self.rotor_speed = float(self._design("rotor_speed", env.rotor_speed))
         self.kappa = self.h_dyn / self.rotor_speed  # tau = -kappa * gr^T delta
         self.I = torch.as_tensor(
-            self._design("inertia", env.inertia), device=self.device, dtype=torch.float64
+            self._design("inertia", env.inertia), device=self.device, dtype=COMPUTE_DTYPE
         )
-        self.rotor_ref = env.rotor_axes_ref.to(torch.float64)
-        self.g_cross_r0 = env.g_cross_r0.to(torch.float64)
+        self.rotor_ref = env.rotor_axes_ref.to(COMPUTE_DTYPE)
+        self.g_cross_r0 = env.g_cross_r0.to(COMPUTE_DTYPE)
         self.action_scale = float(self._design("action_scale", env.action_scale))
         # Standard numerical rank threshold for the Moore-Penrose solve: the
         # LAPACK/pinv convention rtol = max(m, n) * eps(dtype), atol = 0.  The
         # threshold is RELATIVE to the largest singular value, so it is
         # independent of the rotor-speed scaling of gr.
-        self.pinv_rtol = max(3, self.n_cmg) * torch.finfo(torch.float64).eps
+        self.pinv_rtol = max(3, self.n_cmg) * torch.finfo(COMPUTE_DTYPE).eps
         self.pinv_atol = 0.0
-        self.last_rate_request = torch.zeros(env.num_envs, device=self.device, dtype=torch.float64)
+        self.last_rate_request = torch.zeros(env.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
 
         # on-device diagnostic accumulators (no host sync in the step loop)
         def z():
-            return torch.zeros((), device=self.device, dtype=torch.float64)
+            return torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE)
 
         self.metrics = {
             "steps": z(),
             "clamp_envsteps": z(),
             "nonfinite_envsteps": z(),
             "m_below_envsteps": z(),
-            "m_min": torch.full((), float("inf"), device=self.device, dtype=torch.float64),
+            "m_min": torch.full((), float("inf"), device=self.device, dtype=COMPUTE_DTYPE),
             "hsum_max": z(),
             # steering-law / torque accounting
             "sat_gimbal_envsteps": z(),
@@ -2474,7 +2476,7 @@ class _SatelliteCMGPDBase(Baseline):
             "m_norm_sum": z(),
             "sigma_min_ratio_sum": z(),
             "sigma_min_ratio_min": torch.full(
-                (), float("inf"), device=self.device, dtype=torch.float64
+                (), float("inf"), device=self.device, dtype=COMPUTE_DTYPE
             ),
         }
 
@@ -2524,7 +2526,7 @@ class _SatelliteCMGPDBase(Baseline):
     def _record_rank(self, gr):
         """Rank diagnostics for the 3xN Jacobian (no effect on the command)."""
         s = torch.linalg.svdvals(gr)
-        ratio = s[:, -1] / s[:, 0].clamp_min(torch.finfo(torch.float64).tiny)
+        ratio = s[:, -1] / s[:, 0].clamp_min(torch.finfo(COMPUTE_DTYPE).tiny)
         self.metrics["sigma_min_ratio_sum"] += ratio.sum()
         self.metrics["sigma_min_ratio_min"] = torch.minimum(
             self.metrics["sigma_min_ratio_min"], ratio.min()
@@ -2548,7 +2550,7 @@ class _SatelliteCMGPDBase(Baseline):
         action = (delta / self.action_scale).clamp(-1.0, 1.0)
         # the env casts the action to float32 then scales by action_scale; use
         # exactly the delivered rate for the torque accounting
-        delta_applied = action.to(torch.float32).to(torch.float64) * self.action_scale
+        delta_applied = action.to(torch.float32).to(COMPUTE_DTYPE) * self.action_scale
         self.metrics["rate_applied_norm_sum"] += delta_applied.norm(dim=-1).sum()
         tau_act = -self.kappa * (gr.transpose(1, 2) @ delta_applied.unsqueeze(-1)).squeeze(-1)
 
@@ -2562,7 +2564,7 @@ class _SatelliteCMGPDBase(Baseline):
         return action.to(torch.float32)
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         tau, gr, m_norm, h_sum = self._pd_command(o)
 
         # diagnostics: nonfinite inputs, manipulability floor, stored momentum
@@ -2635,7 +2637,7 @@ class SatelliteCMGBaseline(_SatelliteCMGPDBase):
         JtJ = gr.transpose(1, 2) @ gr
         JtJ = (
             JtJ
-            + torch.eye(3, device=self.device, dtype=torch.float64)[None] * (lam**2)[:, None, None]
+            + torch.eye(3, device=self.device, dtype=COMPUTE_DTYPE)[None] * (lam**2)[:, None, None]
         )
         return -(1.0 / self.kappa) * (gr @ torch.linalg.solve(JtJ, tau.unsqueeze(-1))).squeeze(-1)
 
@@ -2748,8 +2750,8 @@ class TransferGaussBaseline(Baseline):
         # support per-env scheduling, so promote scalar defaults to (n,).
         def _promote(v):
             if not torch.is_tensor(v):
-                return torch.full((self.num_envs,), float(v), device=self.device, dtype=torch.float64)
-            v = v.to(device=self.device, dtype=torch.float64).reshape(-1)
+                return torch.full((self.num_envs,), float(v), device=self.device, dtype=COMPUTE_DTYPE)
+            v = v.to(device=self.device, dtype=COMPUTE_DTYPE).reshape(-1)
             return v.expand(self.num_envs).clone() if v.shape[0] == 1 else v
 
         self.rp0 = _promote(self._param("rp0", 8.5e6))
@@ -2758,7 +2760,7 @@ class TransferGaussBaseline(Baseline):
         self._target_rp_override = target_rp
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         r, v, m = o[:, 1:4], o[:, 4:7], o[:, 7:8]
         rm = r.norm(dim=-1, keepdim=True).clamp_min(1e-9)
         hvec = torch.linalg.cross(r, v, dim=-1)
@@ -2896,7 +2898,7 @@ class TransferQLawBaseline(Baseline):
         self.w_a = self.W_A if w_a is None else float(w_a)
         self.w_e = self.W_E if w_e is None else float(w_e)
         self.eta_min = self.ETA_MIN if eta_min is None else float(eta_min)
-        g = torch.arange(self.N_GRID, device=self.device, dtype=torch.float64)
+        g = torch.arange(self.N_GRID, device=self.device, dtype=COMPUTE_DTYPE)
         self._sin_g = torch.sin(2.0 * math.pi * g / self.N_GRID)
         self._cos_g = torch.cos(2.0 * math.pi * g / self.N_GRID)
 
@@ -2952,7 +2954,7 @@ class TransferQLawBaseline(Baseline):
         return q.detach(), q_a.detach(), q_e.detach()
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         r, v = o[:, 1:4], o[:, 4:7]
         rm = r.norm(dim=-1).clamp_min(1e-9)
         hvec = torch.linalg.cross(r, v, dim=-1)
@@ -3106,13 +3108,13 @@ class DockingCWHLQRBaseline(Baseline):
         # per-episode bookkeeping (reset with the env)
         n = env.num_envs
         d = self.device
-        self.fuel_est = torch.zeros(n, device=d, dtype=torch.float64)
+        self.fuel_est = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
         self.steps_left = torch.full((n,), self.max_steps, device=d, dtype=torch.long)
-        self.stat_shield_hard = torch.zeros(n, device=d, dtype=torch.float64)
-        self.stat_shield_soft = torch.zeros(n, device=d, dtype=torch.float64)
-        self.stat_capture = torch.zeros(n, device=d, dtype=torch.float64)
-        self.stat_fuel_cap = torch.zeros(n, device=d, dtype=torch.float64)
-        self.stat_sat = torch.zeros(n, device=d, dtype=torch.float64)
+        self.stat_shield_hard = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_shield_soft = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_capture = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_fuel_cap = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_sat = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
 
     def _rebuild_K(self, env=None):
         """Recompute the LQR gain from the current kappa / w_vel / tolerances."""
@@ -3128,7 +3130,7 @@ class DockingCWHLQRBaseline(Baseline):
         # thresholds are broadcast to a per-env (n,) tensor (``actions``
         # indexes them as ``[:, None]``).
         n = int(self.env.num_envs)
-        d, f64 = self.device, torch.float64
+        d, f64 = self.device, COMPUTE_DTYPE
 
         def _col(v):
             if torch.is_tensor(v):
@@ -3181,10 +3183,10 @@ class DockingCWHLQRBaseline(Baseline):
     def observe_applied_action(self, action):
         if self.last_action is None or not self.fuel_guard:
             return
-        applied = action.to(torch.float64)
+        applied = action.to(COMPUTE_DTYPE)
         # actions() already integrated the impulse of its own command; correct
         # that estimate to the action actually delivered by the residual layer.
-        nominal = self.last_action.to(torch.float64)
+        nominal = self.last_action.to(COMPUTE_DTYPE)
         d_impulse = (
             (applied.norm(dim=-1) - nominal.norm(dim=-1))
             * self.f_max
@@ -3194,7 +3196,7 @@ class DockingCWHLQRBaseline(Baseline):
         self.fuel_est.add_(d_impulse)
 
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, v = o[:, :3], o[:, 3:6]
         d = p.norm(dim=-1, keepdim=True).clamp_min(1e-9)
         p_hat = p / d
@@ -3207,23 +3209,23 @@ class DockingCWHLQRBaseline(Baseline):
             hard = (v_out > 0) & (stop > self.d_brake[:, None])
             u_shield = -self.a_max * p_hat.squeeze(-1)
             a = torch.where(hard, u_shield, a)
-            self.stat_shield_hard += hard.squeeze(-1).to(torch.float64)
+            self.stat_shield_hard += hard.squeeze(-1).to(COMPUTE_DTYPE)
             # corridor projection: never thrust outward inside the corridor
             a_out = (a * p_hat).sum(-1, keepdim=True)
             soft = (d > self.d_corridor[:, None]) & (a_out > 0)
             a = torch.where(soft, a - a_out * p_hat, a)
-            self.stat_shield_soft += soft.squeeze(-1).to(torch.float64)
+            self.stat_shield_soft += soft.squeeze(-1).to(COMPUTE_DTYPE)
 
         # 2) terminal capture net: brake an over-fast crossing of the goal sphere
         if self.capture_net:
             v_close = -(v * p_hat).sum(-1, keepdim=True)
             near = (d < 2 * self.pos_goal) & (v_close > self.vel_goal)
             a = torch.where(near, self.a_max * p_hat.squeeze(-1), a)
-            self.stat_capture += near.squeeze(-1).to(torch.float64)
+            self.stat_capture += near.squeeze(-1).to(COMPUTE_DTYPE)
 
         # 3) fuel derate: cap the per-step impulse so the budget outlasts the horizon
         if self.fuel_guard:
-            remaining = self.steps_left.clamp_min(1).to(torch.float64)
+            remaining = self.steps_left.clamp_min(1).to(COMPUTE_DTYPE)
             f_allow = (
                 (self.fuel0 - self.fuel_est).clamp_min(0.0)
                 * self.isp
@@ -3237,11 +3239,11 @@ class DockingCWHLQRBaseline(Baseline):
             f_cmd = a.norm(dim=-1, keepdim=True) * self.mass
             over = (f_cmd > f_allow) & (self.fuel_est > self.fuel_soft).unsqueeze(-1)
             a = torch.where(over, a * (f_allow / f_cmd.clamp_min(1e-12)), a)
-            self.stat_fuel_cap += over.squeeze(-1).to(torch.float64)
+            self.stat_fuel_cap += over.squeeze(-1).to(COMPUTE_DTYPE)
 
         # output saturation: per-axis normalized thrust in [-1, 1]
         action = (a * self.mass / self.f_max).clamp(-1.0, 1.0)
-        self.stat_sat += (action.abs() >= 1.0).to(torch.float64).sum(-1)
+        self.stat_sat += (action.abs() >= 1.0).to(COMPUTE_DTYPE).sum(-1)
         self.fuel_est += action.norm(dim=-1) * self.f_max * self.dt / (self.isp * self.g0)
         self.steps_left -= 1
         self.last_action = action.detach().clone()
@@ -3322,10 +3324,10 @@ class RendezvousTwoImpulseBaseline(Baseline):
             if np.abs(L.imag).max() > 1e-9:
                 raise ValueError("symplectic Ad has eigenvalues on the negative real axis")
             L = L.real
-        self.gen = torch.as_tensor(L / env.dt, device=self.device, dtype=torch.float64)
+        self.gen = torch.as_tensor(L / env.dt, device=self.device, dtype=COMPUTE_DTYPE)
         n = env.num_envs
-        self.rf = torch.zeros((n, 3), device=self.device, dtype=torch.float64)
-        self.t_arr = torch.zeros(n, device=self.device, dtype=torch.float64)  # [steps]
+        self.rf = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
+        self.t_arr = torch.zeros(n, device=self.device, dtype=COMPUTE_DTYPE)  # [steps]
         self.infeasible = torch.zeros(n, device=self.device, dtype=torch.bool)
         self.count = torch.zeros(n, device=self.device, dtype=torch.long)
 
@@ -3347,7 +3349,7 @@ class RendezvousTwoImpulseBaseline(Baseline):
         # ill-conditioning guard: Tikhonov-regularize near the singular
         # manifold of Phi_rv (det -> 0 as n*t_go -> k*pi)
         det = torch.linalg.det(Phi_rv).abs()
-        eye = torch.eye(3, device=self.device, dtype=torch.float64).expand_as(Phi_rv)
+        eye = torch.eye(3, device=self.device, dtype=COMPUTE_DTYPE).expand_as(Phi_rv)
         bad = det < 1e-10 / _LEO_N**3
         Phi_rv = torch.where(bad[:, None, None], Phi_rv + (1e-6 / _LEO_N) * eye, Phi_rv)
         r_ze = torch.bmm(Phi_rr, p.unsqueeze(-1)).squeeze(-1) + torch.bmm(
@@ -3364,7 +3366,7 @@ class RendezvousTwoImpulseBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, v = o[:, :3], o[:, 3:6]
         first = self.count == 0
         # ---- latch the hold point on the initial line of sight and seed the
@@ -3373,7 +3375,7 @@ class RendezvousTwoImpulseBaseline(Baseline):
         self.rf.copy_(torch.where(first[:, None], rf0, self.rf))
         t_seed = (2.0 * torch.sqrt(p.norm(dim=-1) / self.a_axis) / self.dt).clamp_min(10.0)
         self.t_arr.copy_(torch.where(first, torch.maximum(self.t_arr, t_seed), self.t_arr))
-        t_now = self.count.to(torch.float64)
+        t_now = self.count.to(COMPUTE_DTYPE)
 
         # ---- solve; ratchet the arrival time when the sequential burns no
         # longer fit before it; flag infeasible at the horizon and degrade
@@ -3471,8 +3473,8 @@ class RendezvousCWHPDBaseline(Baseline):
         # scheduling, so promote scalar defaults to (num_envs,).
         def _promote(v):
             if not torch.is_tensor(v):
-                return torch.full((self.num_envs,), float(v), device=self.device, dtype=torch.float64)
-            v = v.to(device=self.device, dtype=torch.float64).reshape(-1)
+                return torch.full((self.num_envs,), float(v), device=self.device, dtype=COMPUTE_DTYPE)
+            v = v.to(device=self.device, dtype=COMPUTE_DTYPE).reshape(-1)
             return v.expand(self.num_envs).clone() if v.shape[0] == 1 else v
 
         self.WN = _promote(self.WN)
@@ -3480,8 +3482,8 @@ class RendezvousCWHPDBaseline(Baseline):
         self.kp = self.WN**2
         self.kd = 2.0 * self.ZETA * self.WN
         d = self.device
-        self.stat_sat = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
-        self.stat_steps = torch.zeros(env.num_envs, device=d, dtype=torch.float64)
+        self.stat_sat = torch.zeros(env.num_envs, device=d, dtype=COMPUTE_DTYPE)
+        self.stat_steps = torch.zeros(env.num_envs, device=d, dtype=COMPUTE_DTYPE)
 
     def _rebuild_derived(self):
         self.kp = self.WN**2
@@ -3493,7 +3495,7 @@ class RendezvousCWHPDBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         p, v = o[:, :3], o[:, 3:6]
         a_des = -self.kp[:, None] * p - self.kd[:, None] * v
         n2 = self.n * self.n
@@ -3509,7 +3511,7 @@ class RendezvousCWHPDBaseline(Baseline):
         )
         # F = m a_cmd, per-axis thrust limit, normalized action
         action = (a_cmd * (self.mass / self.f_max)).clamp(-1.0, 1.0)
-        self.stat_sat += (action.abs() >= 1.0).to(torch.float64).sum(-1)
+        self.stat_sat += (action.abs() >= 1.0).to(COMPUTE_DTYPE).sum(-1)
         self.stat_steps += 1.0
         return action.to(torch.float32)
 
@@ -3550,18 +3552,18 @@ class DockingCWHPlacementBaseline(Baseline):
         self.f_max = self._design_scalar("f_max", env.f_max)
         self.a_max = self.f_max / self.mass
         self.K, self.design = _cwh_pole_gain(env, wn=wn, zeta=zeta, ratios=ratios)
-        self.stat_sat = torch.zeros(env.num_envs, device=self.device, dtype=torch.float64)
+        self.stat_sat = torch.zeros(env.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.stat_sat.masked_fill_(mask, 0.0)
 
     def actions(self, obs):
-        x = _vec(obs).to(torch.float64)[:, :6]
+        x = _vec(obs).to(COMPUTE_DTYPE)[:, :6]
         # acceleration command [m/s^2], u = -K(x - 0)
         a = -(x @ self.K.T)
         # force is m*a; normalized action = force / f_max = a / (f_max/m)
         action = (a / self.a_max).clamp(-1.0, 1.0)
-        self.stat_sat += (action.abs() >= 1.0).to(torch.float64).sum(-1)
+        self.stat_sat += (action.abs() >= 1.0).to(COMPUTE_DTYPE).sum(-1)
         return action.to(torch.float32)
 
 
@@ -3729,22 +3731,22 @@ class QuadplaneHybridBaseline(Baseline):
         d, n = self.device, env.num_envs
         self.dt = 1.0 / env.agent_hz
         self.rate_max = self.RATE_MAX
-        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=torch.float64)
+        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=COMPUTE_DTYPE)
         self.k_att = torch.tensor(
-            (self.KP_ATT, self.KP_ATT, self.KP_YAW), device=d, dtype=torch.float64
+            (self.KP_ATT, self.KP_ATT, self.KP_YAW), device=d, dtype=COMPUTE_DTYPE
         )
         self.kd_att = torch.tensor(
-            (self.KD_ATT, self.KD_ATT, self.KD_YAW), device=d, dtype=torch.float64
+            (self.KD_ATT, self.KD_ATT, self.KD_YAW), device=d, dtype=COMPUTE_DTYPE
         )
         self.f_max = self.TOTAL_THRUST * self.THR_MAX**2  # 58.86 N
-        self.i_acc = torch.zeros((n, 3), device=d, dtype=torch.float64)
+        self.i_acc = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.i_acc.masked_fill_(mask[:, None], 0.0)
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         delta = o[:, 31:43].reshape(-1, 4, 3)
         R = _quat_to_R(q)
@@ -3795,7 +3797,7 @@ class QuadplaneHybridBaseline(Baseline):
         l_est = l_est.clamp(
             self.LIFT_MIN_FRAC * self.MASS * self.G, self.LIFT_MAX_FRAC * self.MASS * self.G
         )
-        l_est = l_est * (vb[:, 0] > self.WING_VX_GATE).to(torch.float64)
+        l_est = l_est * (vb[:, 0] > self.WING_VX_GATE).to(COMPUTE_DTYPE)
         c_sq = (
             f_cmd.clamp_max(self.f_max) / self.TOTAL_THRUST - l_est / self.TOTAL_THRUST
         ).clamp_min(self.COL_FLOOR**2)
@@ -3831,7 +3833,7 @@ class QuadplaneHybridBaseline(Baseline):
         # on the attitude errors) and destabilized: they let the attitude loop
         # actually track the +-25 deg hover-style tilt swings, which against
         # the live wing means 15+ deg AoA excursions (stall, balloon, OOB).
-        a4_cmd = torch.zeros((p.shape[0],), device=p.device, dtype=torch.float64)
+        a4_cmd = torch.zeros((p.shape[0],), device=p.device, dtype=COMPUTE_DTYPE)
         a5_cmd = torch.zeros_like(a4_cmd)
         a6_cmd = torch.zeros_like(a4_cmd)
 
@@ -4022,16 +4024,16 @@ class MissileAPNBaseline(Baseline):
 
         # per-axis rate-command limits (roll, pitch, yaw)
         self.omega_scale = torch.tensor(
-            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=d, dtype=torch.float64
+            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=d, dtype=COMPUTE_DTYPE
         )
-        self.lam_filt = torch.zeros((env.num_envs, 3), device=d, dtype=torch.float64)
+        self.lam_filt = torch.zeros((env.num_envs, 3), device=d, dtype=COMPUTE_DTYPE)
 
     def reset_idx(self, mask):
         self.lam_filt.masked_fill_(mask[:, None], 0.0)
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         q = o[:, 3:7]
         vb = o[:, 7:10]
         r_b = o[:, 23:26]
@@ -4050,7 +4052,7 @@ class MissileAPNBaseline(Baseline):
         # Dropping the cross product tilts the command and produces persistent
         # cross-range divergence (verified: monotonically growing miss).
         rng = r_b.norm(dim=-1).clamp_min(1e-3)
-        g = torch.tensor([0.0, 0.0, -9.81], device=self.device, dtype=torch.float64).expand_as(r_b)
+        g = torch.tensor([0.0, 0.0, -9.81], device=self.device, dtype=COMPUTE_DTYPE).expand_as(r_b)
         r_hat_w = torch.einsum("nij,nj->ni", R, r_b / rng[:, None])
         a_cmd = self.N * vc[:, None] * torch.linalg.cross(lam_w, r_hat_w) + 0.5 * self.N * (
             g - (g * r_hat_w).sum(-1, keepdim=True) * r_hat_w
@@ -4058,11 +4060,11 @@ class MissileAPNBaseline(Baseline):
         # express in body frame, drop the thrust-axis (b_x) component
         a_lat_b = torch.einsum("nji,nj->ni", R, a_cmd)
         a_lat_b = a_lat_b - a_lat_b[:, 0:1] * torch.tensor(
-            [1.0, 0.0, 0.0], device=self.device, dtype=torch.float64
+            [1.0, 0.0, 0.0], device=self.device, dtype=COMPUTE_DTYPE
         )
         # skid-to-turn kinematic inverse: omega = cross(b_x, a_lat) / V
         V = vb.norm(dim=-1).clamp_min(50.0)
-        b_x = torch.tensor([1.0, 0.0, 0.0], device=self.device, dtype=torch.float64).expand_as(
+        b_x = torch.tensor([1.0, 0.0, 0.0], device=self.device, dtype=COMPUTE_DTYPE).expand_as(
             a_lat_b
         )
         w_cmd = torch.linalg.cross(b_x, a_lat_b) / V[:, None]

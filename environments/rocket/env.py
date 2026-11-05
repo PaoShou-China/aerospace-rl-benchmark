@@ -72,7 +72,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
-from environments.common.dynamics import euler, inverse_rotate, quat_from_euler
+from environments.common.dynamics import COMPUTE_DTYPE, euler, inverse_rotate, quat_from_euler
 from algorithms.baselines.baselines import RocketPDGBaseline
 from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
@@ -298,15 +298,15 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         #   finlet x/y/yaw [-1,1], ignition [0,1], throttle [0,1], gimbals [-1,1]
         self.num_actions = 7
         self.action_low = torch.tensor(
-            [-1.0, -1.0, -1.0, 0.0, 0.0, -1.0, -1.0], device=self.device, dtype=torch.float64
+            [-1.0, -1.0, -1.0, 0.0, 0.0, -1.0, -1.0], device=self.device, dtype=COMPUTE_DTYPE
         )
-        self.action_high = torch.ones(self.num_actions, device=self.device, dtype=torch.float64)
+        self.action_high = torch.ones(self.num_actions, device=self.device, dtype=COMPUTE_DTYPE)
 
         # initialize buffers
         self.action = torch.zeros(
-            (num_envs, self.num_actions), device=self.device, dtype=torch.float64
+            (num_envs, self.num_actions), device=self.device, dtype=COMPUTE_DTYPE
         )
-        self.reward = torch.zeros(num_envs, device=self.device, dtype=torch.float64)
+        self.reward = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.count = torch.zeros(num_envs, device=self.device, dtype=torch.long)
         self.terminated = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self.truncated = self.terminated.clone()
@@ -314,20 +314,20 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.out_of_bounds = self.terminated.clone()
         self.complete = self.terminated.clone()
         self.fatal_collision = self.terminated.clone()
-        self.obs_pad = torch.zeros(num_envs, device=self.device, dtype=torch.float64)
+        self.obs_pad = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self._observation = None
         self.obs_buf = None
         self.rew_buf = torch.zeros(num_envs, device=self.device, dtype=torch.float32)
         self.reset_buf = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self.episode_length_buf = torch.zeros(num_envs, device=self.device, dtype=torch.long)
-        self.returns = torch.zeros(num_envs, device=self.device, dtype=torch.float64)
+        self.returns = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.completed_returns = torch.zeros_like(self.returns)
         self.completed_episodes = torch.zeros_like(self.episode_length_buf)
         self.completed_successes = torch.zeros_like(self.episode_length_buf)
         # first-touch telemetry (monitoring only; NOT part of episode logic --
         # upstream keeps simulating after a touch so the rocket can settle)
         self.touch_flag = self.terminated.clone()
-        self.touch_speed = torch.zeros(num_envs, device=self.device, dtype=torch.float64)
+        self.touch_speed = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.touch_ang_vel = torch.zeros_like(self.touch_speed)
         self.touch_tilt = torch.zeros_like(self.touch_speed)
         self.completed_metrics = {
@@ -343,7 +343,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         # run.json completed_metrics keys, so reward attribution is observable
         keys = REWARD_KEYS
         self.reward_components = {
-            k: torch.zeros(num_envs, device=self.device, dtype=torch.float64) for k in keys
+            k: torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE) for k in keys
         }
         for k in keys:
             self.completed_metrics[f"rew_{k}"] = torch.zeros_like(self.touch_speed)
@@ -414,7 +414,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
                 severity=severity,
                 dt=1.0 / self.agent_hz,
             )
-            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=torch.float64)
+            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
             self.cfg["wind"] = dict(
                 steady_wind=list(steady_wind) if steady_wind is not None else None,
                 dryden=dryden,
@@ -423,7 +423,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
 
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical action bounds."""
-        raw = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     def step(self, actions):
@@ -458,16 +458,19 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         stable_start = self.landing_metrics.ever_stable.clone()
         terminated_start = self.terminated.clone()
         contact_any = self.terminated.clone().fill_(False)
-        contact_vz = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
+        contact_vz = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         for _ in range(self.inner_steps):
             active = ~(self.terminated | self.truncated)
             p0, q0, v0, w0 = self.plant.state()
             vb0 = inverse_rotate(q0, v0)
             wb0 = inverse_rotate(q0, w0)
+            # Constant for the whole control step: one sync here lets every
+            # substep skip the no-op pause-restore write-back.
+            restore = not bool(active.all())
             self.plant.clear_contacts()
             self.plant.controller(command, active)
             for _ in range(self.plant.physics_per_control):
-                self.plant.physics_step(command, active)
+                self.plant.physics_step(command, active, restore=restore)
             p, rpy, v, wb, vb = self._observe(active)
             # Upstream compute_base_term_trunc_reward: any contact other than
             # (rocket, pad) is a fatal collision, as is dropping below ground.
@@ -504,7 +507,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             self.complete |= complete & active
             self.fatal_collision |= fatal & active
             self.obs_pad.copy_(
-                torch.where(active, self.plant.pad_contact.to(torch.float64), self.obs_pad)
+                torch.where(active, self.plant.pad_contact.to(COMPUTE_DTYPE), self.obs_pad)
             )
             term = fatal | bounds
             # success does NOT truncate: the rocket keeps earning the settled
@@ -569,11 +572,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         primary = metrics["ever_stable_2s"]
         self.completed_successes += (self.reset_buf & primary).to(torch.long)
         for key, value in metrics.items():
-            self.completed_metrics[key] += (self.reset_buf & value).to(torch.float64)
+            self.completed_metrics[key] += (self.reset_buf & value).to(COMPUTE_DTYPE)
         landed = self.reset_buf & self.touch_flag
         nonfatal_touch = landed & ~self.fatal_collision
-        self.completed_metrics["pad_touch_rate"] += landed.to(torch.float64)
-        self.completed_metrics["nonfatal_touch_rate"] += nonfatal_touch.to(torch.float64)
+        self.completed_metrics["pad_touch_rate"] += landed.to(COMPUTE_DTYPE)
+        self.completed_metrics["nonfatal_touch_rate"] += nonfatal_touch.to(COMPUTE_DTYPE)
         self.completed_metrics["touch_speed"] += torch.where(landed, self.touch_speed, 0.0)
         self.completed_metrics["touch_ang_vel"] += torch.where(landed, self.touch_ang_vel, 0.0)
         self.completed_metrics["touch_tilt"] += torch.where(landed, self.touch_tilt, 0.0)
@@ -585,24 +588,22 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
 
         self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
-        self.extras["terminal_observations"] = TensorDict(
-            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
-        )
+        self._cache_terminal_observations()
         # single host sync per agent step (done == reset_buf; the same bool
         # gates both the episode extras and the reset path)
         done_any = bool(done.any())
         if done_any:
             episode = {
-                "success_rate": (done & primary).to(torch.float64).sum() / done.sum().clamp_min(1),
-                "pad_touch_rate": landed.to(torch.float64).sum() / done.sum().clamp_min(1),
-                "nonfatal_touch_rate": nonfatal_touch.to(torch.float64).sum()
+                "success_rate": (done & primary).to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
+                "pad_touch_rate": landed.to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
+                "nonfatal_touch_rate": nonfatal_touch.to(COMPUTE_DTYPE).sum()
                 / done.sum().clamp_min(1),
             }
             touched = done & self.touch_flag
-            n = touched.to(torch.float64).sum()
+            n = touched.to(COMPUTE_DTYPE).sum()
             # torch.where instead of a bool(touched.any()) sync: when no done
             # replica has touched the pad the masked sums are 0, so report 0
-            zero = torch.zeros((), device=self.device, dtype=torch.float64)
+            zero = torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE)
             episode["touch_speed"] = torch.where(
                 n > 0, (self.touch_speed * touched).sum() / n, zero
             )
@@ -625,7 +626,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
-        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     def _observe(self, mask):
         """Refresh the internal observation buffer from plant state and pad contact."""

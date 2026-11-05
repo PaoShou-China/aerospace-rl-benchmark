@@ -36,6 +36,8 @@ import math
 
 import torch
 
+from .dynamics import COMPUTE_DTYPE
+
 
 # murmur3 fmix32; bijective modulo 2**32 (same finalizer as plant.TensorRandom).
 def _mix32(x):
@@ -139,7 +141,7 @@ class WindDisturbance:
         x = ((x ^ (x >> 13)) * 3266489917) & 0xFFFFFFFF
         x = x ^ (x >> 16)
         self._rng_counter.add_(mask.to(torch.int64) * width)
-        return (x.to(torch.float64) + 0.5) / 4294967296.0
+        return (x.to(COMPUTE_DTYPE) + 0.5) / 4294967296.0
 
     def _gauss(self, mask):
         """Three unit gaussians per replica from that replica's own stream.

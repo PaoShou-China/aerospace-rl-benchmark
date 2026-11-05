@@ -51,6 +51,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorRandom
+from environments.common.dynamics import COMPUTE_DTYPE
 from algorithms.baselines.baselines import TransferGaussBaseline
 
 
@@ -142,8 +143,8 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.clip_actions = 1.0
         # physical actuator bounds: normalized thrust direction; step() uses the
         # policy value directly (no scaling), so physical == policy space.
-        self.action_low = -torch.ones(self.num_actions, device=d, dtype=torch.float64)
-        self.action_high = torch.ones(self.num_actions, device=d, dtype=torch.float64)
+        self.action_low = -torch.ones(self.num_actions, device=d, dtype=COMPUTE_DTYPE)
+        self.action_high = torch.ones(self.num_actions, device=d, dtype=COMPUTE_DTYPE)
         # Reference observation_space bounds (declared only; values are
         # returned raw): [dt*max_steps, ra, ra, ra, vmax, vmax, vmax, m0]*1.1.
         self.ra_ref = self.sma0 * (1 + self.ecc0)
@@ -151,18 +152,18 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.vel_ref = math.sqrt(self.mu * (2 / self.rp_ref - 1 / self.sma0))
 
         # initialize buffers
-        self.action = torch.zeros((num_envs, self.num_actions), device=d, dtype=torch.float64)
-        self.r = torch.zeros((num_envs, 3), device=d, dtype=torch.float64)
+        self.action = torch.zeros((num_envs, self.num_actions), device=d, dtype=COMPUTE_DTYPE)
+        self.r = torch.zeros((num_envs, 3), device=d, dtype=COMPUTE_DTYPE)
         self.v = torch.zeros_like(self.r)
-        self.m = torch.full((num_envs,), self.mass0, device=d, dtype=torch.float64)
-        self.ra0 = torch.zeros(num_envs, device=d, dtype=torch.float64)
+        self.m = torch.full((num_envs,), self.mass0, device=d, dtype=COMPUTE_DTYPE)
+        self.ra0 = torch.zeros(num_envs, device=d, dtype=COMPUTE_DTYPE)
         self.rp0 = torch.zeros_like(self.ra0)
         self._phi = torch.zeros(
-            num_envs, device=d, dtype=torch.float64
+            num_envs, device=d, dtype=COMPUTE_DTYPE
         )  # PBRS potential at the current state
-        self.reward = torch.zeros(num_envs, device=d, dtype=torch.float64)
+        self.reward = torch.zeros(num_envs, device=d, dtype=COMPUTE_DTYPE)
         self.terminal_reward = torch.zeros(
-            num_envs, device=d, dtype=torch.float64
+            num_envs, device=d, dtype=COMPUTE_DTYPE
         )  # terminal R, metrics only
         self.count = torch.zeros(num_envs, device=d, dtype=torch.long)
         self.terminated = torch.zeros(num_envs, device=d, dtype=torch.bool)
@@ -173,7 +174,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.rew_buf = torch.zeros(num_envs, device=d, dtype=torch.float32)
         self.reset_buf = torch.zeros(num_envs, device=d, dtype=torch.bool)
         self.episode_length_buf = torch.zeros(num_envs, device=d, dtype=torch.long)
-        self.returns = torch.zeros(num_envs, device=d, dtype=torch.float64)
+        self.returns = torch.zeros(num_envs, device=d, dtype=COMPUTE_DTYPE)
         self.completed_returns = torch.zeros_like(self.returns)
         self.completed_episodes = torch.zeros_like(self.episode_length_buf)
         self.completed_successes = torch.zeros_like(self.episode_length_buf)
@@ -229,7 +230,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
                 [sw * si, cw * si, ci],
             ],
             device=self.device,
-            dtype=torch.float64,
+            dtype=COMPUTE_DTYPE,
         )
         return r_pf @ rot.T, v_pf @ rot.T
 
@@ -272,7 +273,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
 
     def _observe(self, mask):
         """Refresh the internal observation buffer from elapsed time, r, v, m."""
-        t = self.count.to(torch.float64) * self.dt
+        t = self.count.to(COMPUTE_DTYPE) * self.dt
         obs = torch.cat((t[:, None], self.r, self.v, self.m[:, None]), -1)
         if self._observation is None:
             self._observation = obs.clone()
@@ -289,7 +290,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
-        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     def step(self, actions):
         """Advance one policy step: integrate low-thrust RK4 dynamics.
@@ -304,7 +305,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
                 "Actions must already be on env.device; implicit host/device copies are disabled"
             )
         actions = self._residual_input(actions)
-        rates = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
+        rates = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
         self.action.copy_(rates)
         active = ~(self.terminated | self.truncated)
         self._integrate(rates, active)
@@ -359,12 +360,10 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         # gamma*V timeout bootstrap is disabled (all-False key kept for API
         # parity with the other environments).
         self.extras["time_outs"] = torch.zeros_like(self.truncated)
-        self.extras["terminal_observations"] = TensorDict(
-            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
-        )
+        self._cache_terminal_observations()
         if bool(done.any()):
             self.extras["episode"] = {
-                "success_rate": (done & self.complete).to(torch.float64).sum() / n_done,
+                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum() / n_done,
                 "perigee_raise_km": drp_km.sum() / n_done,
                 "apo_drift_km": dra_km.sum() / n_done,
                 "propellant_kg": dm_kg.sum() / n_done,

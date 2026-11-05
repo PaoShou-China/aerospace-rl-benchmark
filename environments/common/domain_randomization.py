@@ -29,6 +29,8 @@ logic in one place.
 
 import torch
 
+from .dynamics import COMPUTE_DTYPE
+
 
 def resolve_domain_randomize(spec, default):
     """Resolve the ``domain_randomize`` constructor argument.
@@ -88,7 +90,7 @@ def sample_scales(spec, num_envs, device, seed, base_counter=0):
     for i, (name, (lo, hi)) in enumerate(spec.items()):
         g.manual_seed(int(seed) * 1000003 + base_counter * 97 + i)
         u = torch.rand(num_envs, generator=g, device="cpu")
-        scales[name] = (lo + (hi - lo) * u).to(torch.float64).to(device)
+        scales[name] = (lo + (hi - lo) * u).to(COMPUTE_DTYPE).to(device)
     return scales
 
 

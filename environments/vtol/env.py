@@ -44,7 +44,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
-from environments.common.dynamics import inverse_rotate
+from environments.common.dynamics import COMPUTE_DTYPE, inverse_rotate
 from algorithms.baselines.baselines import QuadplaneHybridBaseline
 from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
@@ -152,7 +152,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
                 0.0,
             ],  # a4..a7
             device=self.device,
-            dtype=torch.float64,
+            dtype=COMPUTE_DTYPE,
         )
         self.action_high = torch.tensor(
             [
@@ -166,14 +166,14 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
                 1.0,
             ],  # a4..a7
             device=self.device,
-            dtype=torch.float64,
+            dtype=COMPUTE_DTYPE,
         )
 
         # Buffers
         self.action = torch.zeros(
-            (num_envs, self.num_actions), device=self.device, dtype=torch.float64
+            (num_envs, self.num_actions), device=self.device, dtype=COMPUTE_DTYPE
         )
-        self.reward = torch.zeros(num_envs, device=self.device, dtype=torch.float64)
+        self.reward = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.count = torch.zeros(num_envs, device=self.device, dtype=torch.long)
         self.terminated = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self.truncated = self.terminated.clone()
@@ -182,14 +182,14 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         self.complete = self.terminated.clone()
         self.fatal_collision = self.terminated.clone()
         self.targets = torch.zeros(
-            (num_envs, NUM_TARGETS, 3), device=self.device, dtype=torch.float64
+            (num_envs, NUM_TARGETS, 3), device=self.device, dtype=COMPUTE_DTYPE
         )
         self.target_index = torch.zeros(num_envs, device=self.device, dtype=torch.long)
         self.leg_suffix = torch.zeros(
-            (num_envs, NUM_TARGETS + 1), device=self.device, dtype=torch.float64
+            (num_envs, NUM_TARGETS + 1), device=self.device, dtype=COMPUTE_DTYPE
         )
         self.old_distance = torch.full(
-            (num_envs,), torch.inf, device=self.device, dtype=torch.float64
+            (num_envs,), torch.inf, device=self.device, dtype=COMPUTE_DTYPE
         )
         self.new_distance = torch.full_like(self.old_distance, torch.inf)
         self._observation = None
@@ -197,15 +197,15 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         self.rew_buf = torch.zeros(num_envs, device=self.device, dtype=torch.float32)
         self.reset_buf = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self.episode_length_buf = torch.zeros(num_envs, device=self.device, dtype=torch.long)
-        self.returns = torch.zeros(num_envs, device=self.device, dtype=torch.float64)
+        self.returns = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.completed_returns = torch.zeros_like(self.returns)
         self.completed_episodes = torch.zeros_like(self.episode_length_buf)
         self.completed_successes = torch.zeros_like(self.episode_length_buf)
         self.completed_metrics = {
-            "waypoints_reached": torch.zeros((), device=self.device, dtype=torch.float64),
-            "crashes": torch.zeros((), device=self.device, dtype=torch.float64),
-            "out_of_bounds": torch.zeros((), device=self.device, dtype=torch.float64),
-            "timeouts": torch.zeros((), device=self.device, dtype=torch.float64),
+            "waypoints_reached": torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE),
+            "crashes": torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE),
+            "out_of_bounds": torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE),
+            "timeouts": torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE),
         }
         self._seed = seed
         self.extras = dict()
@@ -235,7 +235,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
                 severity=severity,
                 dt=1.0 / self.agent_hz,
             )
-            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=torch.float64)
+            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
             self.cfg["wind"] = dict(
                 steady_wind=list(steady_wind) if steady_wind is not None else None,
                 dryden=dryden,
@@ -244,16 +244,16 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
 
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical action bounds."""
-        raw = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     def _potential(self):
-        p = self.plant.drone.get_pos().to(torch.float64)
+        p = self.plant.state()[0]  # cached: no extra Genesis getter per step
         slots = torch.arange(NUM_TARGETS, device=self.device)[None] + self.target_index[:, None]
         valid = slots < NUM_TARGETS
         indices = slots.clamp_max(NUM_TARGETS - 1)
         targets = self.targets.gather(1, indices[:, :, None].expand(-1, -1, 3))
-        d = (targets[:, 0] - p).norm(dim=-1) * valid[:, 0].to(torch.float64)
+        d = (targets[:, 0] - p).norm(dim=-1) * valid[:, 0].to(COMPUTE_DTYPE)
         return -(d + self.leg_suffix.gather(1, self.target_index[:, None]).squeeze(1))
 
     def step(self, actions):
@@ -276,13 +276,16 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         old_potential = self._potential()
         self.count += 1
         crash = torch.zeros_like(self.terminated)
-        reach_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.float64)
+        reach_count = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         for _ in range(self.inner_steps):
             active = ~(self.terminated | self.truncated)
+            # Constant for the whole control step: one sync here lets every
+            # substep skip the no-op pause-restore write-back.
+            restore = not bool(active.all())
             self.plant.clear_contacts()
             self.plant.controller(physical, active)
             for _ in range(self.plant.physics_per_control):
-                self.plant.physics_step(physical, active)
+                self.plant.physics_step(physical, active, restore=restore)
             p, rpy, v, wb, vb = self._observe(active)
             collision = self.plant.ground_contact
             bounds = p.norm(dim=-1) > self.bounds_radius
@@ -292,7 +295,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
             term = collision | bounds
             trunc = complete
             crash |= term & active
-            reach_count += (reached & active).to(torch.float64)
+            reach_count += (reached & active).to(COMPUTE_DTYPE)
             self.terminated |= term & active
             self.truncated |= trunc & active
             self.collision |= collision & active
@@ -304,7 +307,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
             self._potential()
             - old_potential
             + REACH_BONUS * reach_count
-            - CRASH_PENALTY * crash.to(torch.float64)
+            - CRASH_PENALTY * crash.to(COMPUTE_DTYPE)
         )
         self.reset_buf = self.terminated | self.truncated
         self.rew_buf.copy_(self.reward)
@@ -317,9 +320,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
 
         self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
-        self.extras["terminal_observations"] = TensorDict(
-            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
-        )
+        self._cache_terminal_observations()
         done_any = bool(done.any())
         if done_any:
             n = done.sum().clamp_min(1)
@@ -327,18 +328,18 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
             oob = done & self.out_of_bounds
             timeouts = done & self.truncated & ~self.complete
             self.extras["episode"] = {
-                "success_rate": (done & self.complete).to(torch.float64).sum() / n,
-                "waypoints_reached": self.target_index[done].to(torch.float64).mean(),
-                "crash_rate": crashes.to(torch.float64).sum() / n,
-                "out_of_bounds_rate": oob.to(torch.float64).sum() / n,
-                "timeout_rate": timeouts.to(torch.float64).sum() / n,
+                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum() / n,
+                "waypoints_reached": self.target_index[done].to(COMPUTE_DTYPE).mean(),
+                "crash_rate": crashes.to(COMPUTE_DTYPE).sum() / n,
+                "out_of_bounds_rate": oob.to(COMPUTE_DTYPE).sum() / n,
+                "timeout_rate": timeouts.to(COMPUTE_DTYPE).sum() / n,
             }
             self.completed_metrics["waypoints_reached"] += (
-                self.target_index[done].to(torch.float64).sum()
+                self.target_index[done].to(COMPUTE_DTYPE).sum()
             )
-            self.completed_metrics["crashes"] += crashes.to(torch.float64).sum()
-            self.completed_metrics["out_of_bounds"] += oob.to(torch.float64).sum()
-            self.completed_metrics["timeouts"] += timeouts.to(torch.float64).sum()
+            self.completed_metrics["crashes"] += crashes.to(COMPUTE_DTYPE).sum()
+            self.completed_metrics["out_of_bounds"] += oob.to(COMPUTE_DTYPE).sum()
+            self.completed_metrics["timeouts"] += timeouts.to(COMPUTE_DTYPE).sum()
         else:
             self.extras.pop("episode", None)
 
@@ -349,13 +350,13 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
-        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     def _observe(self, mask):
         """Refresh the internal observation buffer from plant state and waypoints."""
         p, q, v, w = self.plant.state()
-        wb = inverse_rotate(q, w)
-        vb = inverse_rotate(q, v)
+        vwb = inverse_rotate(q[:, None, :], torch.stack((v, w), dim=1))
+        vb, wb = vwb[:, 0], vwb[:, 1]
         slots = torch.arange(NUM_TARGETS, device=self.device)[None] + self.target_index[:, None]
         valid = slots < NUM_TARGETS
         indices = slots.clamp_max(NUM_TARGETS - 1)
@@ -370,7 +371,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         attitude = torch.cat(
             (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary()), -1
         )
-        observation = torch.cat((attitude, delta.flatten(1), valid.to(torch.float64)), -1)
+        observation = torch.cat((attitude, delta.flatten(1), valid.to(COMPUTE_DTYPE)), -1)
         if self._observation is None:
             self._observation = observation.clone()
         else:
@@ -432,7 +433,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         # (traditional and RL alike).  This is a plant property, not a
         # controller decision, so it lives in the env reset, not the baseline.
         preload = torch.tensor(
-            self.RATE_PID_INTEGRAL_PRELOAD, device=self.device, dtype=torch.float64
+            self.RATE_PID_INTEGRAL_PRELOAD, device=self.device, dtype=COMPUTE_DTYPE
         )
         self.plant.pid.integral.copy_(
             torch.where(mask[:, None], preload[None, :], self.plant.pid.integral)
@@ -454,7 +455,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         self.targets.copy_(torch.where(mask[:, None, None], targets, self.targets))
         legs = (self.targets[:, 1:] - self.targets[:, :-1]).norm(dim=-1)
         ext = torch.cat(
-            (legs, torch.zeros((self.num_envs, 2), device=self.device, dtype=torch.float64)), -1
+            (legs, torch.zeros((self.num_envs, 2), device=self.device, dtype=COMPUTE_DTYPE)), -1
         )
         suffix = ext.flip(-1).cumsum(-1).flip(-1)
         self.leg_suffix.copy_(torch.where(mask[:, None], suffix, self.leg_suffix))

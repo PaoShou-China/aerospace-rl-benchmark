@@ -7,6 +7,8 @@ import math
 import numpy as np
 import torch
 
+from .dynamics import COMPUTE_DTYPE
+
 
 class LiftingSurfaceBatch:
     """Batched PyFlyt-style lifting-surface model with positive/negative stall.
@@ -18,14 +20,14 @@ class LiftingSurfaceBatch:
     """
     def __init__(self, params, lifts, forwards, n, device, dt):
         self.dt = dt
-        self.lift = torch.tensor(lifts, device=device, dtype=torch.float64)
-        self.forward = torch.tensor(forwards, device=device, dtype=torch.float64)
+        self.lift = torch.tensor(lifts, device=device, dtype=COMPUTE_DTYPE)
+        self.forward = torch.tensor(forwards, device=device, dtype=COMPUTE_DTYPE)
         self.torque_axis = torch.linalg.cross(self.lift, self.forward)
         for key in params[0]:
             setattr(
                 self,
                 key,
-                torch.tensor([p[key] for p in params], device=device, dtype=torch.float64),
+                torch.tensor([p[key] for p in params], device=device, dtype=COMPUTE_DTYPE),
             )
         if (self.tau < dt).any():
             raise ValueError("Surface dt must not exceed actuator tau")
@@ -35,7 +37,7 @@ class LiftingSurfaceBatch:
         # Precompute using the same NumPy float64 operations/order as upstream.
         def constant(fn):
             """Evaluate ``fn`` on each surface param dict and return a float64 tensor."""
-            return torch.tensor([fn(p) for p in params], device=device, dtype=torch.float64)
+            return torch.tensor([fn(p) for p in params], device=device, dtype=COMPUTE_DTYPE)
 
         self.slope = constant(
             lambda p: p["Cl_alpha_2D"]
@@ -58,7 +60,7 @@ class LiftingSurfaceBatch:
         self.alpha0 = constant(lambda p: np.deg2rad(p["alpha_0_base"]))
         self.stall_p = constant(lambda p: np.deg2rad(p["alpha_stall_P_base"]))
         self.stall_n = constant(lambda p: np.deg2rad(p["alpha_stall_N_base"]))
-        self.actuation = torch.zeros((n, len(params)), device=device, dtype=torch.float64)
+        self.actuation = torch.zeros((n, len(params)), device=device, dtype=COMPUTE_DTYPE)
 
     def reset(self, ids):
         """Zero actuation buffer for replicas indexed by ``ids``."""
@@ -131,7 +133,7 @@ class LiftingSurfaceBatch:
         torque : (n, n_surfaces, 3) tensor
             Body-frame moment per surface.
         """
-        velocity = velocity.to(torch.float64)
+        velocity = velocity.to(COMPUTE_DTYPE)
         self.actuation += self.dt / self.tau * (cmd - self.actuation)
         alpha = torch.atan2(-(velocity * self.lift).sum(-1), (velocity * self.forward).sum(-1))
         cl, cd, cm = self.coefficients(alpha, self.actuation)

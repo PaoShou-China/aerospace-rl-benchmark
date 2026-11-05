@@ -33,6 +33,8 @@ import math
 
 import torch
 
+from environments.common.dynamics import COMPUTE_DTYPE
+
 from algorithms.baselines.baselines import Baseline, _quat_to_R, _rot_to_rpy, _vec, _wrap
 
 
@@ -174,7 +176,7 @@ class FixedwingNLGLBaseline(Baseline):
         for _k in self.TUNABLE_PARAMS:
             setattr(self, _k, self._param(_k))
         d = self.device
-        f64 = torch.float64
+        f64 = COMPUTE_DTYPE
         self.dt = 1.0 / 30.0  # agent control period
         self.spawn_w = torch.tensor(self.SPAWN_P, device=d, dtype=f64)
         n = self.num_envs
@@ -193,7 +195,7 @@ class FixedwingNLGLBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         delta = o[:, 23:35].reshape(-1, 4, 3)
         R = _quat_to_R(q)
@@ -466,7 +468,7 @@ class RocketEGuidanceBaseline(Baseline):
     def __init__(self, env):
         super().__init__(env)
         d = self.device
-        f64 = torch.float64
+        f64 = COMPUTE_DTYPE
         self.ez = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=f64)
         self.rf = torch.tensor((0.0, 0.0, self.REST_Z), device=d, dtype=f64)
         self.gvec = torch.tensor((0.0, 0.0, self.G), device=d, dtype=f64)
@@ -479,7 +481,7 @@ class RocketEGuidanceBaseline(Baseline):
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         # aux tail: [13:20] 7-dim action echo, [20:24] FOUR finlet actuation
         # states, then ignited=24, fuel=25, throttle=26, gimbal=27:29, pad=29
@@ -507,7 +509,7 @@ class RocketEGuidanceBaseline(Baseline):
         a_brake = 0.6 * a_net
         v_prof = (2.0 * a_brake * h_agl + self.V_TOUCH**2).clamp_min(0.0).sqrt()
         t_go = ((v_prof - self.V_TOUCH) / a_brake).clamp(self.TGO_FLOOR, 30.0)
-        self.diag["floor"] += (t_go <= self.TGO_FLOOR + 1e-9).to(torch.float64)
+        self.diag["floor"] += (t_go <= self.TGO_FLOOR + 1e-9).to(COMPUTE_DTYPE)
 
         # ---- E-guidance: closed-form quadratic targeting on rf with zero
         # terminal velocity at t_go (Chandler/Smith boundary-value system,
@@ -547,7 +549,7 @@ class RocketEGuidanceBaseline(Baseline):
         T_raw = m * a_mag
         T_cmd = T_raw.clamp(0.0, self.T_MAX)
         T_min = self.MIN_RATIO * self.T_MAX
-        self.diag["infeasible"] += (T_raw > self.T_MAX).to(torch.float64)
+        self.diag["infeasible"] += (T_raw > self.T_MAX).to(COMPUTE_DTYPE)
         ign_mid = torch.where(ignited_obs, T_cmd >= 0.97 * T_min, T_cmd >= 1.03 * T_min)
 
         # ---- endgame: two-stage suicide burn (duplicated from the PDG
@@ -565,7 +567,7 @@ class RocketEGuidanceBaseline(Baseline):
         pulse = endg & (s <= self.S_PULSE) & (h_agl <= self.H_PULSE)
         a_vert_end = torch.where(pulse, self.G + A_END, a_req)
         T_end = (m * a_vert_end).clamp(0.0, self.T_MAX)
-        self.diag["infeasible"] += (endg & ~pulse & (m * a_req > self.T_MAX)).to(torch.float64)
+        self.diag["infeasible"] += (endg & ~pulse & (m * a_req > self.T_MAX)).to(COMPUTE_DTYPE)
         a_lat_end = -1.5 * v_w[:, :2] - (p[:, :2] - self.rf[:2])
         lat_end_cap = (self.LAT_TILT * a_vert_end).clamp(1.0, self.A_LAT_MAX)
         # pulse phase: damp LATERAL VELOCITY only, never chase position
@@ -582,13 +584,13 @@ class RocketEGuidanceBaseline(Baseline):
         # keep the band servo alive through the settle phase (pad_c only cuts
         # the engine on a sensed contact): the band IS the rebound catcher
         ign = torch.where(endg, ign_end, ign_mid) & ~pad_c
-        self.diag["ignitions"] += (ign & ~ignited_obs).to(torch.float64)
-        self.diag["coast"] += (~ign).to(torch.float64)
+        self.diag["ignitions"] += (ign & ~ignited_obs).to(COMPUTE_DTYPE)
+        self.diag["coast"] += (~ign).to(COMPUTE_DTYPE)
         T_cmd = torch.where(endg, T_end, T_cmd)
         a_thr = torch.where(endg[:, None], a_thr_end, a_thr)
         a_mag = torch.where(endg, a_thr_end.norm(dim=-1).clamp_min(1e-6), a_mag)
         u_thr = ((T_cmd / self.T_MAX - self.MIN_RATIO) / (1.0 - self.MIN_RATIO)).clamp(0.0, 1.0)
-        self.diag["sat_max"] += (ign & (u_thr >= 0.999)).to(torch.float64)
+        self.diag["sat_max"] += (ign & (u_thr >= 0.999)).to(COMPUTE_DTYPE)
 
         # ---- desired thrust direction (keep the guidance tilt across
         # coast/burn transitions)
@@ -637,7 +639,7 @@ class RocketEGuidanceBaseline(Baseline):
         T_now = torch.where(ign, T_cmd, torch.zeros_like(T_cmd))
         fin_a_cap = (0.3 * self.FIN_K * V2 / m)[:, None]
         a_fin_w = (a_thr[:, :2] - a_lat_thr - a_lat_gim).clamp(-fin_a_cap, fin_a_cap)
-        self.diag["fin_sat"] += (a_fin_w.abs() >= fin_a_cap - 1e-12).any(-1).to(torch.float64)
+        self.diag["fin_sat"] += (a_fin_w.abs() >= fin_a_cap - 1e-12).any(-1).to(COMPUTE_DTYPE)
         a_fin_b = torch.einsum(
             "nji,nj->ni", R, torch.cat((a_fin_w, torch.zeros_like(a_fin_w[:, :1])), -1)
         )[:, :2]

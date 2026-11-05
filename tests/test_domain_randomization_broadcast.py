@@ -184,7 +184,7 @@ def test_docking_action_bounds_match_normalized_policy():
     """``rendezvous_docking`` actions are normalized; +-f_max belongs elsewhere."""
     env = make("docking", num_envs=4, backend="cpu", seed=7)
     try:
-        ones = torch.ones(3, dtype=torch.float64, device=env.device)
+        ones = torch.ones(3, dtype=env.action_low.dtype, device=env.device)
         assert torch.allclose(env.action_low, -ones)
         assert torch.allclose(env.action_high, ones)
         assert env.clip_actions == 1.0
@@ -192,7 +192,9 @@ def test_docking_action_bounds_match_normalized_policy():
         # under the default domain randomization)
         assert torch.allclose(
             env.thrust_bounds_N,
-            torch.full((3,), env.controller_design["f_max"], dtype=torch.float64, device=env.device),
+            torch.full(
+                (3,), env.controller_design["f_max"], dtype=env.thrust_bounds_N.dtype, device=env.device
+            ),
         )
         physical = env.physical_action_space
         assert physical.shape == (env.num_actions,)

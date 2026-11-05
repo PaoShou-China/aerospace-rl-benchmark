@@ -55,6 +55,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorRandom
+from environments.common.dynamics import COMPUTE_DTYPE
 from algorithms.baselines.baselines import SatelliteCMGBaseline
 
 
@@ -175,8 +176,8 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         self.action_scale=3.
         # physical actuator bounds: gimbal rates [rad/s]; the policy space is
         # [-1, 1] and step() multiplies by action_scale, so physical = +/-3.
-        self.action_low=torch.full((num_cmgs,),-self.action_scale,device=d,dtype=torch.float64)
-        self.action_high=torch.full((num_cmgs,),self.action_scale,device=d,dtype=torch.float64)
+        self.action_low=torch.full((num_cmgs,),-self.action_scale,device=d,dtype=COMPUTE_DTYPE)
+        self.action_high=torch.full((num_cmgs,),self.action_scale,device=d,dtype=COMPUTE_DTYPE)
         self.singularity_weight=.5  # telescoped singularity potential w_sing/(m_norm+soft), bounded in [w/2.05, w/soft]
         self.singularity_soft=.5   # soft denominator keeps the potential bounded (max w_sing/soft)
         self.ctrl_cost_weight=.0005  # full-scale command costs .018/step
@@ -227,14 +228,14 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         # satellite_large.xml / satellite_small.xml composite bodies.
         if num_cmgs==4:
             self.rotor_speed=100.;self.rotor_h_dyn=20.  # 0.2 kg m^2 rotor at 100 rad/s
-            self.inertia=torch.tensor((75.,60.,113.),device=d,dtype=torch.float64)
+            self.inertia=torch.tensor((75.,60.,113.),device=d,dtype=COMPUTE_DTYPE)
         else:
             self.rotor_speed=200.;self.rotor_h_dyn=1.25e-2  # 6.25e-5 kg m^2 rotor at 200 rad/s
-            self.inertia=torch.tensor((.055,.055,.085),device=d,dtype=torch.float64)
+            self.inertia=torch.tensor((.055,.055,.085),device=d,dtype=COMPUTE_DTYPE)
         # experiment-only TRUE-PLANT overrides (inertia / rotor momentum / speed)
         if plant_kwargs:
             if 'inertia' in plant_kwargs:
-                self.inertia=torch.as_tensor(plant_kwargs['inertia'],device=d,dtype=torch.float64)
+                self.inertia=torch.as_tensor(plant_kwargs['inertia'],device=d,dtype=COMPUTE_DTYPE)
             if 'rotor_h_dyn' in plant_kwargs:
                 self.rotor_h_dyn=float(plant_kwargs['rotor_h_dyn'])
             if 'rotor_speed' in plant_kwargs:
@@ -242,8 +243,8 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
             self.task_cfg['plant_kwargs']=dict(plant_kwargs)
         self.rotor_h=self.rotor_speed  # proxy unit for the singularity metric
         self.num_gimbals=num_cmgs;self.num_actions=num_cmgs
-        self.gimbal_axes=_CMG_GIMBAL_AXES[num_cmgs].to(device=d,dtype=torch.float64)
-        self.rotor_axes_ref=_rotor_axes_ref(num_cmgs).to(device=d,dtype=torch.float64)
+        self.gimbal_axes=_CMG_GIMBAL_AXES[num_cmgs].to(device=d,dtype=COMPUTE_DTYPE)
+        self.rotor_axes_ref=_rotor_axes_ref(num_cmgs).to(device=d,dtype=COMPUTE_DTYPE)
         self.g_cross_r0=torch.linalg.cross(self.gimbal_axes,self.rotor_axes_ref,dim=-1)
         # Momentum-neutral reset home (2026-10-20 bug fix): the previous reset
         # parked gimbals at theta0~0, where the pyramid has NET rotor momentum
@@ -257,21 +258,21 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         # park the gimbals where Sum r_i = 0 exactly -- 4-CMG (pi,0,pi,0):
         # -r1(0)+r2(0)-r3(0)+r4(0) = 0; 6-CMG (pi,pi,pi,0,0,0): the second
         # triplet of axes duplicates the first, so antipodal pairing cancels.
-        self.gimbal_home=torch.zeros(self.num_gimbals,device=d,dtype=torch.float64)
+        self.gimbal_home=torch.zeros(self.num_gimbals,device=d,dtype=COMPUTE_DTYPE)
         if num_cmgs==4:
             self.gimbal_home[0]=math.pi;self.gimbal_home[2]=math.pi
         elif num_cmgs==6:
             self.gimbal_home[:3]=math.pi
 
         # initialize buffers
-        self.action=torch.zeros((num_envs,self.num_actions),device=d,dtype=torch.float64)
-        self.q=torch.zeros((num_envs,4),device=d,dtype=torch.float64);self.q[:,0]=1
-        self.omega=torch.zeros((num_envs,3),device=d,dtype=torch.float64)
-        self.gimbal=torch.zeros((num_envs,self.num_gimbals),device=d,dtype=torch.float64)
+        self.action=torch.zeros((num_envs,self.num_actions),device=d,dtype=COMPUTE_DTYPE)
+        self.q=torch.zeros((num_envs,4),device=d,dtype=COMPUTE_DTYPE);self.q[:,0]=1
+        self.omega=torch.zeros((num_envs,3),device=d,dtype=COMPUTE_DTYPE)
+        self.gimbal=torch.zeros((num_envs,self.num_gimbals),device=d,dtype=COMPUTE_DTYPE)
         self.gimbal_rate=torch.zeros_like(self.gimbal)
         self.target_quat=torch.zeros_like(self.q);self.target_quat[:,0]=1
-        self.reward=torch.zeros(num_envs,device=d,dtype=torch.float64)
-        self._prev_phi=torch.zeros(num_envs,device=d,dtype=torch.float64)
+        self.reward=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
+        self._prev_phi=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
         self.count=torch.zeros(num_envs,device=d,dtype=torch.long)
         self.terminated=torch.zeros(num_envs,device=d,dtype=torch.bool)
         self.truncated=self.terminated.clone()
@@ -281,7 +282,7 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         self.rew_buf=torch.zeros(num_envs,device=d,dtype=torch.float32)
         self.reset_buf=torch.zeros(num_envs,device=d,dtype=torch.bool)
         self.episode_length_buf=torch.zeros(num_envs,device=d,dtype=torch.long)
-        self.returns=torch.zeros(num_envs,device=d,dtype=torch.float64)
+        self.returns=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
         self.completed_returns=torch.zeros_like(self.returns)
         self.completed_episodes=torch.zeros_like(self.episode_length_buf)
         self.completed_successes=torch.zeros_like(self.episode_length_buf)
@@ -379,7 +380,7 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
-        return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     def _observe(self,mask):
         """Refresh the internal observation buffer from bus state and CMG geometry.
@@ -392,7 +393,7 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         r=self._rotor_axes(self.gimbal)
         gr=torch.linalg.cross(self.gimbal_axes.expand(self.num_envs,-1,-1),r,dim=-1)  # (n,N,3)
         J=gr.transpose(1,2)/self.rotor_h                       # (n,3,N) unit columns
-        I3=torch.eye(3,device=self.device,dtype=torch.float64)
+        I3=torch.eye(3,device=self.device,dtype=COMPUTE_DTYPE)
         # unit-torque allocation direction v = (J/h)^T ((J/h)(J/h)^T + I)^-1 e_hat:
         # the min-norm gimbal-rate direction that would produce unit torque along the
         # attitude-error axis, with fixed unit damping so the feature stays bounded and
@@ -425,7 +426,7 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
         actions=self._residual_input(actions)
-        rates=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*self.action_scale
+        rates=actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions,self.clip_actions)*self.action_scale
         self.action.copy_(rates)
         active=~(self.terminated|self.truncated)
         self._integrate(rates,active)
@@ -484,11 +485,9 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         # snapshot BEFORE reset_idx: reset_idx calls _observe(mask), which would
         # otherwise overwrite _observation with the post-reset initial state and
         # hand downstream bootstrapping the wrong transition target.
-        terminal_obs=self._observation.to(torch.float32)
-        self.extras['terminal_observations']=TensorDict(
-            {'policy':terminal_obs},batch_size=[self.num_envs])
+        self._cache_terminal_observations()
         if bool(done.any()):
-            self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1)}
+            self.extras['episode']={'success_rate':(done&self.complete).to(COMPUTE_DTYPE).sum()/done.sum().clamp_min(1)}
         else:
             self.extras.pop('episode',None)
 

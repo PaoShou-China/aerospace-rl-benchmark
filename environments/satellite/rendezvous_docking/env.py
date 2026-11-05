@@ -41,6 +41,7 @@ import math
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorRandom
+from environments.common.dynamics import COMPUTE_DTYPE
 from algorithms.baselines.baselines import (DockingCWHLQRBaseline,
                                 RendezvousTwoImpulseBaseline)
 
@@ -134,21 +135,21 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         # therefore live in the same normalized units as the action the
         # controller emits -- storing +-f_max (newtons) here made
         # physical_action_space disagree with the step() contract.
-        self.action_low=torch.full((3,),-self.clip_actions,device=d,dtype=torch.float64)
-        self.action_high=torch.full((3,),self.clip_actions,device=d,dtype=torch.float64)
+        self.action_low=torch.full((3,),-self.clip_actions,device=d,dtype=COMPUTE_DTYPE)
+        self.action_high=torch.full((3,),self.clip_actions,device=d,dtype=COMPUTE_DTYPE)
         # Nominal per-axis thrust bounds [N] for design-model bookkeeping (the
         # live authority is ``self.f_max`` and becomes per-env under DR).
-        self.thrust_bounds_N=torch.full((3,),self.f_max,device=d,dtype=torch.float64)
+        self.thrust_bounds_N=torch.full((3,),self.f_max,device=d,dtype=COMPUTE_DTYPE)
         # Reward weights (paper Eq. 4/5).
         self.alpha=1.;self.beta=.1;self.gamma=.01;self.terminal_bonus=100.
 
         # initialize buffers
-        self.action=torch.zeros((num_envs,self.num_actions),device=d,dtype=torch.float64)
-        self.p=torch.zeros((num_envs,3),device=d,dtype=torch.float64)
+        self.action=torch.zeros((num_envs,self.num_actions),device=d,dtype=COMPUTE_DTYPE)
+        self.p=torch.zeros((num_envs,3),device=d,dtype=COMPUTE_DTYPE)
         self.v=torch.zeros_like(self.p)
-        self.fuel=torch.zeros(num_envs,device=d,dtype=torch.float64)
-        self.d0=torch.zeros(num_envs,device=d,dtype=torch.float64)
-        self.reward=torch.zeros(num_envs,device=d,dtype=torch.float64)
+        self.fuel=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
+        self.d0=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
+        self.reward=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
         self.count=torch.zeros(num_envs,device=d,dtype=torch.long)
         self.terminated=torch.zeros(num_envs,device=d,dtype=torch.bool)
         self.truncated=self.terminated.clone()
@@ -158,7 +159,7 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         self.rew_buf=torch.zeros(num_envs,device=d,dtype=torch.float32)
         self.reset_buf=torch.zeros(num_envs,device=d,dtype=torch.bool)
         self.episode_length_buf=torch.zeros(num_envs,device=d,dtype=torch.long)
-        self.returns=torch.zeros(num_envs,device=d,dtype=torch.float64)
+        self.returns=torch.zeros(num_envs,device=d,dtype=COMPUTE_DTYPE)
         self.completed_returns=torch.zeros_like(self.returns)
         self.completed_episodes=torch.zeros_like(self.episode_length_buf)
         self.completed_successes=torch.zeros_like(self.episode_length_buf)
@@ -216,7 +217,7 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation (p, v) packed in a TensorDict under 'policy'."""
-        return TensorDict({'policy':self.obs_buf.clone()},batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     def step(self,actions):
         """Advance one policy step: integrate CWH symplectic Euler dynamics.
@@ -229,8 +230,8 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         if actions.device!=torch.device(self.device):
             raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
         actions=self._residual_input(actions)
-        f_max_t = self.f_max if torch.is_tensor(self.f_max) else torch.as_tensor(self.f_max, device=actions.device, dtype=torch.float64)
-        thrust=actions.to(torch.float64).clamp(-self.clip_actions,self.clip_actions)*f_max_t.view(-1,1)
+        f_max_t = self.f_max if torch.is_tensor(self.f_max) else torch.as_tensor(self.f_max, device=actions.device, dtype=COMPUTE_DTYPE)
+        thrust=actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions,self.clip_actions)*f_max_t.view(-1,1)
         self.action.copy_(thrust)
         active=~(self.terminated|self.truncated)
         dist_pre=self.p.norm(dim=-1)
@@ -254,7 +255,7 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
                      +self.gamma*f_norm/self.f_max)
             if self.keep_out is not None:
                 inside=dist<self.keep_out
-                reward=reward-self.keep_out_penalty*inside.to(torch.float64)
+                reward=reward-self.keep_out_penalty*inside.to(COMPUTE_DTYPE)
         violation=(self.fuel>=self.fuel0)|(dist>self.range_fail)
         if self.keep_out is not None:
             violation=violation|(dist<self.keep_out)
@@ -268,12 +269,12 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         success=(dist<self.pos_goal)&(speed<self.vel_goal)&~violation
         self.count+=1
         timeout=self.count>=self.max_steps
-        reward=reward+self.terminal_bonus*success.to(torch.float64)
+        reward=reward+self.terminal_bonus*success.to(COMPUTE_DTYPE)
         if self.reward_mode=='progress':
             # one-time terminal cost replaces the dense-mode per-step keep-out
             # penalty; since success requires a violation-free terminal state,
             # every violating trajectory (including keep-out penetration) pays it
-            reward=reward-self.viol_penalty*(violation&~success).to(torch.float64)
+            reward=reward-self.viol_penalty*(violation&~success).to(COMPUTE_DTYPE)
         self.reward.copy_(torch.where(active,reward,self.reward))
         self.complete|=success&active
         self.terminated|=violation&active
@@ -292,11 +293,10 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
         self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
-        self.extras['terminal_observations']=TensorDict(
-            {'policy':self._observation.to(torch.float32)},batch_size=[self.num_envs])
+        self._cache_terminal_observations()
         if bool(done.any()):
-            self.extras['episode']={'success_rate':(done&self.complete).to(torch.float64).sum()/done.sum().clamp_min(1),
-                                    'init_range_hi':torch.tensor(self.init_range[1],device=self.device,dtype=torch.float64)}
+            self.extras['episode']={'success_rate':(done&self.complete).to(COMPUTE_DTYPE).sum()/done.sum().clamp_min(1),
+                                    'init_range_hi':torch.tensor(self.init_range[1],device=self.device,dtype=COMPUTE_DTYPE)}
         else:
             self.extras.pop('episode',None)
 

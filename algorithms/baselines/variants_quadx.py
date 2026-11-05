@@ -18,6 +18,8 @@ import math
 
 import torch
 
+from environments.common.dynamics import COMPUTE_DTYPE
+
 from algorithms.baselines.baselines import (
     Baseline,
     _quat_to_R,
@@ -68,20 +70,20 @@ class QuadXSMCBaseline(Baseline):
     def __init__(self, env, design=None):
         super().__init__(env, design=design)
         d, n = self.device, env.num_envs
-        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=torch.float64)
+        self.e3 = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=COMPUTE_DTYPE)
         self.k_att = torch.tensor(
-            (self.KP_ATT, self.KP_ATT, self.KP_YAW), device=d, dtype=torch.float64
+            (self.KP_ATT, self.KP_ATT, self.KP_YAW), device=d, dtype=COMPUTE_DTYPE
         )
         self.kd_att = torch.tensor(
-            (self.KD_ATT, self.KD_ATT, self.KD_YAW), device=d, dtype=torch.float64
+            (self.KD_ATT, self.KD_ATT, self.KD_YAW), device=d, dtype=COMPUTE_DTYPE
         )
         self.f_max = self.TOTAL_THRUST * self.THR_MAX**2 * self.F_MAX_FRAC
-        self.sat_force = torch.zeros(n, device=d, dtype=torch.float64)
-        self.sat_rate = torch.zeros(n, device=d, dtype=torch.float64)
+        self.sat_force = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+        self.sat_rate = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
 
     @torch.no_grad()
     def actions(self, obs):
-        o = _vec(obs).to(torch.float64)
+        o = _vec(obs).to(COMPUTE_DTYPE)
         wb, q, vb, p = o[:, :3], o[:, 3:7], o[:, 7:10], o[:, 10:13]
         R = _quat_to_R(q)
         roll, pitch, yaw = _rot_to_rpy(R)
@@ -96,7 +98,7 @@ class QuadXSMCBaseline(Baseline):
 
         # 总推力与期望 roll/pitch（heading 系投影，接口与 cascaded_pid 一致）
         f_cmd = self.MASS * a_cmd.norm(dim=-1)
-        self.sat_force += (f_cmd > self.f_max).to(torch.float64)
+        self.sat_force += (f_cmd > self.f_max).to(COMPUTE_DTYPE)
         f = f_cmd.clamp_max(self.f_max)
         throttle = (torch.sqrt(f / self.TOTAL_THRUST) / self.PWM_GAIN).clamp(0.0, self.THR_MAX)
         u_x, u_y, u_z = a_cmd[:, 0], a_cmd[:, 1], a_cmd[:, 2]
@@ -113,7 +115,7 @@ class QuadXSMCBaseline(Baseline):
             -1,
         )
         w_cmd = self.k_att * e_att - self.kd_att * wb
-        self.sat_rate += (w_cmd.abs() > self.RATE_MAX).to(torch.float64).sum(-1)
+        self.sat_rate += (w_cmd.abs() > self.RATE_MAX).to(COMPUTE_DTYPE).sum(-1)
         w_cmd = w_cmd.clamp(-self.RATE_MAX, self.RATE_MAX)
         return (
             torch.cat((w_cmd / self.RATE_MAX, (2.0 * throttle / self.THR_MAX - 1.0)[:, None]), -1)

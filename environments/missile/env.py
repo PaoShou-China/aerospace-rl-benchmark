@@ -59,7 +59,7 @@ EmpiricalNormalization owns scaling):
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
-from environments.common.dynamics import inverse_rotate
+from environments.common.dynamics import COMPUTE_DTYPE, inverse_rotate
 from algorithms.baselines.baselines import MissileAPNBaseline
 from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
@@ -236,7 +236,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         # Per-axis rate-command limits: roll spins fast, pitch/yaw are limited
         # by the coordinated-turn relation a/V (see OMEGA_LAT above).
         omega_scale = torch.tensor(
-            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=self.device, dtype=torch.float64
+            (OMEGA_MAX, OMEGA_LAT, OMEGA_LAT), device=self.device, dtype=COMPUTE_DTYPE
         )
         self.action_low = -omega_scale
         self.action_high = omega_scale
@@ -245,7 +245,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
 
         def zeros(*s):
             """Allocate a zeros tensor on the environment device."""
-            return torch.zeros(*s, device=d, dtype=torch.float64)
+            return torch.zeros(*s, device=d, dtype=COMPUTE_DTYPE)
 
         self.action = zeros(num_envs, self.num_actions)
         self.reward = zeros(num_envs)
@@ -328,7 +328,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
                 severity=severity,
                 dt=1.0 / self.agent_hz,
             )
-            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=torch.float64)
+            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
             self.cfg["wind"] = dict(
                 steady_wind=list(steady_wind) if steady_wind is not None else None,
                 dryden=dryden,
@@ -337,7 +337,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
 
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical rate-command bounds."""
-        raw = actions.to(torch.float64).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     # ------------------------------------------------------------------ #
@@ -388,6 +388,9 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             self.dist_prev.copy_(torch.where(active, self.dist, self.dist_prev))
             self.plant.clear_contacts()
             self.plant.controller(command, active)
+            # terminated/truncated do not change inside this control step, so
+            # the activity mask is constant and one sync covers every substep.
+            restore = not bool(active.all())
             kill_ev = torch.zeros_like(active)
             miss_ev = torch.zeros_like(active)
             for _ in range(self.plant.physics_per_control):
@@ -399,13 +402,15 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
                     tv / tv.norm(dim=-1, keepdim=True).clamp_min(1e-6), torch.zeros_like(tv[:, 0])
                 )
                 self.plant.physics_step(
-                    command, sub, target_state=(tp, tq, tv, torch.zeros_like(tv))
+                    command,
+                    sub,
+                    target_state=(tp, tq, tv, torch.zeros_like(tv)),
+                    restore=restore,
                 )
                 self.sim_time.copy_(
                     torch.where(sub, self.sim_time + self.plant.physics_dt, self.sim_time)
                 )
-                pm = self.plant.drone.get_pos().to(torch.float64)
-                vm = self.plant.drone.get_vel().to(torch.float64)
+                pm, _, vm, _ = self.plant.state()  # cached post-substep state
                 r = tp - pm
                 dist = r.norm(dim=-1)
                 self.dist.copy_(torch.where(sub, dist, self.dist))
@@ -515,20 +520,18 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         # snapshot for the step return: reset_idx below clears terminated/truncated
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
         self.completed_metrics["miss_distance"] += torch.where(done, self.min_distance, 0.0)
-        self.completed_metrics["kill_rate"] += (done & self.complete).to(torch.float64)
-        self.completed_metrics["miss_rate"] += (done & self.miss_flag).to(torch.float64)
+        self.completed_metrics["kill_rate"] += (done & self.complete).to(COMPUTE_DTYPE)
+        self.completed_metrics["miss_rate"] += (done & self.miss_flag).to(COMPUTE_DTYPE)
         self.completed_metrics["timeout_rate"] += (
             done & ~self.complete & ~self.miss_flag & ~self.out_of_bounds
-        ).to(torch.float64)
+        ).to(COMPUTE_DTYPE)
 
         self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
-        self.extras["terminal_observations"] = TensorDict(
-            {"policy": self._observation.to(torch.float32)}, batch_size=[self.num_envs]
-        )
+        self._cache_terminal_observations()
         done_any = bool(done.any())
         if done_any:
             episode = {
-                "success_rate": (done & self.complete).to(torch.float64).sum()
+                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum()
                 / done.sum().clamp_min(1),
                 "miss_distance": (self.min_distance * done).sum() / done.sum().clamp_min(1),
             }
@@ -544,7 +547,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
-        return TensorDict({"policy": self.obs_buf.clone()}, batch_size=[self.num_envs])
+        return self._observations_from_buf()
 
     def _update_observation(self):
         """Copy the float64 internal observation into the float32 obs_buf used downstream."""

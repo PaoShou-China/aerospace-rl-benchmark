@@ -7,6 +7,8 @@ The parameters below belong to the simulator, never the policy observation.
 import math
 import torch
 
+from .dynamics import COMPUTE_DTYPE
+
 
 VARIATIONS = {
     "nominal": dict(
@@ -50,13 +52,13 @@ class RocketVariation:
             raise ValueError(f"Unknown rocket variation: {preset}")
         self.ranges = VARIATIONS[preset]
         self.rng = rng
-        one = torch.ones(n, device=device, dtype=torch.float64)
+        one = torch.ones(n, device=device, dtype=COMPUTE_DTYPE)
         self.thrust = one.clone()
         self.fin = one.clone()
         self.booster_tau = one * 0.01
         self.gimbal_tau = one * 0.01
-        self.gimbal_bias = torch.zeros((n, 2), device=device, dtype=torch.float64)
-        self.wind = torch.zeros((n, 3), device=device, dtype=torch.float64)
+        self.gimbal_bias = torch.zeros((n, 2), device=device, dtype=COMPUTE_DTYPE)
+        self.wind = torch.zeros((n, 3), device=device, dtype=COMPUTE_DTYPE)
         # Match the research v2 stream: construction draw, then reset draw.
         self.sample(torch.ones(n, device=device, dtype=torch.bool))
 

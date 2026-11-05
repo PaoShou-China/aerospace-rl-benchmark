@@ -13,7 +13,7 @@ import math
 import torch
 import genesis as gs
 import yaml
-from .dynamics import inverse_rotate
+from .dynamics import COMPUTE_DTYPE, inverse_rotate
 from .aerodynamics import LiftingSurfaceBatch
 
 
@@ -84,7 +84,7 @@ class TensorRandom:
         x = ((x ^ (x >> 13)) * 3266489917) & 0xFFFFFFFF
         x = x ^ (x >> 16)
         self.counter.add_(mask.to(torch.int64) * width)
-        return (x.to(torch.float64) + 0.5) / 4294967296.0
+        return (x.to(COMPUTE_DTYPE) + 0.5) / 4294967296.0
 
     def normal(self, mask, mean):
         u = self.uniform(2, mask)
@@ -102,11 +102,11 @@ class TensorRatePID:
 
     def __init__(self, p, n, device, control_hz):
         self.control_hz = control_hz
-        self.kp = torch.tensor(p["kp"], device=device, dtype=torch.float64)
-        self.ki = torch.tensor(p["ki"], device=device, dtype=torch.float64)
-        self.kd = torch.tensor(p["kd"], device=device, dtype=torch.float64)
-        self.limit = torch.tensor(p["lim"], device=device, dtype=torch.float64)
-        self.integral = torch.zeros((n, 3), device=device, dtype=torch.float64)
+        self.kp = torch.tensor(p["kp"], device=device, dtype=COMPUTE_DTYPE)
+        self.ki = torch.tensor(p["ki"], device=device, dtype=COMPUTE_DTYPE)
+        self.kd = torch.tensor(p["kd"], device=device, dtype=COMPUTE_DTYPE)
+        self.limit = torch.tensor(p["lim"], device=device, dtype=COMPUTE_DTYPE)
+        self.integral = torch.zeros((n, 3), device=device, dtype=COMPUTE_DTYPE)
         self.previous = torch.zeros_like(self.integral)
 
     def reset(self, mask):
@@ -260,7 +260,7 @@ class TensorPlant:
         self.drone = c._bodies[self.body_id]["entity"]
         self.ground = c._bodies[0]["entity"]
         self.device = gs.device
-        self.dtype = torch.float64
+        self.dtype = COMPUTE_DTYPE
         d = self.device
         # Rates are READ BACK from what was actually constructed, never
         # re-hardcoded: physics_dt is the scene's real integration step
@@ -272,8 +272,19 @@ class TensorPlant:
         self.control_hz = 120
         self.physics_per_control = round(self.physics_hz / self.control_hz)
         self.links = {link.name: link.idx_local for link in self.drone.links}
-        self.force = torch.zeros((n, self.drone.n_links, 3), device=d, dtype=torch.float64)
-        self.torque = torch.zeros_like(self.force)
+        # Force and torque live in one (n, links, 6) buffer; ``self.force`` /
+        # ``self.torque`` are views into it, so the per-substep clear is a single
+        # zero_() and the wrench handed to Genesis needs no stack() allocation.
+        self._wrench = torch.zeros((n, self.drone.n_links, 6), device=d, dtype=COMPUTE_DTYPE)
+        self.force = self._wrench[..., :3]
+        self.torque = self._wrench[..., 3:]
+        # Contact sampling cadence, in physics substeps.  The collider dump is a
+        # full host copy per call, and the flags are OR-latched by the env's
+        # per-control-step clear_contacts(), so vehicles that only use contacts
+        # for termination can sample once per control cycle.  The rocket keeps
+        # per-substep sampling: its pad_contact feeds the contact damping forces
+        # applied inside the *next* substep (see the booster branch below).
+        self.contact_sample_every = 1 if vehicle == "rocket" else self.physics_per_control
         self.rng = TensorRandom(n, d, seed)
         self.command_width = {
             "quadx": 4,
@@ -292,10 +303,10 @@ class TensorPlant:
         # throttle buffer shape: quadplane has 4 quad motors + 1 forward motor;
         # all others follow their original convention.
         if vehicle == "quadplane":
-            self.throttle = torch.zeros((n, 5), device=d, dtype=torch.float64)
+            self.throttle = torch.zeros((n, 5), device=d, dtype=COMPUTE_DTYPE)
         else:
             self.throttle = torch.zeros(
-                (n, 4 if vehicle == "quadx" else 1), device=d, dtype=torch.float64
+                (n, 4 if vehicle == "quadx" else 1), device=d, dtype=COMPUTE_DTYPE
             )
         self.ground_contact = torch.zeros(n, device=d, dtype=torch.bool)
         self.pad_contact = torch.zeros(n, device=d, dtype=torch.bool)
@@ -337,18 +348,18 @@ class TensorPlant:
                 self.motor_map = torch.tensor(
                     [[-1, -1, -1, 1], [1, 1, -1, 1], [1, -1, 1, 1], [-1, 1, 1, 1]],
                     device=d,
-                    dtype=torch.float64,
+                    dtype=COMPUTE_DTYPE,
                 )
                 self.prop_ids = torch.tensor(
                     [self.links[f"prop{i}_link"] for i in range(1, 5)], device=d, dtype=torch.long
                 )
-                self.spin = torch.tensor([-1, -1, 1, 1], device=d, dtype=torch.float64)
+                self.spin = torch.tensor([-1, -1, 1, 1], device=d, dtype=COMPUTE_DTYPE)
                 self.body_drag_id = (
                     self.links["center_of_mass_link"]
                     if "center_of_mass_link" in self.links
                     else self.links["body_link"]
                 )
-                self.pwm = torch.zeros((n, 4), device=d, dtype=torch.float64)
+                self.pwm = torch.zeros((n, 4), device=d, dtype=COMPUTE_DTYPE)
             else:  # quadplane
                 # Symmetric H-quad mixer. After the URDF rotation (nose +X),
                 # the four quad motors are IDENTICAL (quad_motor_params,
@@ -374,23 +385,23 @@ class TensorPlant:
                         [-s, s, -s, 1.0],  # prop4: rear-right  (x=-0.95, y=-0.5)
                     ],
                     device=d,
-                    dtype=torch.float64,
+                    dtype=COMPUTE_DTYPE,
                 )
                 self.prop_ids = torch.tensor(
                     [self.links[f"prop{i}_link"] for i in range(1, 5)], device=d, dtype=torch.long
                 )
                 # upstream qm_tor_dir = [+1,+1,-1,-1] (diagonal spin pairing)
-                self.spin = torch.tensor([1, 1, -1, -1], device=d, dtype=torch.float64)
-                self.pwm = torch.zeros((n, 4), device=d, dtype=torch.float64)
+                self.spin = torch.tensor([1, 1, -1, -1], device=d, dtype=COMPUTE_DTYPE)
+                self.pwm = torch.zeros((n, 4), device=d, dtype=COMPUTE_DTYPE)
                 qm = self.params["quad_motor_params"]
                 fm = self.params["front_motor_params"]
                 # upstream: max thrust = t2w * g per motor (mass-independent)
                 q_per_motor = float(qm["thrust_to_weight"]) * 9.81
                 self.thrust_kf = torch.tensor(
-                    [float(qm["thrust_const"])] * 4, device=d, dtype=torch.float64
+                    [float(qm["thrust_const"])] * 4, device=d, dtype=COMPUTE_DTYPE
                 )
                 self.motor_max_thrust = torch.tensor(
-                    [q_per_motor] * 4, device=d, dtype=torch.float64
+                    [q_per_motor] * 4, device=d, dtype=COMPUTE_DTYPE
                 )
                 self.forward_motor_id = self.links["motor_link"]
                 self.forward_thrust_kf = float(fm["thrust_const"])
@@ -435,7 +446,7 @@ class TensorPlant:
             )
             if vehicle in ("fixedwing", "quadplane"):
                 self.fixed_index = torch.tensor([0, 0, 1, 1, 2], device=d, dtype=torch.long)
-                self.fixed_sign = torch.tensor([1, -1, 1, -1, 0], device=d, dtype=torch.float64)
+                self.fixed_sign = torch.tensor([1, -1, 1, -1, 0], device=d, dtype=COMPUTE_DTYPE)
             elif vehicle == "rocket":
                 from .consistency import inertial_basis
 
@@ -447,29 +458,29 @@ class TensorPlant:
                     else 0.05
                 )
                 self.initial_fuel = initial_fuel
-                self.fuel = torch.full((n,), initial_fuel, device=d, dtype=torch.float64)
+                self.fuel = torch.full((n,), initial_fuel, device=d, dtype=COMPUTE_DTYPE)
                 self.ignited = torch.zeros(n, device=d, dtype=torch.bool)
-                self.gimbal = torch.zeros((n, 2), device=d, dtype=torch.float64)
+                self.gimbal = torch.zeros((n, 2), device=d, dtype=COMPUTE_DTYPE)
                 if self.f9_real:
                     self.fuel_ids = [self.links["fueltank_lox"], self.links["fueltank_rp1"]]
                     self.fuel_bases = torch.stack(
                         [torch.as_tensor(inertial_basis(self.drone.links[i])) for i in self.fuel_ids]
-                    ).to(device=d, dtype=torch.float64)
+                    ).to(device=d, dtype=COMPUTE_DTYPE)
                 else:
                     self.fuel_id = self.links["fueltank_link"]
                     self.fuel_basis = torch.as_tensor(
-                        inertial_basis(self.drone.links[self.fuel_id]), device=d, dtype=torch.float64
+                        inertial_basis(self.drone.links[self.fuel_id]), device=d, dtype=COMPUTE_DTYPE
                     )
                     self.fuel_inertia = torch.tensor(
                         [self.params["booster_params"][f"inertia_i{x}{x}"] for x in "xyz"],
                         device=d,
-                        dtype=torch.float64,
+                        dtype=COMPUTE_DTYPE,
                     )
                 body = self.params["body_params"]
                 self.body_drag_constant = torch.tensor(
                     [0.5 * 1.225 * body[f"drag_coef_{x}"] * body[f"area_{x}"] for x in "xyz"],
                     device=d,
-                    dtype=torch.float64,
+                    dtype=COMPUTE_DTYPE,
                 )
                 self.drag_id = self.links["base_link"]
                 from .rocket_benchmark import RocketVariation, VARIATION_SEED_OFFSET
@@ -482,34 +493,34 @@ class TensorPlant:
                     self.params["control_params"]["ang_vel"], n, d, self.control_hz
                 )
                 self.ignited = torch.zeros(n, device=d, dtype=torch.bool)
-                self.burn_clock = torch.zeros(n, device=d, dtype=torch.float64)
-                self.fin_cmd = torch.zeros((n, 3), device=d, dtype=torch.float64)
+                self.burn_clock = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+                self.fin_cmd = torch.zeros((n, 3), device=d, dtype=COMPUTE_DTYPE)
                 b = self.params["boost_params"]
                 body = self.params["body_params"]
-                self.max_thrust = torch.tensor(b["max_thrust"], device=d, dtype=torch.float64)
-                self.burn_time = torch.tensor(b["burn_time"], device=d, dtype=torch.float64)
+                self.max_thrust = torch.tensor(b["max_thrust"], device=d, dtype=COMPUTE_DTYPE)
+                self.burn_time = torch.tensor(b["burn_time"], device=d, dtype=COMPUTE_DTYPE)
                 self.boost_noise_ratio = torch.tensor(
-                    b["noise_ratio"], device=d, dtype=torch.float64
+                    b["noise_ratio"], device=d, dtype=COMPUTE_DTYPE
                 )
                 self.body_drag_constant = torch.tensor(
                     0.5 * 1.225 * body["drag_coef_x"] * body["area_x"],
                     device=d,
-                    dtype=torch.float64,
+                    dtype=COMPUTE_DTYPE,
                 )
                 self.cn_k = torch.tensor(
-                    0.5 * 1.225 * body["area_x"] * body["cn_alpha"], device=d, dtype=torch.float64
+                    0.5 * 1.225 * body["area_x"] * body["cn_alpha"], device=d, dtype=COMPUTE_DTYPE
                 )
-                self.cp_x = torch.tensor(body["cp_offset_x"], device=d, dtype=torch.float64)
-                self.cmq_coef = torch.tensor(body["cmq_coef"], device=d, dtype=torch.float64)
+                self.cp_x = torch.tensor(body["cp_offset_x"], device=d, dtype=COMPUTE_DTYPE)
+                self.cmq_coef = torch.tensor(body["cmq_coef"], device=d, dtype=COMPUTE_DTYPE)
                 self.roll_gear = torch.tensor(
-                    self.params["control_params"]["roll_gear"], device=d, dtype=torch.float64
+                    self.params["control_params"]["roll_gear"], device=d, dtype=COMPUTE_DTYPE
                 )
                 self.drag_id = self.links["base_link"]
 
         # --- parameter mismatch / domain randomization hooks ---
         # Per-replica thrust scale multiplier applied to every thrust
         # computation in step().  1.0 keeps the nominal plant.
-        self._thrust_scale = torch.ones(n, device=d, dtype=torch.float64)
+        self._thrust_scale = torch.ones(n, device=d, dtype=COMPUTE_DTYPE)
         # Nominal body-link mass captured so perturb_mass() can rescale it
         # without needing to read it back from the Genesis solver every time.
         self._body_mass_nominal = None
@@ -524,21 +535,29 @@ class TensorPlant:
             self._body_link_id = self.links["base_link"]
         elif vehicle == "rocket":
             self._body_link_id = self.links["base_link"]
+        self._state_cache = None
 
     def state(self):
         """Return world-frame ``(position, quat, world_vel, world_ang)`` as float64.
 
         Shapes: ``(n, 3), (n, 4) [w,x,y,z], (n, 3), (n, 3)``.
+
+        Cached per physics frame: the pre-step controller/mixer reads and the
+        post-step observation reads hit the same tensors, avoiding redundant
+        Genesis getter calls.  ``scene.step`` invalidates the cache and
+        ``set_state`` re-seeds it with the values it just wrote.
         """
-        return tuple(
-            x.to(torch.float64)
-            for x in (
-                self.drone.get_pos(),
-                self.drone.get_quat(),
-                self.drone.get_vel(),
-                self.drone.get_ang(),
+        if self._state_cache is None:
+            self._state_cache = tuple(
+                x.to(COMPUTE_DTYPE)
+                for x in (
+                    self.drone.get_pos(),
+                    self.drone.get_quat(),
+                    self.drone.get_vel(),
+                    self.drone.get_ang(),
+                )
             )
-        )
+        return self._state_cache
 
     def set_state(self, p, q, v, w):
         """Write world-frame ``(p, q, v, w)`` back into the Genesis drone.
@@ -549,6 +568,7 @@ class TensorPlant:
         self.drone.set_pos(p.to(gs.tc_float), zero_velocity=False)
         self.drone.set_quat(q.to(gs.tc_float), zero_velocity=False)
         self.drone.set_dofs_velocity(torch.cat((v, inverse_rotate(q, w)), -1).to(gs.tc_float))
+        self._state_cache = (p, q, v, w)
 
     # ------------------------------------------------------------------ #
     # parameter mismatch / domain randomization
@@ -567,7 +587,7 @@ class TensorPlant:
           mean over replicas -- identical at construction).
         """
         if name == "mass":
-            masses = self.drone.get_links_mass().to(torch.float64)  # (n, links)
+            masses = self.drone.get_links_mass().to(COMPUTE_DTYPE)  # (n, links)
             return float(masses.sum(dim=1).mean())
         if name == "thrust":
             if self.vehicle in ("quadx", "fixedwing"):
@@ -583,9 +603,9 @@ class TensorPlant:
     def perturb_thrust(self, scale):
         """Scale every thrust source by ``scale`` (float or (num_envs,) tensor)."""
         if isinstance(scale, (int, float)):
-            scale = torch.full((self.n,), float(scale), device=self.device, dtype=torch.float64)
+            scale = torch.full((self.n,), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
         else:
-            scale = scale.to(self.device).to(torch.float64).reshape(self.n)
+            scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n)
         self._thrust_scale.copy_(scale)
 
     def perturb_mass(self, scale):
@@ -595,11 +615,11 @@ class TensorPlant:
                 self._f9_dry_ids = [i for i in range(self.drone.n_links) if i not in self.fuel_ids]
                 self._f9_dry_mass_nominal = self.drone.get_links_mass(
                     links_idx_local=self._f9_dry_ids
-                ).to(torch.float64)
+                ).to(COMPUTE_DTYPE)
             if isinstance(scale, (int, float)):
-                scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=torch.float64)
+                scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
             else:
-                scale = scale.to(self.device).to(torch.float64).reshape(self.n, 1)
+                scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n, 1)
             self.drone.set_links_mass(
                 (self._f9_dry_mass_nominal * scale).to(gs.tc_float), links_idx_local=self._f9_dry_ids
             )
@@ -608,12 +628,12 @@ class TensorPlant:
             return
         if self._body_mass_nominal is None:
             # capture on first call (Genesis has loaded the URDF masses by now)
-            m = self.drone.get_links_mass(links_idx_local=[self._body_link_id]).to(torch.float64)
+            m = self.drone.get_links_mass(links_idx_local=[self._body_link_id]).to(COMPUTE_DTYPE)
             self._body_mass_nominal = m  # (num_envs, 1)
         if isinstance(scale, (int, float)):
-            scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=torch.float64)
+            scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
         else:
-            scale = scale.to(self.device).to(torch.float64).reshape(self.n, 1)
+            scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n, 1)
         self.drone.set_links_mass(
             (self._body_mass_nominal * scale).to(gs.tc_float),
             links_idx_local=[self._body_link_id],
@@ -621,7 +641,7 @@ class TensorPlant:
 
     def _air_velocity(self, ids, q):
         v = self.drone.get_links_vel(links_idx_local=ids, ref=gs.link_ref_frame.link_COM).to(
-            torch.float64
+            COMPUTE_DTYPE
         )
         if self.wind is not None:
             v = v - self.wind[:, None, :]
@@ -670,19 +690,23 @@ class TensorPlant:
         self.ground_contact.zero_()
         self.pad_contact.zero_()
 
-    def physics_step(self, command, mask, target_state=None):
+    def physics_step(self, command, mask, target_state=None, *, restore=True):
         """Run one Genesis physics sub-step on active replicas.
 
         Applies thruster, surface and booster wrenches, steps the Genesis
         scene, updates contact flags, and pauses inactive replicas by restoring
         them to their pre-step state.  ``target_state`` (missile only) overwrites
-        the kinematic target entity before the solver runs.
+        the kinematic target entity before the solver runs.  ``restore`` is set
+        by the caller from the whole control step's activity mask: when every
+        replica is active the write-back is a no-op float32 round-trip, so the
+        three Genesis setters (each triggering a full forward pass) are skipped.
         """
         p, q, v, w = self.state()
-        vb = inverse_rotate(q, v)
-        wb = inverse_rotate(q, w)
-        self.force.zero_()
-        self.torque.zero_()
+        # One batched call for both rotations: q broadcast over a leading
+        # (v, w) axis; halves the inverse_rotate kernel count per substep.
+        vwb = inverse_rotate(q[:, None, :], torch.stack((v, w), dim=1))
+        vb, wb = vwb[:, 0], vwb[:, 1]
+        self._wrench.zero_()
         if self.vehicle in ("quadx", "fixedwing", "quadplane"):
             if self.vehicle == "quadx":
                 m = self.params["motor_params"]
@@ -859,7 +883,7 @@ class TensorPlant:
                 thrust = (
                     self.max_thrust
                     * (1.0 + self.boost_noise_ratio * noise)
-                    * burning.to(torch.float64)
+                    * burning.to(COMPUTE_DTYPE)
                 )
                 thrust = thrust * self._thrust_scale
                 self.force[:, self.drag_id, 0] += thrust
@@ -874,7 +898,7 @@ class TensorPlant:
                 self.force[:, self.drag_id] -= self.body_drag_constant * vel.abs() * vel
                 if self.f9_real:
                     contact = self.params["contact_params"]
-                    supported = self.pad_contact.to(torch.float64)
+                    supported = self.pad_contact.to(COMPUTE_DTYPE)
                     self.torque[:, self.drag_id] -= (
                         supported[:, None] * contact["angular_damping"] * inverse_rotate(q, w)
                     )
@@ -951,9 +975,14 @@ class TensorPlant:
                     )
         self.force *= mask[:, None, None]
         self.torque *= mask[:, None, None]
-        qlinks = self.drone.get_links_quat().to(torch.float64)
-        force = rotate(qlinks, self.force)
-        torque = rotate(qlinks, self.torque)
+        qlinks = self.drone.get_links_quat().to(COMPUTE_DTYPE)
+        # force and torque share the same link quaternions and now also one
+        # buffer: rotate the (n, links, 2, 3) view in a single batched call.
+        ft = rotate(
+            qlinks[:, :, None, :],
+            self._wrench.view(self.n, self.drone.n_links, 2, 3),
+        )
+        force, torque = ft[:, :, 0], ft[:, :, 1]
         self.drone.apply_links_external_wrench(
             force=force.to(gs.tc_float),
             torque=torque.to(gs.tc_float),
@@ -962,14 +991,12 @@ class TensorPlant:
         )
         if self.vel_clamp is not None:
             v_cap, w_cap = self.vel_clamp
-            cv = self.drone.get_vel().to(torch.float64)
-            cw = self.drone.get_ang().to(torch.float64)
-            cv = cv * (v_cap / cv.norm(dim=-1, keepdim=True).clamp_min(v_cap))
-            cw = cw * (w_cap / cw.norm(dim=-1, keepdim=True).clamp_min(w_cap))
+            # q/v/w from the (cached) pre-step state are still valid here:
+            # applying wrenches does not move the bodies.
+            cv = v * (v_cap / v.norm(dim=-1, keepdim=True).clamp_min(v_cap))
+            cw = w * (w_cap / w.norm(dim=-1, keepdim=True).clamp_min(w_cap))
             self.drone.set_dofs_velocity(
-                torch.cat((cv, inverse_rotate(self.drone.get_quat().to(torch.float64), cw)), -1).to(
-                    gs.tc_float
-                )
+                torch.cat((cv, inverse_rotate(q, cw)), -1).to(gs.tc_float)
             )
         if target_state is not None and self.target is not None:
             # Kinematic engagement target (missile): overwrite the visual
@@ -982,33 +1009,38 @@ class TensorPlant:
                 torch.cat((tv, inverse_rotate(tq, tw)), -1).to(gs.tc_float)
             )
         self.scene.step(update_visualizer=False, refresh_visualizer=False)
+        self._state_cache = None
         self.physics_steps += 1
-        ground = self.drone.get_contacts(with_entity=self.ground, is_padded=True)["valid_mask"].any(
-            -1
-        )
-        pad = (
-            torch.zeros_like(ground)
-            if self.pad is None
-            else self.drone.get_contacts(with_entity=self.pad, is_padded=True)["valid_mask"].any(-1)
-        )
-        self.ground_contact |= ground & mask
-        self.pad_contact |= pad & mask
-        self.last_contact.copy_(torch.where(mask, ground | pad, self.last_contact))
+        if self.physics_steps % self.contact_sample_every == 0:
+            ground = self.drone.get_contacts(
+                with_entity=self.ground, is_padded=True
+            )["valid_mask"].any(-1)
+            pad = (
+                torch.zeros_like(ground)
+                if self.pad is None
+                else self.drone.get_contacts(with_entity=self.pad, is_padded=True)[
+                    "valid_mask"
+                ].any(-1)
+            )
+            self.ground_contact |= ground & mask
+            self.pad_contact |= pad & mask
+            self.last_contact.copy_(torch.where(mask, ground | pad, self.last_contact))
         # Keep inactive replicas paused during early termination and reset warmup.
-        # The restore runs UNCONDITIONALLY: for a fully-active batch the
-        # write-back is a lossless float32 round-trip (state() upcasts to
-        # float64, set_state casts the identical values back to float32), and
-        # for an all-inactive batch it now pauses them correctly too (the old
-        # `uniform` shortcut skipped the restore there and let the whole scene
-        # drift ballistically). This removes the per-physics-step
-        # bool(mask.all()) / bool(mask.any()) host-device syncs.
+        # The caller's ``restore`` flag is computed once per control step from the
+        # whole-step activity mask.  When it is False every replica is active and
+        # the write-back below would re-write the values just read (a lossless
+        # float32 round-trip) while each Genesis setter triggers a full forward
+        # kinematics/velocity pass, so the cache is refreshed instead.
         pn, qn, vn, wn = self.state()
-        self.set_state(
-            torch.where(mask[:, None], pn, p),
-            torch.where(mask[:, None], qn, q),
-            torch.where(mask[:, None], vn, v),
-            torch.where(mask[:, None], wn, w),
-        )
+        if restore:
+            self.set_state(
+                torch.where(mask[:, None], pn, p),
+                torch.where(mask[:, None], qn, q),
+                torch.where(mask[:, None], vn, v),
+                torch.where(mask[:, None], wn, w),
+            )
+        else:
+            self._state_cache = (pn, qn, vn, wn)
 
     def auxiliary(self):
         """Return a vehicle-specific flat tensor of internal actuators/state.
@@ -1024,11 +1056,11 @@ class TensorPlant:
             return torch.cat((self.surfaces.actuation, self.throttle), -1)
         if self.vehicle == "missile":
             burn_left = (self.burn_time - self.burn_clock).clamp_min(0.0) / self.burn_time
-            burning = (self.ignited & (self.burn_clock < self.burn_time)).to(torch.float64)
+            burning = (self.ignited & (self.burn_clock < self.burn_time)).to(COMPUTE_DTYPE)
             return torch.cat(
                 (
                     self.surfaces.actuation,
-                    self.ignited[:, None].to(torch.float64),
+                    self.ignited[:, None].to(COMPUTE_DTYPE),
                     burning[:, None],
                     burn_left[:, None],
                 ),
@@ -1037,7 +1069,7 @@ class TensorPlant:
         return torch.cat(
             (
                 self.surfaces.actuation,
-                self.ignited[:, None].to(torch.float64),
+                self.ignited[:, None].to(COMPUTE_DTYPE),
                 self.fuel[:, None],
                 self.throttle,
                 self.gimbal,
@@ -1084,7 +1116,7 @@ class TensorPlant:
         # fixedwing reset_idx bug fixed on 2026-10-20.
         if not bool(mask.any()):
             return
-        command = torch.zeros((self.n, self.command_width), device=self.device, dtype=torch.float64)
+        command = torch.zeros((self.n, self.command_width), device=self.device, dtype=COMPUTE_DTYPE)
         for _ in range(iterations):
             self.controller(command, mask)
             for _ in range(self.physics_per_control):
