@@ -422,6 +422,11 @@ def run_training(
             if key in env_kwargs and env_kwargs[key] != value:
                 raise ValueError(f"Cannot change {key} while resuming; start a separate run")
             env_kwargs[key] = value
+    if performance and backend == "gpu":
+        # Process-global backend selection must precede the first env/scene.
+        from algorithms.performance import configure_backend
+
+        configure_backend()
     env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **env_kwargs)
     base_env = env
     if env_wrapper is not None:

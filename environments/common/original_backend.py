@@ -20,6 +20,20 @@ from .consistency import inertial_basis
 # never re-hardcodes it.
 PHYSICS_HZ = 240.0
 
+# Genesis performance mode (static field arrays + scene-specialized kernels)
+# is process-global and must be chosen before the first scene is built.
+# ``algorithms.performance.configure_backend`` sets this; None leaves the
+# environment variable ``AEROSPACE_GENESIS_PERFORMANCE`` (default off) in charge.
+GENESIS_PERFORMANCE_MODE = None
+
+
+def genesis_performance_mode():
+    import os
+
+    if GENESIS_PERFORMANCE_MODE is not None:
+        return bool(GENESIS_PERFORMANCE_MODE)
+    return os.environ.get("AEROSPACE_GENESIS_PERFORMANCE", "0") == "1"
+
 
 def initialize_genesis(backend):
     if backend not in ("cpu", "gpu"):
@@ -35,7 +49,11 @@ def initialize_genesis(backend):
                 "Genesis backend is process-global; select CPU or GPU before constructing the first environment"  # noqa: E501
             )
     if not gs._initialized:
-        gs.init(backend=gs.cpu if backend == "cpu" else gs.gpu, logging_level="warning")
+        gs.init(
+            backend=gs.cpu if backend == "cpu" else gs.gpu,
+            logging_level="warning",
+            performance_mode=genesis_performance_mode(),
+        )
 
 
 def getQuaternionFromEuler(rpy):

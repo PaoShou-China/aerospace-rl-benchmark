@@ -75,7 +75,8 @@ from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
 from environments.common.domain_randomization import (
     apply_static_perturbation,
-    apply_domain_randomization,
+    apply_staged_domain_randomization,
+    stage_domain_randomization,
     resolve_domain_randomize,
 )
 
@@ -256,6 +257,9 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
 
         # perception / metric accumulators (per current episode)
         self.vis = torch.zeros(num_envs, device=d, dtype=torch.bool)
+        # per-step accumulators (persistent so a step segment updates them in place)
+        self._active0 = torch.zeros(num_envs, device=d, dtype=torch.bool)
+        self._crash = torch.zeros(num_envs, device=d, dtype=torch.bool)
         self.ep_visible = zeros(num_envs)
         self.ep_invisible = zeros(num_envs)
         self.ep_dropout = zeros(num_envs)
@@ -413,104 +417,34 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         and physics substeps, evaluate camera perception (FOV, range, occlusion),
         accumulate reward and per-episode tracking metrics, and return
         (observations, reward, terminated, truncated, extras).
+
+        The tensor work is split at the host decisions (pause-restore and
+        reset) into segments that update persistent buffers in place, so an
+        execution backend may replay each segment as one CUDA graph.
         """
         if actions.device != torch.device(self.device):
             raise ValueError(
                 "Actions must already be on env.device; implicit host/device copies are disabled"
             )
         actions = self._residual_input(actions)
-        physical = self._scale_actions(actions)
-        self.action.copy_(physical)
-        active0 = ~(self.terminated | self.truncated)
-        self._advance_target(active0)
-        self.count += 1
-
-        crash = torch.zeros_like(self.terminated)
-        for _ in range(self.inner_steps):
-            active = ~(self.terminated | self.truncated)
+        self._step_begin(actions)
+        for i in range(self.inner_steps):
             # Constant for the whole control step: one sync here lets every
-            # substep skip the no-op pause-restore write-back.
-            restore = not bool(active.all())
-            self.plant.clear_contacts()
-            self.plant.controller(physical, active)
-            for _ in range(self.plant.physics_per_control):
-                self.plant.physics_step(physical, active, restore=restore)
-            p, _, v, _ = self.plant.state()
-            collision = self.plant.ground_contact
-            bounds = p.norm(dim=-1) > BOUNDS_RADIUS
-            term = collision | bounds
-            crash |= term & active
-            self.terminated |= term & active
-            self.collision |= collision & active
-            self.out_of_bounds |= bounds & active
-
-        # the time limit is applied after the full control step
-        active = ~(self.terminated | self.truncated)
-        timeout = (self.count >= self.max_steps) & active
-        self.truncated |= timeout
-
-        # perception and the step reward, evaluated on the end-of-step state
-        vis, in_fov, in_range, occ, rel_meas = self._perception(active0)
-        self.vis.copy_(torch.where(active0, vis, self.vis))
-        self._build_observation(active0, rel_meas, vis)
-        p, _, v, _ = self.plant.state()
-        ref_err = ((self.target_pos[:, :2] + self.ref_offset) - p[:, :2]).norm(dim=-1)
-        alt_err = p[:, 2] - ALT_REF
-        self.reward.copy_(
-            torch.where(
-                active0,
-                VIS_BONUS * vis.to(COMPUTE_DTYPE)
-                - LOST_PENALTY * (~vis).to(COMPUTE_DTYPE)
-                - TRACK_GAIN * ref_err * vis.to(COMPUTE_DTYPE)
-                - ALT_GAIN * alt_err * alt_err
-                - ACTION_GAIN * physical.square().sum(-1)
-                - CRASH_PENALTY * crash.to(COMPUTE_DTYPE),
-                torch.zeros_like(self.reward),
-            )
-        )
-
-        # per-episode metric accumulation
-        self.ep_visible += vis.to(COMPUTE_DTYPE)
-        self.ep_invisible += (active0 & ~vis).to(COMPUTE_DTYPE)
-        self.ep_dropout.copy_(
-            torch.where(
-                active0,
-                torch.where(vis, torch.zeros_like(self.ep_dropout), self.ep_dropout + self.dt),
-                self.ep_dropout,
-            )
-        )
-        self.ep_max_dropout.copy_(
-            torch.where(
-                active0, torch.maximum(self.ep_max_dropout, self.ep_dropout), self.ep_max_dropout
-            )
-        )
-        self.ep_ref_err += torch.where(vis, ref_err, torch.zeros_like(ref_err))
-        self.ep_visible_steps += vis.to(COMPUTE_DTYPE)
-        self.ep_path += torch.where(
-            active0, v.norm(dim=-1) * self.dt, torch.zeros_like(self.ep_path)
-        )
-        self.ep_fov_loss += (active0 & ~in_fov).to(COMPUTE_DTYPE)
-        self.ep_range_loss += (active0 & in_fov & ~in_range).to(COMPUTE_DTYPE)
-        self.ep_occlusion += (active0 & in_fov & in_range & occ).to(COMPUTE_DTYPE)
-
-        # success = full visible-time fraction at the natural time limit, no crash
-        vis_frac = self.ep_visible / self.count.to(COMPUTE_DTYPE).clamp_min(1)
-        self.complete |= timeout & (vis_frac >= SUCCESS_VISIBLE_FRACTION)
-
-        self.reset_buf = self.terminated | self.truncated
-        self.rew_buf.copy_(self.reward)
-        self.episode_length_buf += 1
-        self.returns += self.reward
-        done = self.reset_buf
-        self.completed_returns += torch.where(done, self.returns, 0.0)
-        self.completed_episodes += done.to(torch.long)
-        self.completed_successes += (done & self.complete).to(torch.long)
-        term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
-
-        self.extras["time_outs"] = self.truncated & ~self.terminated
-        self._cache_terminal_observations()
+            # substep skip the no-op pause-restore write-back. Every replica is
+            # active when a step starts (each step ends by resetting all done
+            # replicas), so the first control step needs no sync.
+            restore = i > 0 and not bool((~(self.terminated | self.truncated)).all())
+            self._control_step(restore)
+        term_out, trunc_out, done, time_outs = self._step_end()
+        # Fresh tensors per step, as before: callers may keep them.
+        term_out, trunc_out = term_out.clone(), trunc_out.clone()
+        self.reset_buf = done = done.clone()
+        self.extras["time_outs"] = time_outs.clone()
+        self.extras["terminal_observations"] = self._terminal_obs_td
 
         done_any = bool(done.any())
+        # Boolean-indexed means over the finishing replicas (kept eager: a
+        # masked full-width sum would reorder these float reductions).
         if done_any:
             n = done.sum().clamp_min(1)
             steps = self.count[done].to(COMPUTE_DTYPE).clamp_min(1)
@@ -546,9 +480,105 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
             self.extras.pop("episode", None)
 
         if done_any:
-            self.reset_idx(self.reset_buf)
+            self.reset_idx(self.reset_buf, nonempty=True)
         self._update_observation()
         return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+
+    def _step_begin(self, actions):
+        """Map the action, advance the target and open the step's accumulators."""
+        physical = self._scale_actions(actions)
+        self.action.copy_(physical)
+        self._active0.copy_(~(self.terminated | self.truncated))
+        self._advance_target(self._active0)
+        self.count += 1
+        self._crash.zero_()
+
+    def _control_step(self, restore):
+        """One control step: mixer, physics substeps, collision/bounds events."""
+        active = ~(self.terminated | self.truncated)
+        self.plant.clear_contacts()
+        self.plant.controller(self.action, active)
+        for _ in range(self.plant.physics_per_control):
+            self.plant.physics_step(self.action, active, restore=restore)
+        p, _, v, _ = self.plant.state()
+        collision = self.plant.ground_contact
+        bounds = p.norm(dim=-1) > BOUNDS_RADIUS
+        term = collision | bounds
+        self._crash |= term & active
+        self.terminated |= term & active
+        self.collision |= collision & active
+        self.out_of_bounds |= bounds & active
+
+
+    def _step_end(self):
+        """Time limit, perception, reward and episode bookkeeping."""
+        # the time limit is applied after the full control step
+        active = ~(self.terminated | self.truncated)
+        timeout = (self.count >= self.max_steps) & active
+        self.truncated |= timeout
+
+        # perception and the step reward, evaluated on the end-of-step state
+        vis, in_fov, in_range, occ, rel_meas = self._perception(self._active0)
+        self.vis.copy_(torch.where(self._active0, vis, self.vis))
+        self._build_observation(self._active0, rel_meas, vis)
+        p, _, v, _ = self.plant.state()
+        ref_err = ((self.target_pos[:, :2] + self.ref_offset) - p[:, :2]).norm(dim=-1)
+        alt_err = p[:, 2] - ALT_REF
+        self.reward.copy_(
+            torch.where(
+                self._active0,
+                VIS_BONUS * vis.to(COMPUTE_DTYPE)
+                - LOST_PENALTY * (~vis).to(COMPUTE_DTYPE)
+                - TRACK_GAIN * ref_err * vis.to(COMPUTE_DTYPE)
+                - ALT_GAIN * alt_err * alt_err
+                - ACTION_GAIN * self.action.square().sum(-1)
+                - CRASH_PENALTY * self._crash.to(COMPUTE_DTYPE),
+                torch.zeros_like(self.reward),
+            )
+        )
+
+        # per-episode metric accumulation
+        self.ep_visible += vis.to(COMPUTE_DTYPE)
+        self.ep_invisible += (self._active0 & ~vis).to(COMPUTE_DTYPE)
+        self.ep_dropout.copy_(
+            torch.where(
+                self._active0,
+                torch.where(vis, torch.zeros_like(self.ep_dropout), self.ep_dropout + self.dt),
+                self.ep_dropout,
+            )
+        )
+        self.ep_max_dropout.copy_(
+            torch.where(
+                self._active0,
+                torch.maximum(self.ep_max_dropout, self.ep_dropout),
+                self.ep_max_dropout,
+            )
+        )
+        self.ep_ref_err += torch.where(vis, ref_err, torch.zeros_like(ref_err))
+        self.ep_visible_steps += vis.to(COMPUTE_DTYPE)
+        self.ep_path += torch.where(
+            self._active0, v.norm(dim=-1) * self.dt, torch.zeros_like(self.ep_path)
+        )
+        self.ep_fov_loss += (self._active0 & ~in_fov).to(COMPUTE_DTYPE)
+        self.ep_range_loss += (self._active0 & in_fov & ~in_range).to(COMPUTE_DTYPE)
+        self.ep_occlusion += (self._active0 & in_fov & in_range & occ).to(COMPUTE_DTYPE)
+
+        # success = full visible-time fraction at the natural time limit, no crash
+        vis_frac = self.ep_visible / self.count.to(COMPUTE_DTYPE).clamp_min(1)
+        self.complete |= timeout & (vis_frac >= SUCCESS_VISIBLE_FRACTION)
+
+        done = self.terminated | self.truncated
+        self.rew_buf.copy_(self.reward)
+        self.episode_length_buf += 1
+        self.returns += self.reward
+        self.completed_returns += torch.where(done, self.returns, 0.0)
+        self.completed_episodes += done.to(torch.long)
+        self.completed_successes += (done & self.complete).to(torch.long)
+        term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
+
+        time_outs = self.truncated & ~self.terminated
+        self._cache_terminal_observations()
+        return term_out, trunc_out, done, time_outs
 
     # ------------------------------------------------------------------ #
     # reset
@@ -562,14 +592,23 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         else:
             raise KeyError(name)
 
-    def reset_idx(self, envs_idx):
-        """Reset selected replicas; envs_idx is a device-resident boolean mask."""
-        mask = envs_idx
+    def reset_idx(self, envs_idx, nonempty=None):
+        """Reset selected replicas; envs_idx is a device-resident boolean mask.
+
+        ``nonempty`` (optional) states whether the mask selects any replica,
+        sparing the reset warmup its host read when the caller already knows.
+        """
         if self._domain_randomize:
             self._dr_counter += 1
-            apply_domain_randomization(
-                self, self._domain_randomize, self._seed, self._dr_counter, mask
-            )
+            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
+        if nonempty is None:
+            nonempty = bool(envs_idx.any())
+        self._reset_replicas(envs_idx, nonempty)
+
+    def _reset_replicas(self, mask, nonempty):
+        """Device half of reset_idx (graph-capturable for a fixed ``nonempty``)."""
+        if self._domain_randomize:
+            apply_staged_domain_randomization(self, mask)
         p, q, v, w = self.plant.state()
         spawn = torch.zeros_like(p)
         spawn[:, 2] = ALT_REF
@@ -640,7 +679,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
 
         # settle the vehicle, then seed the observation with the first
         # (guaranteed in-footprint) measurement
-        self.plant.warmup(mask)
+        self.plant.warmup(mask, nonempty=nonempty)
         vis, _, _, _, rel_meas = self._perception(mask)
         self.vis.copy_(torch.where(mask, vis, self.vis))
         self._build_observation(mask, rel_meas, vis)

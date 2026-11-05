@@ -78,7 +78,8 @@ from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
 from environments.common.domain_randomization import (
     apply_static_perturbation,
-    apply_domain_randomization,
+    apply_staged_domain_randomization,
+    stage_domain_randomization,
     resolve_domain_randomize,
 )
 
@@ -329,6 +330,15 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         # first-touch telemetry (monitoring only; NOT part of episode logic --
         # upstream keeps simulating after a touch so the rocket can settle)
         self.touch_flag = self.terminated.clone()
+        # policy-step snapshots/accumulators (persistent so a step segment
+        # updates them in place)
+        self._p_start = torch.zeros((num_envs, 3), device=self.device, dtype=COMPUTE_DTYPE)
+        self._vz_start = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
+        self._complete_start = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        self._stable_start = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        self._terminated_start = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        self._contact_any = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        self._contact_vz = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.touch_speed = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self.touch_ang_vel = torch.zeros_like(self.touch_speed)
         self.touch_tilt = torch.zeros_like(self.touch_speed)
@@ -435,12 +445,55 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         inner step, detect pad contacts, fatal impacts and bounds violations,
         accumulate per-component dense reward, and return
         (observations, reward, terminated, truncated, extras).
+
+        The tensor work is split at the host decisions (pause-restore and
+        reset) into segments that update persistent buffers in place, so an
+        execution backend may replay each segment as one CUDA graph.
         """
         if actions.device != torch.device(self.device):
             raise ValueError(
                 "Actions must already be on env.device; implicit host/device copies are disabled"
             )
         actions = self._residual_input(actions)
+        self._step_begin(actions)
+        for i in range(self.inner_steps):
+            # Constant for the whole control step: one sync here lets every
+            # substep skip the no-op pause-restore write-back. Every replica is
+            # active when a step starts (each step ends by resetting all done
+            # replicas), so the first control step needs no sync.
+            restore = i > 0 and not bool((~(self.terminated | self.truncated)).all())
+            last = self._control_step(restore)
+        outputs = self._step_end(*last)
+        term_out, trunc_out, done, time_outs, primary, landed, nonfatal_touch = outputs
+        # Fresh tensors per step, as before: callers may keep them.
+        term_out, trunc_out = term_out.clone(), trunc_out.clone()
+        self.reset_buf = done.clone()
+        self.extras["time_outs"] = time_outs.clone()
+        self.extras["terminal_observations"] = self._terminal_obs_td
+        # single host sync per agent step (done == reset_buf; the same bool
+        # gates both the episode extras and the reset path)
+        done_any = bool(self.reset_buf.any())
+        if done_any:
+            keys = (
+                "success_rate",
+                "pad_touch_rate",
+                "nonfatal_touch_rate",
+                "touch_speed",
+                "touch_ang_vel",
+                "touch_tilt",
+            ) + tuple(f"rew_{k}" for k in self.reward_components)
+            stats = self._episode_stats(self.reset_buf, primary, landed, nonfatal_touch)
+            self.extras["episode"] = dict(zip(keys, (x.clone() for x in stats)))
+            # empty-mask reset is fully safe (warmup early-exits; pause-restore
+            # is unconditional); the gate reuses the already-synced done_any
+            self.reset_idx(self.reset_buf, nonempty=True)
+        else:
+            self.extras.pop("episode", None)
+        self._update_observation()
+        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+
+    def _step_begin(self, actions):
+        """Map the action onto the plant and snapshot the policy-step start."""
         physical = self._scale_actions(actions)
         # Upstream passes the gym action straight to set_setpoint; the plant
         # applies the ignition>0.5 rule per physics step (240 Hz, reignitable)
@@ -454,71 +507,74 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.count += 1
         # policy-step snapshots for the per-policy-step reward deltas
         p_start, _, v_start, _ = self.plant.state()
-        p_start = p_start.clone()
-        vz_start = v_start[:, 2].clone()
-        complete_start = self.complete.clone()
-        stable_start = self.landing_metrics.ever_stable.clone()
-        terminated_start = self.terminated.clone()
-        contact_any = self.terminated.clone().fill_(False)
-        contact_vz = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
-        for _ in range(self.inner_steps):
-            active = ~(self.terminated | self.truncated)
-            p0, q0, v0, w0 = self.plant.state()
-            vb0 = inverse_rotate(q0, v0)
-            wb0 = inverse_rotate(q0, w0)
-            # Constant for the whole control step: one sync here lets every
-            # substep skip the no-op pause-restore write-back.
-            restore = not bool(active.all())
-            self.plant.clear_contacts()
-            self.plant.controller(command, active)
-            for _ in range(self.plant.physics_per_control):
-                self.plant.physics_step(command, active, restore=restore)
-            p, rpy, v, wb, vb = self._observe(active)
-            # Upstream compute_base_term_trunc_reward: any contact other than
-            # (rocket, pad) is a fatal collision, as is dropping below ground.
-            collision = self.plant.ground_contact | (p[:, 2] < 0)
-            if self.f9_real:
-                bounds = (p[:, :2].norm(dim=-1) > 1000) | (p[:, 2] > 3000)
-            else:
-                bounds = (p[:, :2].norm(dim=-1) > 200) | (p[:, 2] > 500)
-            touch = self.plant.pad_contact & active
-            speed0 = vb0.norm(dim=-1)
-            spin0 = wb0.norm(dim=-1)
-            tilt0 = rpy[:, :2].norm(dim=-1)
-            # Upstream L231-263: on a pad-contact step judge the PREVIOUS
-            # inner-step speed magnitude (= speed0/spin0 here, the state at the
-            # start of this inner step): >1.0 m/s or >0.35 rad/s is fatal;
-            # <0.02/<0.02 with tilt<0.1 is a landed success; anything in between
-            # keeps simulating (on-pad settling).
-            if self.f9_real:
-                hard_touch = (speed0 > 6.0) | (spin0 > 0.35) | (tilt0 > math.radians(15.0))
-                fatal = collision | (touch & hard_touch)
-                complete = torch.zeros_like(touch)
-            else:
-                fatal = collision | (touch & ((speed0 > 1.0) | (spin0 > 0.35)))
-                complete = touch & ~fatal & (spin0 < 0.02) & (speed0 < 0.02) & (tilt0 < 0.1)
-            new_touch = touch & ~self.touch_flag
-            self.touch_flag |= new_touch
-            self.touch_speed.copy_(torch.where(new_touch, speed0, self.touch_speed))
-            self.touch_ang_vel.copy_(torch.where(new_touch, spin0, self.touch_ang_vel))
-            self.touch_tilt.copy_(torch.where(new_touch, tilt0, self.touch_tilt))
-            # per-policy-step contact bookkeeping: any contact while active,
-            # and the world descent speed at the FIRST contact inner step
-            contact_vz.copy_(torch.where(touch & ~contact_any, v0[:, 2], contact_vz))
-            contact_any |= touch
-            self.complete |= complete & active
-            self.fatal_collision |= fatal & active
-            self.obs_pad.copy_(
-                torch.where(active, self.plant.pad_contact.to(COMPUTE_DTYPE), self.obs_pad)
-            )
-            term = fatal | bounds
-            # success does NOT truncate: the rocket keeps earning the settled
-            # contact stream until the time limit below
-            trunc = torch.zeros_like(fatal)
-            self.terminated |= term & active
-            self.truncated |= trunc & active
-            self.collision |= collision & active
-            self.out_of_bounds |= bounds & active
+        self._p_start.copy_(p_start)
+        self._vz_start.copy_(v_start[:, 2])
+        self._complete_start.copy_(self.complete)
+        self._stable_start.copy_(self.landing_metrics.ever_stable)
+        self._terminated_start.copy_(self.terminated)
+        self._contact_any.fill_(False)
+        self._contact_vz.zero_()
+
+    def _control_step(self, restore):
+        """One control step; returns the post-step (p, rpy, v, wb) for the reward."""
+        active = ~(self.terminated | self.truncated)
+        p0, q0, v0, w0 = self.plant.state()
+        vb0 = inverse_rotate(q0, v0)
+        wb0 = inverse_rotate(q0, w0)
+        self.plant.clear_contacts()
+        self.plant.controller(self.action, active)
+        for _ in range(self.plant.physics_per_control):
+            self.plant.physics_step(self.action, active, restore=restore)
+        p, rpy, v, wb, vb = self._observe(active)
+        # Upstream compute_base_term_trunc_reward: any contact other than
+        # (rocket, pad) is a fatal collision, as is dropping below ground.
+        collision = self.plant.ground_contact | (p[:, 2] < 0)
+        if self.f9_real:
+            bounds = (p[:, :2].norm(dim=-1) > 1000) | (p[:, 2] > 3000)
+        else:
+            bounds = (p[:, :2].norm(dim=-1) > 200) | (p[:, 2] > 500)
+        touch = self.plant.pad_contact & active
+        speed0 = vb0.norm(dim=-1)
+        spin0 = wb0.norm(dim=-1)
+        tilt0 = rpy[:, :2].norm(dim=-1)
+        # Upstream L231-263: on a pad-contact step judge the PREVIOUS
+        # inner-step speed magnitude (= speed0/spin0 here, the state at the
+        # start of this inner step): >1.0 m/s or >0.35 rad/s is fatal;
+        # <0.02/<0.02 with tilt<0.1 is a landed success; anything in between
+        # keeps simulating (on-pad settling).
+        if self.f9_real:
+            hard_touch = (speed0 > 6.0) | (spin0 > 0.35) | (tilt0 > math.radians(15.0))
+            fatal = collision | (touch & hard_touch)
+            complete = torch.zeros_like(touch)
+        else:
+            fatal = collision | (touch & ((speed0 > 1.0) | (spin0 > 0.35)))
+            complete = touch & ~fatal & (spin0 < 0.02) & (speed0 < 0.02) & (tilt0 < 0.1)
+        new_touch = touch & ~self.touch_flag
+        self.touch_flag |= new_touch
+        self.touch_speed.copy_(torch.where(new_touch, speed0, self.touch_speed))
+        self.touch_ang_vel.copy_(torch.where(new_touch, spin0, self.touch_ang_vel))
+        self.touch_tilt.copy_(torch.where(new_touch, tilt0, self.touch_tilt))
+        # per-policy-step contact bookkeeping: any contact while active,
+        # and the world descent speed at the FIRST contact inner step
+        self._contact_vz.copy_(torch.where(touch & ~self._contact_any, v0[:, 2], self._contact_vz))
+        self._contact_any |= touch
+        self.complete |= complete & active
+        self.fatal_collision |= fatal & active
+        self.obs_pad.copy_(
+            torch.where(active, self.plant.pad_contact.to(COMPUTE_DTYPE), self.obs_pad)
+        )
+        term = fatal | bounds
+        # success does NOT truncate: the rocket keeps earning the settled
+        # contact stream until the time limit below
+        trunc = torch.zeros_like(fatal)
+        self.terminated |= term & active
+        self.truncated |= trunc & active
+        self.collision |= collision & active
+        self.out_of_bounds |= bounds & active
+        return p, rpy, v, wb
+
+    def _step_end(self, p, rpy, v, wb):
+        """Time limit, reward and episode bookkeeping; returns step outputs."""
         # the time limit is applied AFTER the full control step (all physics
         # substeps) so the final control step is not cut short; accidents still
         # terminate inside the substep loop above. This is the ONLY truncation:
@@ -531,9 +587,9 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         if self.f9_real:
             self.complete.copy_(self.landing_metrics.ever_stable)
         newly_success = (
-            self.landing_metrics.ever_stable & ~stable_start
+            self.landing_metrics.ever_stable & ~self._stable_start
             if self.f9_real
-            else self.complete & ~complete_start
+            else self.complete & ~self._complete_start
         )
         shaping_cfg = self.reward_cfg
         fuel = None
@@ -548,83 +604,68 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         shaping, comps = rocket_shaping(
             shaping_cfg,
             p,
-            p_start,
+            self._p_start,
             v[:, 2],
-            vz_start,
+            self._vz_start,
             rpy,
             wb,
-            contact_any,
-            contact_vz,
+            self._contact_any,
+            self._contact_vz,
             newly_success,
-            self.terminated & ~terminated_start,
+            self.terminated & ~self._terminated_start,
             fuel=fuel,
         )
         self.reward.copy_(shaping)
         for k in comps:
             self.reward_components[k] += comps[k]
 
-        self.reset_buf = self.terminated | self.truncated
+        done = self.terminated | self.truncated
         # update buffers
         self.rew_buf.copy_(self.reward)
         self.episode_length_buf += 1
         self.returns += self.reward
-        self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
-        self.completed_episodes += self.reset_buf.to(torch.long)
+        self.completed_returns += torch.where(done, self.returns, 0.0)
+        self.completed_episodes += done.to(torch.long)
         metrics = self.landing_metrics.values(self.complete, self.terminated)
         primary = metrics["ever_stable_2s"]
-        self.completed_successes += (self.reset_buf & primary).to(torch.long)
+        self.completed_successes += (done & primary).to(torch.long)
         for key, value in metrics.items():
-            self.completed_metrics[key] += (self.reset_buf & value).to(COMPUTE_DTYPE)
-        landed = self.reset_buf & self.touch_flag
+            self.completed_metrics[key] += (done & value).to(COMPUTE_DTYPE)
+        landed = done & self.touch_flag
         nonfatal_touch = landed & ~self.fatal_collision
         self.completed_metrics["pad_touch_rate"] += landed.to(COMPUTE_DTYPE)
         self.completed_metrics["nonfatal_touch_rate"] += nonfatal_touch.to(COMPUTE_DTYPE)
         self.completed_metrics["touch_speed"] += torch.where(landed, self.touch_speed, 0.0)
         self.completed_metrics["touch_ang_vel"] += torch.where(landed, self.touch_ang_vel, 0.0)
         self.completed_metrics["touch_tilt"] += torch.where(landed, self.touch_tilt, 0.0)
-        done = self.reset_buf
         # reward attribution at done: accumulate the per-episode component sums
         for k, buf in self.reward_components.items():
             self.completed_metrics[f"rew_{k}"] += torch.where(done, buf, 0.0)
         # snapshot for the step return: reset_idx below clears terminated/truncated
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
 
-        self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
+        time_outs = self.truncated & ~self.terminated & ~self.complete
         self._cache_terminal_observations()
-        # single host sync per agent step (done == reset_buf; the same bool
-        # gates both the episode extras and the reset path)
-        done_any = bool(done.any())
-        if done_any:
-            episode = {
-                "success_rate": (done & primary).to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
-                "pad_touch_rate": landed.to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
-                "nonfatal_touch_rate": nonfatal_touch.to(COMPUTE_DTYPE).sum()
-                / done.sum().clamp_min(1),
-            }
-            touched = done & self.touch_flag
-            n = touched.to(COMPUTE_DTYPE).sum()
-            # torch.where instead of a bool(touched.any()) sync: when no done
-            # replica has touched the pad the masked sums are 0, so report 0
-            zero = torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE)
-            episode["touch_speed"] = torch.where(
-                n > 0, (self.touch_speed * touched).sum() / n, zero
-            )
-            episode["touch_ang_vel"] = torch.where(
-                n > 0, (self.touch_ang_vel * touched).sum() / n, zero
-            )
-            episode["touch_tilt"] = torch.where(n > 0, (self.touch_tilt * touched).sum() / n, zero)
-            for k, buf in self.reward_components.items():
-                episode[f"rew_{k}"] = (buf * done).sum() / done.sum().clamp_min(1)
-            self.extras["episode"] = episode
-        else:
-            self.extras.pop("episode", None)
+        return term_out, trunc_out, done, time_outs, primary, landed, nonfatal_touch
 
-        # empty-mask reset is fully safe (warmup early-exits; pause-restore is
-        # unconditional); the gate reuses the already-synced done_any for cost
-        if done_any:
-            self.reset_idx(self.reset_buf)
-        self._update_observation()
-        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+    def _episode_stats(self, done, primary, landed, nonfatal_touch):
+        """Episode summary over the finishing replicas (``done`` non-empty)."""
+        stats = [
+            (done & primary).to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
+            landed.to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
+            nonfatal_touch.to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
+        ]
+        touched = done & self.touch_flag
+        n = touched.to(COMPUTE_DTYPE).sum()
+        # torch.where instead of a bool(touched.any()) sync: when no done
+        # replica has touched the pad the masked sums are 0, so report 0
+        zero = torch.zeros((), device=self.device, dtype=COMPUTE_DTYPE)
+        stats.append(torch.where(n > 0, (self.touch_speed * touched).sum() / n, zero))
+        stats.append(torch.where(n > 0, (self.touch_ang_vel * touched).sum() / n, zero))
+        stats.append(torch.where(n > 0, (self.touch_tilt * touched).sum() / n, zero))
+        for buf in self.reward_components.values():
+            stats.append((buf * done).sum() / done.sum().clamp_min(1))
+        return tuple(stats)
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
@@ -662,8 +703,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         else:
             raise KeyError(name)
 
-    def reset_idx(self, envs_idx):
+    def reset_idx(self, envs_idx, nonempty=None):
         """Reset selected replicas; envs_idx is a device-resident boolean mask.
+
+        ``nonempty`` (optional) states whether the mask selects any replica,
+        sparing the reset warmup its host read when the caller already knows.
 
         Upstream ICs (rocket_landing_env.reset -> begin_reset with
         randomize_drop/accelerate_drop): xy uniform in +/-20 m, z uniform in
@@ -671,12 +715,17 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         angular velocity. The upstream random linear/angular velocities are
         dead code there ("randoimize_drop" typo) and are not reproduced.
         """
-        mask = envs_idx
         if self._domain_randomize:
             self._dr_counter += 1
-            apply_domain_randomization(
-                self, self._domain_randomize, self._seed, self._dr_counter, mask
-            )
+            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
+        if nonempty is None:
+            nonempty = bool(envs_idx.any())
+        self._reset_replicas(envs_idx, nonempty)
+
+    def _reset_replicas(self, mask, nonempty):
+        """Device half of reset_idx (graph-capturable for a fixed ``nonempty``)."""
+        if self._domain_randomize:
+            apply_staged_domain_randomization(self, mask)
         p, q, v, w = self.plant.state()
         if self.f9_real:
             u = self.plant.rng.uniform(13, mask)
@@ -728,8 +777,8 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             sampled_fuel = (low + (high - low) * u[:, 12]) / self.plant.params["propellant_params"]["total_fuel"]
             self.plant.fuel.copy_(torch.where(mask, sampled_fuel, self.plant.fuel))
         self.obs_pad.masked_fill_(mask, 0)
-        if bool(mask.any()):
-            self.plant.warmup(mask)
+        if nonempty:
+            self.plant.warmup(mask, nonempty=True)
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)

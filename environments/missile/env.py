@@ -65,9 +65,13 @@ from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
 from environments.common.domain_randomization import (
     apply_static_perturbation,
-    apply_domain_randomization,
+    apply_staged_domain_randomization,
+    stage_domain_randomization,
     resolve_domain_randomize,
 )
+
+
+_X_HAT = {}  # (device, dtype) -> body +x unit vector, built once
 
 
 def _aim_quat(aim, roll):
@@ -75,7 +79,11 @@ def _aim_quat(aim, roll):
     about body x.  Local on purpose: the shared dynamics.quat_from_euler maps
     three Euler angles (the rocket/fixedwing spawn convention), not an aim
     vector, so it cannot express this rotation."""
-    x_hat = torch.tensor([1.0, 0.0, 0.0], device=aim.device, dtype=aim.dtype).expand_as(aim)
+    key = (aim.device, aim.dtype)
+    if key not in _X_HAT:
+        # A constant, so the per-call host-to-device copy is made once.
+        _X_HAT[key] = torch.tensor([1.0, 0.0, 0.0], device=aim.device, dtype=aim.dtype)
+    x_hat = _X_HAT[key].expand_as(aim)
     axis = torch.linalg.cross(x_hat, aim)
     ang = torch.atan2(axis.norm(dim=-1), aim[..., 0].clamp(-1, 1))
     axis = axis / axis.norm(dim=-1).clamp_min(1e-9)[:, None]
@@ -375,129 +383,165 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         advancing the kinematic target analytically, detect kills/misses/
         bounds violations, accumulate progress + guidance shaping reward,
         and return (observations, reward, terminated, truncated, extras).
+
+        The tensor work is split at the host decisions (pause-restore and
+        reset) into segments that update persistent buffers in place, so an
+        execution backend may replay each segment as one CUDA graph.
         """
         if actions.device != torch.device(self.device):
             raise ValueError(
                 "Actions must already be on env.device; implicit host/device copies are disabled"
             )
         actions = self._residual_input(actions)
+        self._step_begin(actions)
+        for i in range(self.inner_steps):
+            # terminated/truncated do not change inside a control step, so the
+            # activity mask is constant and one sync covers every substep.
+            # Every replica is active when a step starts (each step ends by
+            # resetting all done replicas), so the first control step needs none.
+            restore = i > 0 and not bool((~(self.terminated | self.truncated)).all())
+            self._control_step(restore)
+        term_out, trunc_out, done, time_outs = self._step_end()
+        # Fresh tensors per step, as before: callers may keep them.
+        term_out, trunc_out = term_out.clone(), trunc_out.clone()
+        self.reset_buf = done.clone()
+        self.extras["time_outs"] = time_outs.clone()
+        self.extras["terminal_observations"] = self._terminal_obs_td
+        done_any = bool(self.reset_buf.any())
+        if done_any:
+            keys = ("success_rate", "miss_distance") + tuple(
+                f"rew_{k}" for k in self.reward_components
+            )
+            self.extras["episode"] = dict(
+                zip(keys, (x.clone() for x in self._episode_stats(self.reset_buf)))
+            )
+            self.reset_idx(self.reset_buf, nonempty=True)
+        else:
+            self.extras.pop("episode", None)
+        self._update_observation()
+        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+
+    def _step_begin(self, actions):
+        """Map the action onto the plant and open the step's accumulators."""
         command = self._scale_actions(actions)
         self.action.copy_(command)
         if self._wind is not None:
             self.plant.wind.copy_(self._wind.step())
         self.reward.fill_(0.0)
         self.count += 1
-        for _ in range(self.inner_steps):
-            active = ~(self.terminated | self.truncated)
-            self.dist_prev.copy_(torch.where(active, self.dist, self.dist_prev))
-            self.plant.clear_contacts()
-            self.plant.controller(command, active)
-            # terminated/truncated do not change inside this control step, so
-            # the activity mask is constant and one sync covers every substep.
-            restore = not bool(active.all())
-            kill_ev = torch.zeros_like(active)
-            miss_ev = torch.zeros_like(active)
-            for _ in range(self.plant.physics_per_control):
-                sub = ~(self.terminated | self.truncated)
-                tp, tv = self._target_state()
-                self.target_pos.copy_(torch.where(sub[:, None], tp, self.target_pos))
-                self.target_vel.copy_(torch.where(sub[:, None], tv, self.target_vel))
-                tq = _aim_quat(
-                    tv / tv.norm(dim=-1, keepdim=True).clamp_min(1e-6), torch.zeros_like(tv[:, 0])
-                )
-                self.plant.physics_step(
-                    command,
-                    sub,
-                    target_state=(tp, tq, tv, torch.zeros_like(tv)),
-                    restore=restore,
-                )
-                self.sim_time.copy_(
-                    torch.where(sub, self.sim_time + self.plant.physics_dt, self.sim_time)
-                )
-                pm, _, vm, _ = self.plant.state()  # cached post-substep state
-                r = tp - pm
-                dist = r.norm(dim=-1)
-                self.dist.copy_(torch.where(sub, dist, self.dist))
-                self.min_distance.copy_(
-                    torch.where(sub & (dist < self.min_distance), dist, self.min_distance)
-                )
-                closing = (r * (tv - vm)).sum(-1)
-                kill_ev |= (dist < KILL_RADIUS) & sub
-                # closest approach passed while the shot is still on: unrecoverable
-                miss_ev |= (closing > 0) & (self.sim_time > 2.0) & sub & ~kill_ev
-            # kill preempts miss inside the same inner step
-            miss_ev &= ~kill_ev
-            p, q, v, w = self.plant.state()
-            wb = inverse_rotate(q, w)
-            vb = inverse_rotate(q, v)
-            r_w = self.target_pos - p
-            v_rel = self.target_vel - v
-            r2 = r_w.square().sum(-1).clamp_min(1e-6)
-            lam_w = torch.linalg.cross(r_w, v_rel) / r2[:, None]
-            lam_b = inverse_rotate(q, lam_w)
-            vc = -(r_w * v_rel).sum(-1) / r2.clamp_min(1e-6).sqrt()
-            rel = torch.cat(
-                (
-                    inverse_rotate(q, r_w),
-                    inverse_rotate(q, v_rel),
-                    lam_b,
-                    vc[:, None],
-                    self.target_vel.norm(dim=-1)[:, None],
-                ),
-                -1,
+
+    def _control_step(self, restore):
+        """One control step: target motion, physics substeps, observation, reward."""
+        active = ~(self.terminated | self.truncated)
+        self.dist_prev.copy_(torch.where(active, self.dist, self.dist_prev))
+        self.plant.clear_contacts()
+        self.plant.controller(self.action, active)
+        kill_ev = torch.zeros_like(active)
+        miss_ev = torch.zeros_like(active)
+        for _ in range(self.plant.physics_per_control):
+            sub = ~(self.terminated | self.truncated)
+            tp, tv = self._target_state()
+            self.target_pos.copy_(torch.where(sub[:, None], tp, self.target_pos))
+            self.target_vel.copy_(torch.where(sub[:, None], tv, self.target_vel))
+            tq = _aim_quat(
+                tv / tv.norm(dim=-1, keepdim=True).clamp_min(1e-6), torch.zeros_like(tv[:, 0])
             )
-            observation = torch.cat(
-                (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary(), rel), -1
+            self.plant.physics_step(
+                self.action,
+                sub,
+                target_state=(tp, tq, tv, torch.zeros_like(tv)),
+                restore=restore,
             )
-            if self._observation is None:
-                self._observation = observation.clone()
-            else:
-                self._observation.copy_(
-                    torch.where(active[:, None], observation, self._observation)
-                )
-            # reward: telescoping closing progress plus one dense guidance term.
-            # No effort term: it drove commands to zero and opposed the terminal
-            # corrections that produce kills. The terminal miss cost grades
-            # near-misses by their closest approach instead.
-            # 'graded_terminal' shapes on velocity/LOS alignment, which the lead
-            # aim already maxes out; 'zem' shapes on the zero-effort miss, whose
-            # stepwise decrease telescopes to the miss-distance improvement.
-            progress = K_PROG * (self.dist_prev - self.dist)
-            if self.reward_variant == "zem":
-                zem = _zem(r_w, v_rel)
-                inside = (self.dist < ZEM_GATE).to(zem.dtype)
-                guide = K_ZEM * inside * (self.zem_prev - zem) / ZEM_REF
-                self.zem_prev.copy_(torch.where(active, zem, self.zem_prev))
-            else:
-                v_hat = v / v.norm(dim=-1, keepdim=True).clamp_min(1.0)
-                r_hat = r_w / r2.clamp_min(1e-6).sqrt()[:, None]
-                guide = K_ALIGN * (v_hat * r_hat).sum(-1)
-                if self.reward_variant == "align_gated":
-                    guide = guide * (self.dist < ZEM_GATE).to(guide.dtype)
-            # terminal events pay once per episode: `complete`/`miss_flag` are
-            # sticky within the episode, while `active` is recomputed per inner
-            # step (an episode that killed on inner step 1 is still "active" on
-            # inner step 2, which used to pay the terminal term twice).
-            kpay = kill_ev & active & ~self.complete
-            mpay = miss_ev & active & ~self.miss_flag
-            if self.reward_variant == "terminal_gauss":
-                # paid once after the inner loop, against the episode's final
-                # closest approach (see the block after this loop)
-                kill_r = torch.zeros_like(progress)
-            else:
-                kill_r = torch.where(
-                    kpay, torch.full_like(progress, KILL_BONUS), torch.zeros_like(progress)
-                )
-            miss_cost = MISS_PENALTY * (self.min_distance / MISS_REF).clamp(max=1.0)
-            miss_r = torch.where(mpay, -miss_cost, torch.zeros_like(progress))
-            shaping = progress + guide + kill_r + miss_r
-            self.reward.copy_(torch.where(active, self.reward + shaping, self.reward))
-            comps = (progress, guide, kill_r, miss_r)
-            for k, c in zip(self.reward_components, comps):
-                self.reward_components[k] += torch.where(active, c, 0.0)
-            self.complete |= kill_ev & active
-            self.miss_flag |= miss_ev & active
-            self.terminated |= (miss_ev | ((p[:, 2] < 0) | (p.norm(dim=-1) > 15000))) & active
+            self.sim_time.copy_(
+                torch.where(sub, self.sim_time + self.plant.physics_dt, self.sim_time)
+            )
+            pm, _, vm, _ = self.plant.state()  # cached post-substep state
+            r = tp - pm
+            dist = r.norm(dim=-1)
+            self.dist.copy_(torch.where(sub, dist, self.dist))
+            self.min_distance.copy_(
+                torch.where(sub & (dist < self.min_distance), dist, self.min_distance)
+            )
+            closing = (r * (tv - vm)).sum(-1)
+            kill_ev |= (dist < KILL_RADIUS) & sub
+            # closest approach passed while the shot is still on: unrecoverable
+            miss_ev |= (closing > 0) & (self.sim_time > 2.0) & sub & ~kill_ev
+        # kill preempts miss inside the same inner step
+        miss_ev &= ~kill_ev
+        p, q, v, w = self.plant.state()
+        wb = inverse_rotate(q, w)
+        vb = inverse_rotate(q, v)
+        r_w = self.target_pos - p
+        v_rel = self.target_vel - v
+        r2 = r_w.square().sum(-1).clamp_min(1e-6)
+        lam_w = torch.linalg.cross(r_w, v_rel) / r2[:, None]
+        lam_b = inverse_rotate(q, lam_w)
+        vc = -(r_w * v_rel).sum(-1) / r2.clamp_min(1e-6).sqrt()
+        rel = torch.cat(
+            (
+                inverse_rotate(q, r_w),
+                inverse_rotate(q, v_rel),
+                lam_b,
+                vc[:, None],
+                self.target_vel.norm(dim=-1)[:, None],
+            ),
+            -1,
+        )
+        observation = torch.cat(
+            (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary(), rel), -1
+        )
+        if self._observation is None:
+            self._observation = observation.clone()
+        else:
+            self._observation.copy_(
+                torch.where(active[:, None], observation, self._observation)
+            )
+        # reward: telescoping closing progress plus one dense guidance term.
+        # No effort term: it drove commands to zero and opposed the terminal
+        # corrections that produce kills. The terminal miss cost grades
+        # near-misses by their closest approach instead.
+        # 'graded_terminal' shapes on velocity/LOS alignment, which the lead
+        # aim already maxes out; 'zem' shapes on the zero-effort miss, whose
+        # stepwise decrease telescopes to the miss-distance improvement.
+        progress = K_PROG * (self.dist_prev - self.dist)
+        if self.reward_variant == "zem":
+            zem = _zem(r_w, v_rel)
+            inside = (self.dist < ZEM_GATE).to(zem.dtype)
+            guide = K_ZEM * inside * (self.zem_prev - zem) / ZEM_REF
+            self.zem_prev.copy_(torch.where(active, zem, self.zem_prev))
+        else:
+            v_hat = v / v.norm(dim=-1, keepdim=True).clamp_min(1.0)
+            r_hat = r_w / r2.clamp_min(1e-6).sqrt()[:, None]
+            guide = K_ALIGN * (v_hat * r_hat).sum(-1)
+            if self.reward_variant == "align_gated":
+                guide = guide * (self.dist < ZEM_GATE).to(guide.dtype)
+        # terminal events pay once per episode: `complete`/`miss_flag` are
+        # sticky within the episode, while `active` is recomputed per inner
+        # step (an episode that killed on inner step 1 is still "active" on
+        # inner step 2, which used to pay the terminal term twice).
+        kpay = kill_ev & active & ~self.complete
+        mpay = miss_ev & active & ~self.miss_flag
+        if self.reward_variant == "terminal_gauss":
+            # paid once after the inner loop, against the episode's final
+            # closest approach (see the block after this loop)
+            kill_r = torch.zeros_like(progress)
+        else:
+            kill_r = torch.where(
+                kpay, torch.full_like(progress, KILL_BONUS), torch.zeros_like(progress)
+            )
+        miss_cost = MISS_PENALTY * (self.min_distance / MISS_REF).clamp(max=1.0)
+        miss_r = torch.where(mpay, -miss_cost, torch.zeros_like(progress))
+        shaping = progress + guide + kill_r + miss_r
+        self.reward.copy_(torch.where(active, self.reward + shaping, self.reward))
+        comps = (progress, guide, kill_r, miss_r)
+        for k, c in zip(self.reward_components, comps):
+            self.reward_components[k] += torch.where(active, c, 0.0)
+        self.complete |= kill_ev & active
+        self.miss_flag |= miss_ev & active
+        self.terminated |= (miss_ev | ((p[:, 2] < 0) | (p.norm(dim=-1) > 15000))) & active
+
+    def _step_end(self):
+        """Time limit, terminal reward and episode bookkeeping; returns step outputs."""
         # time limit applies after the full control step (rocket semantics)
         if self.reward_variant == "terminal_gauss":
             # Soft fuse: the same 100 at zero miss, decaying over the fuse radius
@@ -513,14 +557,13 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         active = ~(self.terminated | self.truncated)
         self.truncated |= ((self.count >= self.max_steps) | self.complete) & active
 
-        self.reset_buf = self.terminated | self.truncated
+        done = self.terminated | self.truncated
         self.rew_buf.copy_(self.reward)
         self.episode_length_buf += 1
         self.returns += self.reward
-        self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
-        self.completed_episodes += self.reset_buf.to(torch.long)
-        self.completed_successes += (self.reset_buf & self.complete).to(torch.long)
-        done = self.reset_buf
+        self.completed_returns += torch.where(done, self.returns, 0.0)
+        self.completed_episodes += done.to(torch.long)
+        self.completed_successes += (done & self.complete).to(torch.long)
         # snapshot for the step return: reset_idx below clears terminated/truncated
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
         self.completed_metrics["miss_distance"] += torch.where(done, self.min_distance, 0.0)
@@ -530,24 +573,19 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             done & ~self.complete & ~self.miss_flag & ~self.out_of_bounds
         ).to(COMPUTE_DTYPE)
 
-        self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
+        time_outs = self.truncated & ~self.terminated & ~self.complete
         self._cache_terminal_observations()
-        done_any = bool(done.any())
-        if done_any:
-            episode = {
-                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum()
-                / done.sum().clamp_min(1),
-                "miss_distance": (self.min_distance * done).sum() / done.sum().clamp_min(1),
-            }
-            for k, buf in self.reward_components.items():
-                episode[f"rew_{k}"] = (buf * done).sum() / done.sum().clamp_min(1)
-            self.extras["episode"] = episode
-        else:
-            self.extras.pop("episode", None)
-        if done_any:
-            self.reset_idx(self.reset_buf)
-        self._update_observation()
-        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+        return term_out, trunc_out, done, time_outs
+
+    def _episode_stats(self, done):
+        """Episode summary over the finishing replicas (``done`` non-empty)."""
+        stats = [
+            (done & self.complete).to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1),
+            (self.min_distance * done).sum() / done.sum().clamp_min(1),
+        ]
+        for buf in self.reward_components.values():
+            stats.append((buf * done).sum() / done.sum().clamp_min(1))
+        return tuple(stats)
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
@@ -570,18 +608,22 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         else:
             raise KeyError(name)
 
-    def reset_idx(self, envs_idx):
+    def reset_idx(self, envs_idx, nonempty=None):
         """Reset selected replicas; envs_idx is a device-resident boolean mask.
 
         One uniform(9) draw covers ALL random quantities. Spawn geometry is a
         single fixed medium operating point (R_SPAWN / CONE / A_LAT / F_WEAVE).
         """
-        mask = envs_idx
         if self._domain_randomize:
             self._dr_counter += 1
-            apply_domain_randomization(
-                self, self._domain_randomize, self._seed, self._dr_counter, mask
-            )
+            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
+        # No reset warmup here, so the host never needs to know ``nonempty``.
+        self._reset_replicas(envs_idx)
+
+    def _reset_replicas(self, mask):
+        """Device half of reset_idx (graph-capturable)."""
+        if self._domain_randomize:
+            apply_staged_domain_randomization(self, mask)
         p, q, v, w = self.plant.state()
         u = self.plant.rng.uniform(9, mask)
         # target spawn: horizontal bearing around the origin, fixed range
@@ -661,33 +703,33 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             """Select x where mask, keep cur otherwise (handles both 1-D and 2-D tensors)."""
             return torch.where(mask[:, None] if x.dim() > 1 else mask, x, cur)
 
-        self.t_p0 = sel(target_p, self.t_p0)
-        self.t_head = sel(h, self.t_head)
-        self.t_perp = sel(perp, self.t_perp)
-        self.t_omega = sel(omega, self.t_omega)
-        self.t_phase = sel(phase, self.t_phase)
-        self.t_a = sel(a, self.t_a)
-        self.t_type = torch.where(mask, mtype, self.t_type)
-        self.t_center = sel(center, self.t_center)
-        self.t_omega_b = sel(omega_b, self.t_omega_b)
-        self.t_radius = sel(Rb, self.t_radius)
+        self.t_p0.copy_(sel(target_p, self.t_p0))
+        self.t_head.copy_(sel(h, self.t_head))
+        self.t_perp.copy_(sel(perp, self.t_perp))
+        self.t_omega.copy_(sel(omega, self.t_omega))
+        self.t_phase.copy_(sel(phase, self.t_phase))
+        self.t_a.copy_(sel(a, self.t_a))
+        self.t_type.copy_(torch.where(mask, mtype, self.t_type))
+        self.t_center.copy_(sel(center, self.t_center))
+        self.t_omega_b.copy_(sel(omega_b, self.t_omega_b))
+        self.t_radius.copy_(sel(Rb, self.t_radius))
         # sim_time must be zeroed BEFORE sampling the target: _target_state()
         # is a function of sim_time, so sampling at the finished episode's
         # t~4 s put the target ~1 km off its true spawn point and poisoned the
         # initial dist/dist_prev (spurious first-step progress reward) and the
         # initial observation.
-        self.sim_time = sel(torch.zeros_like(self.sim_time), self.sim_time)
+        self.sim_time.copy_(sel(torch.zeros_like(self.sim_time), self.sim_time))
         tp, tv = self._target_state()
-        self.target_pos = sel(tp, self.target_pos)
-        self.target_vel = sel(tv, self.target_vel)
+        self.target_pos.copy_(sel(tp, self.target_pos))
+        self.target_vel.copy_(sel(tv, self.target_vel))
         dist = (self.target_pos - p_new).norm(dim=-1)
-        self.dist = sel(dist, self.dist)
-        self.dist_prev = sel(dist, self.dist_prev)
+        self.dist.copy_(sel(dist, self.dist))
+        self.dist_prev.copy_(sel(dist, self.dist_prev))
         if self.reward_variant == "zem":
-            self.zem_prev = sel(
-                _zem(self.target_pos - p_new, self.target_vel - v_new), self.zem_prev
+            self.zem_prev.copy_(
+                sel(_zem(self.target_pos - p_new, self.target_vel - v_new), self.zem_prev)
             )
-        self.min_distance = sel(torch.full_like(dist, 1e9), self.min_distance)
+        self.min_distance.copy_(sel(torch.full_like(dist, 1e9), self.min_distance))
         self.count.masked_fill_(mask, 0)
         self.terminated.masked_fill_(mask, False)
         self.truncated.masked_fill_(mask, False)

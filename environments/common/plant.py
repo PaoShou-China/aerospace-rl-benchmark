@@ -707,6 +707,17 @@ class TensorPlant:
         self.pad_contact.zero_()
 
     def physics_step(self, command, mask, target_state=None, *, restore=True):
+        """Run one Genesis physics sub-step on active replicas (see ``_physics_step``)."""
+        # The step counter decides the contact-sampling cadence; keeping it out
+        # of the substep body leaves that body a function of its arguments.
+        sample_contacts = (self.physics_steps + 1) % self.contact_sample_every == 0
+        self._physics_step(command, mask, target_state, restore=restore,
+                           sample_contacts=sample_contacts)
+        self.physics_steps += 1
+
+    def _physics_step(
+        self, command, mask, target_state=None, *, restore=True, sample_contacts=True
+    ):
         """Run one Genesis physics sub-step on active replicas.
 
         Applies thruster, surface and booster wrenches, steps the Genesis
@@ -723,6 +734,9 @@ class TensorPlant:
         vwb = inverse_rotate(q[:, None, :], torch.stack((v, w), dim=1))
         vb, wb = vwb[:, 0], vwb[:, 1]
         self._wrench.zero_()
+        # Local views of the shared wrench buffer (the ``force``/``torque`` attributes
+        # alias the same storage); in-place writes below fill ``_wrench``.
+        force, torque = self._wrench[..., :3], self._wrench[..., 3:]
         if self.vehicle in ("quadx", "fixedwing", "quadplane"):
             if self.vehicle == "quadx":
                 m = self.params["motor_params"]
@@ -752,16 +766,16 @@ class TensorPlant:
             m = self.params["motor_params"]
             thrust = self.throttle.abs() * self.throttle * m["total_thrust"] / 4
             thrust = thrust * self._thrust_scale[:, None]
-            self.force[:, self.prop_ids, 2] = thrust
-            self.torque[:, self.prop_ids, 2] = (
+            force[:, self.prop_ids, 2] = thrust
+            torque[:, self.prop_ids, 2] = (
                 thrust * (m["torque_coef"] / m["thrust_coef"]) * self.spin
             )
             drag = self.params["drag_params"]
             vb_air = vb - (inverse_rotate(q, self.wind) if self.wind is not None else 0.0)
-            self.force[:, self.body_drag_id] = (
+            force[:, self.body_drag_id] = (
                 -0.5 * 1.225 * drag["drag_coef_xyz"] * drag["drag_area_xyz"] * vb_air.abs() * vb_air
             )
-            self.torque[:, 0] = (
+            torque[:, 0] = (
                 -drag["drag_coef_pqr"] * wb.abs() * wb * (~self.last_contact)[:, None]
             )
         elif self.vehicle == "quadplane":
@@ -771,17 +785,17 @@ class TensorPlant:
                 self.motor_max_thrust[None, :] * self.throttle[:, :4].abs() * self.throttle[:, :4]
             )
             thrust = thrust * self._thrust_scale[:, None]
-            self.force[:, self.prop_ids, 2] = thrust
+            force[:, self.prop_ids, 2] = thrust
             # torque_coef/thrust_coef is the motor torque-to-thrust ratio; use
             # quad_motor_params as the shared ratio (both YAML sets give 7.94e-12 / 3.16e-10 ≈ 0.025).  # noqa: E501
             m_quad = self.params["quad_motor_params"]
             kt_ratio = float(m_quad["torque_const"]) / float(m_quad["thrust_const"])
-            self.torque[:, self.prop_ids, 2] = thrust * kt_ratio * self.spin
+            torque[:, self.prop_ids, 2] = thrust * kt_ratio * self.spin
             # Body drag on base_link (no explicit drag params in quadplane.yaml,
             # so use a reasonable coefficient for a ~2.35 kg airframe).
             vb_air = vb - (inverse_rotate(q, self.wind) if self.wind is not None else 0.0)
             # drag force: Cd*A for a ~0.2 m² frontal area, Cd ~ 0.3
-            self.force[:, self.body_drag_id] = -0.5 * 1.225 * 0.3 * 0.2 * vb_air.abs() * vb_air
+            force[:, self.body_drag_id] = -0.5 * 1.225 * 0.3 * 0.2 * vb_air.abs() * vb_air
         # NOTE: the surfaces/engines block below must also run for the
         # quadplane (aerodynamic surfaces + forward pusher). It previously
         # lived under a bare `else:` chained onto the quadx/quadplane
@@ -839,14 +853,14 @@ class TensorPlant:
                 # a no-op and the write below is unchanged).
                 f = torch.stack((-f[..., 1], f[..., 0], f[..., 2]), -1)
                 t = torch.stack((-t[..., 1], t[..., 0], t[..., 2]), -1)
-            self.force[:, self.surface_ids] = f
-            self.torque[:, self.surface_ids] = t
+            force[:, self.surface_ids] = f
+            torque[:, self.surface_ids] = t
             if self.vehicle == "fixedwing":
                 m = self.params["motor_params"]
                 thrust = self.throttle[:, 0].abs() * self.throttle[:, 0] * m["total_thrust"]
                 thrust = thrust * self._thrust_scale
-                self.force[:, self.links["motor_link"], 0] = thrust
-                self.torque[:, self.links["motor_link"], 0] = (
+                force[:, self.links["motor_link"], 0] = thrust
+                torque[:, self.links["motor_link"], 0] = (
                     thrust * m["torque_coef"] / m["thrust_coef"]
                 )
             elif self.vehicle == "quadplane":
@@ -857,11 +871,11 @@ class TensorPlant:
                 # reaction into component 1 (link-local y), not 0.
                 thrust = self.forward_max_thrust * self.throttle[:, 4].abs() * self.throttle[:, 4]
                 thrust = thrust * self._thrust_scale
-                self.force[:, self.forward_motor_id, 1] = thrust
+                force[:, self.forward_motor_id, 1] = thrust
                 # Forward motor spin torque (same ratio as front_motor_params),
                 # about the thrust axis (body +x == link-local y).
                 m_front = self.params["front_motor_params"]
-                self.torque[:, self.forward_motor_id, 1] = (
+                torque[:, self.forward_motor_id, 1] = (
                     thrust * float(m_front["torque_const"]) / float(m_front["thrust_const"])
                 )
             elif self.vehicle == "missile":
@@ -874,7 +888,7 @@ class TensorPlant:
                 # sample per physics step regardless of burn state (RNG count
                 # invariant).
                 vel = self._air_velocity([self.drag_id], q)[:, 0]
-                self.force[:, self.drag_id, 0] -= (
+                force[:, self.drag_id, 0] -= (
                     self.body_drag_constant * vel[:, 0].abs() * vel[:, 0]
                 )
                 k = self.cn_k * vel.norm(dim=-1)
@@ -889,10 +903,10 @@ class TensorPlant:
                 fz = -k * (vel[:, 2] - self.cp_x * wb[:, 1])
                 # Cmq-style synthetic pitch/yaw damping (see missile.yaml).
                 cmq = self.cmq_coef * vel.norm(dim=-1)
-                self.force[:, self.drag_id, 1] += fy
-                self.force[:, self.drag_id, 2] += fz
-                self.torque[:, self.drag_id, 1] += (-self.cp_x) * fz - cmq * wb[:, 1]
-                self.torque[:, self.drag_id, 2] += self.cp_x * fy - cmq * wb[:, 2]
+                force[:, self.drag_id, 1] += fy
+                force[:, self.drag_id, 2] += fz
+                torque[:, self.drag_id, 1] += (-self.cp_x) * fz - cmq * wb[:, 1]
+                torque[:, self.drag_id, 2] += self.cp_x * fy - cmq * wb[:, 2]
                 self.ignited.copy_(torch.where(mask, self.ignited | mask, self.ignited))
                 noise = self.rng.normal(mask, 0.0)
                 burning = self.ignited & (self.burn_clock < self.burn_time)
@@ -902,7 +916,7 @@ class TensorPlant:
                     * burning.to(COMPUTE_DTYPE)
                 )
                 thrust = thrust * self._thrust_scale
-                self.force[:, self.drag_id, 0] += thrust
+                force[:, self.drag_id, 0] += thrust
                 self.burn_clock.copy_(
                     torch.where(mask, self.burn_clock + self.physics_dt, self.burn_clock)
                 )
@@ -911,14 +925,14 @@ class TensorPlant:
                 # Upstream body drag acts on body_ids=[0] == base_link
                 # (core/drones/rocket.py L92-116), not the fueltank.
                 vel = self._air_velocity([self.drag_id], q)[:, 0]
-                self.force[:, self.drag_id] -= self.body_drag_constant * vel.abs() * vel
+                force[:, self.drag_id] -= self.body_drag_constant * vel.abs() * vel
                 if self.f9_real:
                     contact = self.params["contact_params"]
                     supported = self.pad_contact.to(COMPUTE_DTYPE)
-                    self.torque[:, self.drag_id] -= (
+                    torque[:, self.drag_id] -= (
                         supported[:, None] * contact["angular_damping"] * inverse_rotate(q, w)
                     )
-                    self.force[:, self.drag_id, :2] -= (
+                    force[:, self.drag_id, :2] -= (
                         supported[:, None] * contact["lateral_damping"] * inverse_rotate(q, v)[:, :2]
                     )
                 variation = self.rocket_variation
@@ -961,7 +975,7 @@ class TensorPlant:
                 if variation is not None:
                     thrust = thrust * variation.thrust
                 thrust = thrust * self._thrust_scale
-                self.force[:, self.links["booster_link"]] += direction * thrust[:, None]
+                force[:, self.links["booster_link"]] += direction * thrust[:, None]
                 if self.f9_real:
                     mass, principal, com = f9_tank_properties(self.fuel, self.params)
                     inertia = torch.stack(
@@ -989,8 +1003,8 @@ class TensorPlant:
                     self.drone.set_links_inertia(
                         inertia[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
                     )
-        self.force *= mask[:, None, None]
-        self.torque *= mask[:, None, None]
+        force *= mask[:, None, None]
+        torque *= mask[:, None, None]
         qlinks = self.drone.get_links_quat().to(COMPUTE_DTYPE)
         # force and torque share the same link quaternions and now also one
         # buffer: rotate the (n, links, 2, 3) view in a single batched call.
@@ -998,10 +1012,10 @@ class TensorPlant:
             qlinks[:, :, None, :],
             self._wrench.view(self.n, self.drone.n_links, 2, 3),
         )
-        force, torque = ft[:, :, 0], ft[:, :, 1]
+        world_force, world_torque = ft[:, :, 0], ft[:, :, 1]
         self.drone.apply_links_external_wrench(
-            force=force.to(gs.tc_float),
-            torque=torque.to(gs.tc_float),
+            force=world_force.to(gs.tc_float),
+            torque=world_torque.to(gs.tc_float),
             ref=gs.link_ref_frame.link_COM,
             local=False,
         )
@@ -1026,8 +1040,7 @@ class TensorPlant:
             )
         self.scene.step(update_visualizer=False, refresh_visualizer=False)
         self._state_cache = None
-        self.physics_steps += 1
-        if self.physics_steps % self.contact_sample_every == 0:
+        if sample_contacts:
             ground = self.drone.get_contacts(
                 with_entity=self.ground, is_padded=True
             )["valid_mask"].any(-1)
@@ -1122,11 +1135,13 @@ class TensorPlant:
                 if self.rocket_variation is not None:
                     self.rocket_variation.sample(mask)
 
-    def warmup(self, mask, iterations=None):
+    def warmup(self, mask, iterations=None, nonempty=None):
         """Settling warmup with zero command on the masked slots (upstream: 10 steps).
 
         ``iterations`` defaults to ``self.warmup_iterations`` (1; the upstream
         value is 10, pass ``warmup_iterations=10`` to restore it).
+        ``nonempty`` lets a caller that already knows whether ``mask`` selects
+        any replica skip the host read below.
         """
         # An empty warmup must not advance the global scene: physics_step runs
         # scene.step() for every replica, and with an all-False mask the
@@ -1134,7 +1149,7 @@ class TensorPlant:
         # absorb 20 extra ballistic substeps per agent step (~4.3x effective
         # gravity for the 6-substep quadx agent step). Same root cause as the
         # fixedwing reset_idx bug fixed on 2026-10-20.
-        if not bool(mask.any()):
+        if not (bool(mask.any()) if nonempty is None else nonempty):
             return
         iterations = self.warmup_iterations if iterations is None else int(iterations)
         if iterations <= 0:

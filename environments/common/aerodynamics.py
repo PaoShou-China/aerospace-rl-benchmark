@@ -134,7 +134,8 @@ class LiftingSurfaceBatch:
             Body-frame moment per surface.
         """
         velocity = velocity.to(COMPUTE_DTYPE)
-        self.actuation += self.dt / self.tau * (cmd - self.actuation)
+        # add_ (not +=): the buffer keeps its identity under graph capture/compilers.
+        self.actuation.add_(self.dt / self.tau * (cmd - self.actuation))
         alpha = torch.atan2(-(velocity * self.lift).sum(-1), (velocity * self.forward).sum(-1))
         cl, cd, cm = self.coefficients(alpha, self.actuation)
         qa = 0.5 * 1.225 * velocity.square().sum(-1) * self.area

@@ -59,7 +59,8 @@ from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
 from environments.common.domain_randomization import (
     apply_static_perturbation,
-    apply_domain_randomization,
+    apply_staged_domain_randomization,
+    stage_domain_randomization,
     resolve_domain_randomize,
 )
 
@@ -223,15 +224,20 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         cO, sO = math.cos(self.raan0), math.sin(self.raan0)
         ci, si = math.cos(self.inc0), math.sin(self.inc0)
         cw, sw = math.cos(self.argp0), math.sin(self.argp0)
-        rot = torch.tensor(
-            [
-                [cO * cw - sO * sw * ci, -cO * sw - sO * cw * ci, sO * si],
-                [sO * cw + cO * sw * ci, -sO * sw + cO * cw * ci, -cO * si],
-                [sw * si, cw * si, ci],
-            ],
-            device=self.device,
-            dtype=COMPUTE_DTYPE,
-        )
+        elements = (self.raan0, self.inc0, self.argp0)
+        if getattr(self, "_rot_elements", None) != elements:
+            # Fixed orbital elements: the host-to-device copy is made once.
+            self._rot = torch.tensor(
+                [
+                    [cO * cw - sO * sw * ci, -cO * sw - sO * cw * ci, sO * si],
+                    [sO * cw + cO * sw * ci, -sO * sw + cO * cw * ci, -cO * si],
+                    [sw * si, cw * si, ci],
+                ],
+                device=self.device,
+                dtype=COMPUTE_DTYPE,
+            )
+            self._rot_elements = elements
+        rot = self._rot
         return r_pf @ rot.T, v_pf @ rot.T
 
     @staticmethod
@@ -293,18 +299,44 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         return self._observations_from_buf()
 
     def step(self, actions):
-        """Advance one policy step: integrate low-thrust RK4 dynamics.
+        """Advance one policy step (see ``_step_core`` for the dynamics and reward).
 
-        Clamp normalized thrust direction, run the constant-thrust ODE over
-        the control step, evaluate the telescoping potential-based reward,
-        detect defensive violations (impact, escape, mass depletion), and
-        return (observations, reward, terminated, truncated, extras).
+        The tensor work up to the done decision runs in ``_step_core``, which
+        updates persistent buffers in place, so an execution backend may replay
+        it as one CUDA graph; the reset and logging decisions stay here.
         """
         if actions.device != torch.device(self.device):
             raise ValueError(
                 "Actions must already be on env.device; implicit host/device copies are disabled"
             )
         actions = self._residual_input(actions)
+        term_out, trunc_out, done, time_outs, *episode = self._step_core(actions)
+        # Fresh tensors per step, as before: callers may keep them.
+        term_out, trunc_out = term_out.clone(), trunc_out.clone()
+        self.reset_buf = done = done.clone()
+        self.extras["time_outs"] = time_outs.clone()
+        self.extras["terminal_observations"] = self._terminal_obs_td
+        done_any = bool(done.any())
+        if done_any:
+            self.extras["episode"] = dict(
+                zip(
+                    ("success_rate", "perigee_raise_km", "apo_drift_km", "propellant_kg"),
+                    (x.clone() for x in episode),
+                )
+            )
+        else:
+            self.extras.pop("episode", None)
+
+        if done_any or not getattr(self, "_skip_empty_resets", False):
+            self.reset_idx(self.reset_buf)
+        elif self._domain_randomize:
+            # Preserve the original per-step randomization seed sequence.
+            self._dr_counter += 1
+        self._update_observation()
+        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+
+    def _step_core(self, actions):
+        """Dynamics, reward and episode bookkeeping of one policy step."""
         rates = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
         self.action.copy_(rates)
         active = ~(self.terminated | self.truncated)
@@ -336,15 +368,14 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.truncated |= grant
         self._phi.copy_(phi)
 
-        self.reset_buf = self.terminated | self.truncated
+        done = self.terminated | self.truncated
         # update buffers
         self.rew_buf.copy_(self.reward)
         self.episode_length_buf += 1
         self.returns += self.reward
-        self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
-        self.completed_episodes += self.reset_buf.to(torch.long)
-        self.completed_successes += (self.reset_buf & self.complete).to(torch.long)
-        done = self.reset_buf
+        self.completed_returns += torch.where(done, self.returns, 0.0)
+        self.completed_episodes += done.to(torch.long)
+        self.completed_successes += (done & self.complete).to(torch.long)
         # snapshot for the step return: reset_idx below clears terminated/truncated
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
         n_done = done.sum().clamp_min(1)
@@ -359,26 +390,15 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         # Fixed-horizon task: the step limit is a true terminal, so the rsl_rl
         # gamma*V timeout bootstrap is disabled (all-False key kept for API
         # parity with the other environments).
-        self.extras["time_outs"] = torch.zeros_like(self.truncated)
+        time_outs = torch.zeros_like(self.truncated)
         self._cache_terminal_observations()
-        done_any = bool(done.any())
-        if done_any:
-            self.extras["episode"] = {
-                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum() / n_done,
-                "perigee_raise_km": drp_km.sum() / n_done,
-                "apo_drift_km": dra_km.sum() / n_done,
-                "propellant_kg": dm_kg.sum() / n_done,
-            }
-        else:
-            self.extras.pop("episode", None)
-
-        if done_any or not getattr(self, "_skip_empty_resets", False):
-            self.reset_idx(self.reset_buf)
-        elif self._domain_randomize:
-            # Preserve the original per-step randomization seed sequence.
-            self._dr_counter += 1
-        self._update_observation()
-        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+        episode = (
+            (done & self.complete).to(COMPUTE_DTYPE).sum() / n_done,
+            drp_km.sum() / n_done,
+            dra_km.sum() / n_done,
+            dm_kg.sum() / n_done,
+        )
+        return term_out, trunc_out, done, time_outs, *episode
 
     def _apply_perturbation(self, name, scale):
         """Scale f_max, isp or mass0; called by the DR helper."""
@@ -394,12 +414,15 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
 
     def reset_idx(self, envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
-        mask = envs_idx
         if self._domain_randomize:
             self._dr_counter += 1
-            apply_domain_randomization(
-                self, self._domain_randomize, self._seed, self._dr_counter, mask
-            )
+            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
+        self._reset_replicas(envs_idx)
+
+    def _reset_replicas(self, mask):
+        """Device half of reset_idx (graph-capturable)."""
+        if self._domain_randomize:
+            apply_staged_domain_randomization(self, mask)
         mean_anomaly = (2 * self.rng.uniform(1, mask) - 1).reshape(-1) * math.pi
         r0, v0 = self._kepler_to_cartesian(mean_anomaly)
         self.r.copy_(torch.where(mask[:, None], r0, self.r))

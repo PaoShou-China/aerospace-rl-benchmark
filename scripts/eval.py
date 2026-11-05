@@ -130,6 +130,11 @@ def main():
     _setup_t0 = time.perf_counter()
     # restore the exact env construction used at training time
     env_kwargs = dict(cfg.get("env_kwargs") or {})
+    if args.performance and args.backend == "gpu":
+        # Process-global backend selection must precede the first env/scene.
+        from algorithms.performance import configure_backend
+
+        configure_backend()
     env = ENVS[args.vehicle](
         num_envs=args.num_envs, backend=args.backend, seed=args.seed, **env_kwargs
     )
