@@ -164,10 +164,21 @@ def _subprocess_train_job(job):
             bc_src=bc_src, residual_rho=RESIDUAL_RHO, backend=BACKEND,
         )
     )
-    proc = subprocess.run(
-        [sys.executable, str(runner_path)], cwd=_ROOT,
-        capture_output=True, text=True, timeout=7200,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(runner_path)], cwd=_ROOT,
+            capture_output=True, text=True, timeout=14400,
+        )
+    except subprocess.TimeoutExpired as e:
+        runner_path.unlink(missing_ok=True)
+        _log(f"FAIL  {task}/{method}/seed_{seed} timeout after {14400}s")
+        retries = _load_retries()
+        retries.append({
+            "job": list(job), "attempt": 1,
+            "last_error": f"TimeoutExpired after {14400}s",
+        })
+        _save_retries(retries)
+        return
     runner_path.unlink(missing_ok=True)
     if proc.returncode != 0:
         _log(f"FAIL  {task}/{method}/seed_{seed}\n{proc.stderr[-4000:]}")
