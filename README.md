@@ -17,8 +17,9 @@ device-tensor interface. No Gym / Gymnasium wrappers.
 
 Each task shares the same `step` / `reset` / buffer contract, ships a classical
 GNC baseline on the same reward and success bar, and runs physics, contacts,
-reward, reset and RNG as masked tensor kernels. The only per-step host sync is
-`bool(done.any())`.
+reward, reset and RNG as masked tensor kernels. Host decisions such as
+episode-completion checks can still trigger CPU/GPU synchronization; the accelerated path reduces repeated dispatch through caching
+and segmented CUDA graphs.
 
 ## Quick start
 
@@ -62,24 +63,22 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 ```
 
 These acceleration options default to off. Unsupported PPO configurations
-retain the upstream update implementation. Standalone inference uses
-`algorithms.inference.InferencePolicy(actor.eval())`: recreate the snapshot
-after changing source weights, call each instance serially, and match the
-input device and dtype to the snapshot.
+retain the upstream update implementation.
 
 ### Execution layers
 
 With `performance=True` the environment step runs as a short sequence of CUDA
-graph replays instead of thousands of individually launched kernels
-(`algorithms/performance.py`):
+graph replays (`algorithms/performance.py`):
 
 1. **Genesis performance mode.** Genesis compiles static-array kernels
    specialised to the scene. For these single-body (6-DOF) vehicles it then
    solves contacts with its one-kernel *monolith* Newton arm. The generic
    kernels instead pin the *decomposed* arm, whose iteration loop runs on the
    host with a synchronization per iteration on GPUs below SM 9.0 (RTX 30/40
-   series). Both arms solve the same problem to the same tolerance, so
-   trajectories agree to float32 rounding, not bitwise.
+   series). Both arms use the same physical problem and solver tolerance, but their
+   execution paths differ and may produce floating-point differences. Equal
+   tolerances alone do not establish equivalence of complete trajectories or
+   training behavior.
 2. **Whole-substep graphs with Genesis kernels inside.** Quadrants kernels
    are recorded into the same CUDA graph as the Torch math: Quadrants' own
    graph launches are switched to plain launches while capturing, the launch
@@ -100,12 +99,6 @@ graph replays instead of thousands of individually launched kernels
    multiply-adds and may reorder reductions (float32-rounding differences),
    and adds a one-time compilation at startup.
 
-Layers 2 and 3 replay exactly the kernels eager execution launches: rollouts
-with and without them are bitwise identical on all ten tasks, and the
-refactored eager step is bitwise identical to the previous one. For the four
-spacecraft tasks PPO losses are identical to the previous release update for
-update.
-
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `AEROSPACE_GENESIS_PERFORMANCE` | `1` | `0` keeps Genesis' generic kernels (bitwise as before; layers 2-3 then fall back to Torch-only segments) |
@@ -113,50 +106,6 @@ update.
 | `AEROSPACE_SEGMENT_GRAPHS` | `1` | `0` disables graphed step segments |
 | `AEROSPACE_FUSE` | `0` | `1` enables fused task math (layer 4) |
 | `AEROSPACE_SEGMENT_DEBUG` | `0` | `1` reports why a segment re-warms |
-
-### Measured speed-up
-
-PPO update throughput relative to the previous acceleration release
-([`d7ead04`](https://github.com/PaoShou-China/aerospace-rl-benchmark/commit/d7ead044bdc22ddb11b1adefa4569bdd3b7c8b5a)),
-measured with its benchmark protocol: 1024 parallel environments, seed 7,
-each task's shipped PPO configuration, BC excluded, median of five updates
-after two warmup updates (rollout, logging and PPO update included).
-
-| Task | `d7ead04` s/update | This branch s/update | Speed-up | `AEROSPACE_FUSE=1` s/update | Speed-up |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| QuadX-Waypoints | 2.415 | 0.579 | **4.17x** | 0.598 | 4.04x |
-| QuadX-Track | 2.781 | 0.724 | **3.84x** | 0.786 | 3.54x |
-| Fixedwing-Waypoints | 1.977 | 0.545 | **3.63x** | 0.632 | 3.13x |
-| Quadplane-VTOL | 1.461 | 0.520 | **2.81x** | 0.443 | 3.30x |
-| Rocket-Landing | 2.533 | 1.029 | **2.46x** | 0.862 | 2.94x |
-| Missile-Intercept | 1.350 | 0.345 | **3.91x** | 0.328 | 4.12x |
-| Satellite attitude (CMG) | 0.763 | 0.599 | **1.27x** | 0.337 | 2.26x |
-| Low-thrust transfer | 0.150 | 0.132 | **1.14x** | 0.0810 | 1.85x |
-| Docking | 0.0808 | 0.0365 | **2.21x** | 0.0492 | 1.64x |
-| Rendezvous | 0.818 | 0.276 | **2.96x** | 0.299 | 2.74x |
-
-Both arms ran interleaved on the same machine (two rounds each, best round
-reported, which damps contention from other tenants of the cloud host). The
-fused column is a single run of the same protocol and carries about +/-15%
-run-to-run noise; its satellite and orbit-transfer gains are well outside that
-noise, the others are not. Fusion also adds a one-time compilation of one to
-three minutes.
-
-The previous release measured 1.88-15.29x over
-[`4439708`](https://github.com/PaoShou-China/aerospace-rl-benchmark/commit/4439708d3bfaf97c585be84727fd7df48eedefaa)
-with the same protocol; the factors above compound with it.
-
-Quadx from-scratch PPO (no BC warm start) can drive the Genesis contact
-solver to non-finite constraint forces, which Genesis reports as
-`GenesisException: Invalid constraint forces causing 'nan'`. This occurs with
-both solver arms (2 of 3 seeds in performance mode and 1 of 3 with the generic
-kernels within 30 updates) and predates these changes. Time to convergence
-and success-rate equivalence over complete training runs remain unvalidated.
-
-Measurements used an NVIDIA GeForce RTX 4080 SUPER (driver 595.71), Python
-3.12.3, PyTorch 2.8.0+cu128, Genesis 1.4.4, Quadrants 1.3.3 and rsl-rl 5.3.0.
-The PyTorch 2.11 pin in `requirements.txt` has not been validated for these
-acceleration paths.
 
 ## Task overview
 

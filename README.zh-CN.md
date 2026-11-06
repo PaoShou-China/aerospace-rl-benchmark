@@ -13,7 +13,7 @@
 **面向航空航天控制的 GPU 并行强化学习环境。**
 十个单智能体任务——六个大气飞行器基于 URDF 刚体后端，四个航天任务基于显式张量动力学——共用同一套批量设备张量接口，不依赖 Gym / Gymnasium 封装。
 
-所有任务遵循相同的 `step` / `reset` / 缓冲区约定，在同一奖励与成功判据下各配一个经典 GNC 基线；物理、接触、奖励、重置与随机数均为带掩码的张量核。每步唯一的 host 同步是 `bool(done.any())`。
+所有任务遵循相同的 `step` / `reset` / 缓冲区约定，在同一奖励与成功判据下各配一个经典 GNC 基线；物理、接触、奖励、重置与随机数均为带掩码的张量核。回合结束判断等主机决策仍可能触发 CPU/GPU 同步；加速路径通过缓存与分段 CUDA Graph 减少重复调度。
 
 ## 快速开始
 
@@ -52,14 +52,12 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 
 ### 执行层
 
-`performance=True` 时，环境步进由少量 CUDA Graph 重放完成，而不是逐个发射数千个小核（`algorithms/performance.py`）：
+`performance=True` 时，环境步进由少量 CUDA Graph 重放完成（`algorithms/performance.py`）：
 
-1. **Genesis 性能模式。** Genesis 编译针对场景特化的静态数组内核；对这些单刚体（6 自由度）飞行器，接触求解改用单内核的 *monolith* 牛顿分支。通用内核固定使用 *decomposed* 分支，其迭代循环在 SM 9.0 以下的 GPU（RTX 30/40 系列）上由主机驱动、每次迭代同步一次。两个分支求解同一问题、收敛到同一容差，轨迹在 float32 舍入层面一致，而非逐位相同。
+1. **Genesis 性能模式。** Genesis 编译针对场景特化的静态数组内核；对这些单刚体（6 自由度）飞行器，接触求解改用单内核的 *monolith* 牛顿分支。通用内核固定使用 *decomposed* 分支，其迭代循环在 SM 9.0 以下的 GPU（RTX 30/40 系列）上由主机驱动、每次迭代同步一次。两个分支使用同一物理问题和求解容差，但求解路径不同，可能产生浮点差异；完整轨迹与训练行为的等价性不能仅由容差相同推出。
 2. **含 Genesis 内核的整子步图。** Quadrants 内核与 Torch 运算录入同一张 CUDA Graph：捕获期间把 Quadrants 自身的图发射改为普通发射，保留其主机参数缓冲所在的启动上下文，并按 Genesis 自身的节奏重放其周期性错误检查与主机步数计数。
 3. **分段步进图。** 每次 `env.step` 在主机决策点（暂停恢复、重置、回合日志）处拆分为原地更新持久缓冲的分段（`_step_begin`、`_control_step`、`_step_end`、`_reset_replicas`；航天器任务为 `_step_core`），每段重放为一张图。捕获前会审计第二次预热与捕获本身：整数计数器被重放，其他主机状态变化（张量属性被替换而非原地更新）会让该分段保持即时执行并给出提示，而不会重放过期状态。
 4. **可选的算子融合**（`AEROSPACE_FUSE=1`）。Inductor 将逐元素的动力学、控制、观测与积分运算融合为 Triton 内核，再由分段图录制。融合会合并乘加并可能重排归约（float32 舍入差异），并在启动时增加一次性编译。
-
-第 2、3 层重放的正是即时执行所发射的内核：开启与关闭这两层的回放在全部十个任务上逐位相同，重构后的即时步进与此前版本也逐位相同。四个航天器任务的 PPO 损失与上一版本逐次更新完全一致。
 
 | 环境变量 | 默认 | 作用 |
 | --- | --- | --- |
@@ -68,31 +66,6 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 | `AEROSPACE_SEGMENT_GRAPHS` | `1` | `0` 关闭分段步进图 |
 | `AEROSPACE_FUSE` | `0` | `1` 开启算子融合（第 4 层） |
 | `AEROSPACE_SEGMENT_DEBUG` | `0` | `1` 报告分段重新预热的原因 |
-
-### 实测加速
-
-相对上一加速版本（[`d7ead04`](https://github.com/PaoShou-China/aerospace-rl-benchmark/commit/d7ead044bdc22ddb11b1adefa4569bdd3b7c8b5a)）的 PPO 更新吞吐，沿用其基准协议：1024 个并行环境、种子 7、各任务自带的 PPO 配置、不含 BC，取两次预热更新后五次更新的中位数（含采样、日志与 PPO 更新）。
-
-| 任务 | `d7ead04` 秒/更新 | 本分支 秒/更新 | 加速比 | `AEROSPACE_FUSE=1` 秒/更新 | 加速比 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| QuadX-Waypoints | 2.415 | 0.579 | **4.17x** | 0.598 | 4.04x |
-| QuadX-Track | 2.781 | 0.724 | **3.84x** | 0.786 | 3.54x |
-| Fixedwing-Waypoints | 1.977 | 0.545 | **3.63x** | 0.632 | 3.13x |
-| Quadplane-VTOL | 1.461 | 0.520 | **2.81x** | 0.443 | 3.30x |
-| Rocket-Landing | 2.533 | 1.029 | **2.46x** | 0.862 | 2.94x |
-| Missile-Intercept | 1.350 | 0.345 | **3.91x** | 0.328 | 4.12x |
-| Satellite attitude (CMG) | 0.763 | 0.599 | **1.27x** | 0.337 | 2.26x |
-| Low-thrust transfer | 0.150 | 0.132 | **1.14x** | 0.0810 | 1.85x |
-| Docking | 0.0808 | 0.0365 | **2.21x** | 0.0492 | 1.64x |
-| Rendezvous | 0.818 | 0.276 | **2.96x** | 0.299 | 2.74x |
-
-两组在同一台机器上交替运行（各两轮，取较好的一轮，以减弱云主机上其他租户的干扰）。融合列为同一协议下的单次运行，存在约 ±15% 的波动：其卫星姿态与轨道转移任务的提升明显超出该波动，其余任务则不然。融合还会在启动时增加 1–3 分钟的一次性编译。
-
-上一版本以同一协议相对 [`4439708`](https://github.com/PaoShou-China/aerospace-rl-benchmark/commit/4439708d3bfaf97c585be84727fd7df48eedefaa) 测得 1.88–15.29 倍，上表倍数在此基础上叠加。
-
-从零开始（无 BC 预热）的 Quadx PPO 可能使 Genesis 接触求解器产生非有限约束力，Genesis 报告 `GenesisException: Invalid constraint forces causing 'nan'`。两种求解分支都会出现（30 次更新内，性能模式 3 个种子中 2 个、通用内核 3 个中 1 个），并非本次改动引入。完整训练的收敛时间与成功率等价性仍未验证。
-
-测量环境：NVIDIA GeForce RTX 4080 SUPER（驱动 595.71）、Python 3.12.3、PyTorch 2.8.0+cu128、Genesis 1.4.4、Quadrants 1.3.3、rsl-rl 5.3.0。`requirements.txt` 中固定的 PyTorch 2.11 尚未针对这些加速路径验证。
 
 ## 任务概览
 
