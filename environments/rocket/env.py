@@ -1,5 +1,5 @@
 """Rocket-Landing task: six-spherical-pad contact model with a sustained-landing
-(2 s) primary success metric; see docs/rocket_benchmark_v2_zh.md.
+(2 s) primary success metric; see docs/method/env-rocket-landing.md.
 
 The instantaneous touch event below is still used for reward/diagnostics.
 Contact model and scoring do not change reward, fatal thresholds, initial

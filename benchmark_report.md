@@ -1355,3 +1355,201 @@ The benchmark's core value lies in:
    efficiency from engineering throughput, and physical-cost metrics complement
    reward-based evaluation of learning effectiveness; cross-task comparisons must
    preserve horizon and difficulty boundaries.
+
+---
+
+## Appendix A: Infrastructure and Reproducibility
+
+Supplementary material for reviewers. This appendix states only facts that
+**land on a code line and carry a re-verification condition**. Each highlight
+follows "claim → mechanism → evidence → significance → boundary", followed by
+"Non-claims" and "Claim status" sections.
+
+### A.1 Abstract
+
+Compared with general RL environment libraries (Gymnasium / Brax / Isaac Lab,
+etc.), this suite's increment is not the number of environments but six kinds of
+**infrastructure for controlled experiments**:
+
+1. **Hash-manifested reference baseline**: upstream PyFlyt 0.29.0 task code is
+   shipped as a frozen copy; source/asset SHA-256 verification primitives are
+   also provided. Tensor-plant inertias are parsed directly from the reference
+   URDF, not hand-copied.
+2. **Multiple execution paths**: 4 tasks are pure tensor implementations
+   (satellite / transfer / docking / rendezvous), 6 are Genesis rigid-body
+   implementations (quadx / quadx_track / fixedwing / quadplane / rocket /
+   missile); the latter also has a shared-scene batch bridge that runs the
+   **unmodified** original NumPy task code, enabling implementation-level
+   cross-validation.
+3. **Training infrastructure**: warmup-cosine LR scheduling, deterministic
+   evaluation, and controlled hyperparameter knobs shared across tasks.
+4. **Result provenance**: `run.json` records the task configuration, real
+   transitions, physics-step call counts, device-side completion metrics, and an
+   explicit numerical non-equivalence boundary.
+5. **Classical (non-learned) baseline library**: each of the 10 tasks has an
+   analytic GNC baseline, giving a non-learned reference under the same
+   environment, reward and success criterion, while retaining the baselines'
+   honest failure modes as surfaces for RL to attack.
+
+### A.2 Highlight 1: An auditable reference baseline, not "a rewrite"
+
+**Claim**: the reference implementation exists as "frozen copy + hash manifest +
+inertia parsing"; the audit primitives can be run manually but are not currently
+runtime gates.
+
+- The original code path imports the repository's frozen copy
+  `environments/common/original_pyflyt`
+  ([original_backend.py:455-468](environments/common/original_backend.py#L455-L468)).
+- `verify_installed_reference()` verifies the **installed** `PyFlyt==0.29.0`:
+  version plus SHA-256 of the manifest's source files and URDF/YAML assets
+  ([consistency.py:26-44](environments/common/consistency.py#L26-L44)).
+- `contract()` hashes the repository's
+  `environments/common/assets/reference_*` and serializes vehicle, `dt`, control
+  extraction ratio, coordinate conventions and noise/wind settings into a
+  `plant_id` ([consistency.py:97-127](environments/common/consistency.py#L97-L127)).
+- Inertias are parsed from the reference URDF, not hand-written constants
+  ([consistency.py:63-95](environments/common/consistency.py#L63-L95),
+  [dynamics.py:25-27](environments/common/dynamics.py#L25-L27)); the same
+  inertias pass through `inertial_basis()` to rotate "principal axes → author
+  axes" before the Genesis rigid body
+  ([plant.py:441-462](environments/common/plant.py#L441-L462)).
+
+**Boundary**: the two verification functions are **not called by the
+training/evaluation entry points**. Hash agreement **does not equal** physical
+agreement — the Genesis compatibility backend declares "API compatibility
+backend, not a claim of bitwise physics equivalence"
+([original_backend.py:1-5](environments/common/original_backend.py#L1-L5)).
+
+### A.3 Highlight 2: Cross-validatable multiple execution paths
+
+**Claim**: three mutually verifiable execution modes — pure tensor (no engine),
+tensorized plant (Genesis rigid body), and the bridged original NumPy task code.
+
+1. **Pure tensor path** (satellite / transfer / docking / rendezvous): RK4 /
+   symplectic Euler integrators live directly in each env; state, RNG and
+   statistics stay on device. Every step is a masked tensor kernel; inactive
+   replicas freeze and **do not consume random numbers**.
+2. **Tensor plant path** (quadx / quadx_track / fixedwing / quadplane / rocket /
+   missile): `TensorPlant` carries geometry, actuation, physics stepping,
+   contact checks and reset/warmup
+   ([plant.py:1-9](environments/common/plant.py#L1-L9)). `TensorRandom`
+   maintains an independent counter stream per replica, distribution-compatible
+   but not NumPy PCG64 bitstream-compatible with upstream
+   ([plant.py:60-72](environments/common/plant.py#L60-L72)).
+3. **Original-code bridge** (quadx / fixedwing / rocket): `OriginalTaskBatch`
+   hosts N replicas in one Genesis scene while the Python side remains
+   **unmodified** PyFlyt objects
+   ([original_batch.py:1-7](environments/common/original_batch.py#L1-L7)).
+
+**Boundary**: the original NumPy bridge is correctness-first and runs on host;
+it is not the throughput-optimal path.
+
+### A.4 Highlight 3: Wind disturbance as a unified plant hook
+
+**Claim**: the 5 atmospheric tasks share one wind-disturbance path — aerodynamic
+forces are evaluated with **airspeed** `v_air = v - wind`; quadx / fixedwing /
+quadplane training entries hard-code a 30% Dryden gust, rocket fixes
+`dryden=0.0`, missile stays calm. Calm air (default) is **bit-identical** to the
+published baseline.
+
+- `TensorPlant` holds `wind` (world-frame (n,3) float64, `None` = calm air);
+  `_air_velocity` subtracts wind in world frame then rotates to body axes
+  ([plant.py](environments/common/plant.py)).
+- Wind generation goes through `environments/common/disturbances.py`'s
+  `WindDisturbance` (steady wind + Dryden gusts, MIL-F-8785C).
+- `eval.py` restores the training `env_kwargs` from
+  `results/<task>/config.json` when it exists, so a wind-trained policy is
+  evaluated under the same wind configuration.
+
+### A.5 Highlight 4: Training infrastructure
+
+- **warmup-cosine LR scheduling** is built into the PPO side
+  ([train_utils.py:27-36](algorithms/train_utils.py#L27-L36),
+  [train_utils.py:681-697](algorithms/train_utils.py#L681-L697)).
+- **Controlled knobs**: `lr_sigma_coupling`, `sigma_pin`, `freeze_obs_norm` —
+  all opt-in with mutual-exclusion checks
+  ([train_utils.py:551-566](algorithms/train_utils.py#L551-L566)).
+
+### A.6 Highlight 5: Result provenance
+
+- `run.json` records task configuration, iteration count, total transitions,
+  wall time, per-replica completion metrics, real `physics_step_calls`, and a
+  numerical non-equivalence statement
+  ([train_utils.py:750-801](algorithms/train_utils.py#L750-L801)).
+- `config.json` is deep-copied before being handed to the runner to prevent
+  in-place mutation
+  ([train_utils.py:318-352](algorithms/train_utils.py#L318-L352)).
+- `eval.py` uses a frozen deterministic policy (mean actions); success/return
+  accumulate on device and are written to `eval.json`
+  ([eval.py](scripts/eval.py)).
+
+### A.7 Highlight 6: A non-learned baseline per task
+
+**Claim**: each of the 10 tasks has an analytic classical GNC default baseline
+(plus structural variants), sharing the same environment, reward and success
+criterion; baselines reach 100% on some tasks and retain **documented failure
+modes** on others.
+
+- All baselines live in
+  [baselines.py](algorithms/baselines/baselines.py) with factory
+  `build_baseline(vehicle, env)`. Each controller reads only the `'policy'`
+  observation group and no internal state buffer.
+- Multi-seed baseline records and per-variant success rates are in
+  [baselines.md](docs/baselines.md).
+- Baselines are not strawmen and not a ceiling — missile (77.3%), quadx_track
+  (85.9%) and fixedwing (87.0%) leave attackable failure space.
+
+### A.8 Non-claims
+
+1. **No bitwise physical equivalence with PyFlyt/Bullet** — Genesis backend has
+   different engine numerics.
+2. **No NumPy random bitstream identity** — `TensorRandom` is
+   distribution-compatible only.
+3. **No optimality claim** — baselines are manual designs, not upper bounds.
+4. **The original-code bridge is not a high-performance path**.
+5. **Single-seed results are not statistical conclusions**.
+
+### A.9 Claim status table
+
+| Claim | Status | Evidence/re-verification |
+|---|---|---|
+| Upstream PyFlyt 0.29.0 source/assets hash-verifiable | Implemented; **not auto-wired** | `python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"` |
+| `plant_id` plant certificate | Implemented; **not called by entry points** | `contract()` |
+| Tensor-plant inertias from reference URDF | Wired | [plant.py:441-462](environments/common/plant.py#L441-L462) |
+| Inactive replicas consume no RNG | Design guarantee + code path | [plant.py:1-9](environments/common/plant.py#L1-L9) |
+| Evaluation uses training-recorded config | Guaranteed | [eval.py](scripts/eval.py) |
+| PPO warmup-cosine LR schedule | Wired (opt-in `lr_cosine`) | [train_utils.py:27-36](algorithms/train_utils.py#L27-L36) |
+| One classical baseline per task | Implemented + measured | `python scripts/baseline_eval.py <task>` |
+| Bitwise physical equivalence with upstream | **Not claimed** | See Non-claims #1 |
+
+### A.10 Re-verification checklist
+
+```bash
+# 1) Reference hash verification (requires PyFlyt 0.29.0)
+python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"
+
+# 2) Deterministic evaluation restoring training env_kwargs
+python scripts/eval.py quadx --num-envs 16 --max-steps 400
+
+# 3) Inspect one training run's record
+python -c "import json;r=json.load(open('results/smoke/quadx_ppo/run.json'));print(r['task']);print(r['transitions'], r['physics_step_calls'])"
+
+# 4) Wind-disturbance hook
+grep -n "wind" environments/common/plant.py environments/common/disturbances.py | head -20
+
+# 5) Classical baseline for any task
+python scripts/baseline_eval.py quadx
+```
+
+### A.11 Code index
+
+| Capability | File |
+|---|---|
+| Reference hash verification, URDF inertia parsing, `plant_id` | [environments/common/consistency.py](environments/common/consistency.py) |
+| Pure tensor plant, per-replica random streams | [environments/common/plant.py](environments/common/plant.py) |
+| Genesis compatibility backend | [environments/common/original_backend.py](environments/common/original_backend.py) |
+| Original-task shared-scene batching | [environments/common/original_batch.py](environments/common/original_batch.py) |
+| Training/record pipeline, LR schedule | [algorithms/train_utils.py](algorithms/train_utils.py) |
+| 10-task classical baseline library | [algorithms/baselines/baselines.py](algorithms/baselines/baselines.py) |
+| Unified baseline evaluation | [scripts/baseline_eval.py](scripts/baseline_eval.py) |
+| Deterministic evaluation | [scripts/eval.py](scripts/eval.py) |

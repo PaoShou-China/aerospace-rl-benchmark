@@ -279,3 +279,77 @@ real-scale conventional controller uses height-scheduled powered descent,
 upright TVC/fin attitude control, terminal engine cutoff and touchdown shutdown
 latching. Their uncertainty should be examined with parameter mismatch/domain
 randomization rather than interpreted as validated F9 data.
+
+## 14. Benchmark v2: contact model and settled criterion
+
+The v1 benchmark's Genesis landing-contact configuration had a structural
+problem: three flat-bottomed collision bars chattered after touching the
+platform, and even a gentle engine-off touchdown bounced back up; instantaneous
+ever-success then recorded states that briefly met the threshold during chatter
+as successes. This moved scoring away from the task goal "the rocket lands and
+settles". v2 fixes contact with spherical pads and scores a continuous 2-second
+settle.
+
+### 14.1 Contact verification
+
+On 128 random gentle-touchdown initial states, engine off, control surfaces
+neutral, default solver, 10 s:
+
+| Contact diagnostic | Original three bars | v2 six spherical pads |
+|---|---:|---:|
+| Lift-off above 1 cm after contact | 108/128 | 0/128 |
+| Fatal ending | 88/128 | 0/128 |
+| Ever met the instantaneous success condition | 85/128 | 128/128 |
+
+Full first-episode evaluation (4×128 per column, 512 episodes total) with the
+continuous 2-second settle as primary metric:
+
+| Condition and policy | Development set | Independent set |
+|---|---:|---:|
+| nominal / seed | 508/512 | 504/512 |
+| nominal / PDG | 512/512 | 512/512 |
+| shifted / seed | 281/512 | 293/512 |
+| shifted / PDG | 290/512 | 314/512 |
+
+Per-environment contact records and source-file SHA-256 are in
+[`evidence/rocket_v2/`](../evidence/rocket_v2/).
+
+### 14.2 Corresponding locations in main
+
+- **Contact assets**: `environments/common/original_pyflyt/models/vehicles/rocket/rocket_v2.urdf`. Each leg uses two spherical collision pads of radius 0.025 m. The original `rocket.urdf` is retained.
+- **Physics model**: `environments/common/plant.py` and `environments/rocket/rocket_benchmark.py`. Per-episode physics disturbance is integrated with an independent counter random stream, seed offset 104729.
+- **Task scoring**: `environments/rocket/env.py` uses v2, primary metric `ever_stable_2s`. Reward, fatal criteria, initial distribution, 30-D observation, 7-D action and 30 s horizon are retained.
+- **Evaluation**: `scripts/rocket_benchmark_eval.py` counts complete first episodes in 4×128 batches.
+
+### 14.3 Continuous-settle metric
+
+At the end of each policy step, check platform contact, speed norm < 0.02 m/s,
+angular-rate norm < 0.02 rad/s, combined roll/pitch tilt < 0.1 rad, and no fatal
+or out-of-bounds termination. The span between first and last sample that
+continuously satisfies the conditions must reach 2 seconds:
+**81 points at 40 Hz** (121 points at 60 Hz). A contact break or any violated
+condition resets the continuous counter.
+
+### 14.4 Per-episode physics disturbance
+
+| Parameter | nominal | shifted | stress |
+|---|---|---|---|
+| Thrust scale | 1 | [0.92, 1.08] | [0.85, 1.15] |
+| Surface force/torque scale | 1 | [0.6, 1.4] | [0.3, 1.7] |
+| Engine and gimbal time constants (s) | 0.01 | [0.005, 0.03] | [0.005, 0.06] |
+| Two-axis gimbal bias (deg) | 0 | [-0.3, 0.3] | [-1, 1] |
+| Horizontal steady wind (m/s) | 0 | [0, 5] | [0, 10] |
+
+Main's existing `steady_wind` / `dryden` interfaces are retained; additionally
+configured wind is superposed on the per-episode wind.
+
+### 14.5 Usage
+
+```bash
+python scripts/rocket_benchmark_eval.py --backend gpu --variation nominal --out results/rocket-v2-nominal
+python scripts/rocket_benchmark_eval.py --backend gpu --variation shifted --out results/rocket-v2-shifted
+```
+
+Default development seeds are 1000007, 2000007, 3000007, 4000007. Reports include
+per-episode records, completeness, sample counts, Wilson 95% intervals, initial
+states and source hashes. Checkpoint evaluation uses `scripts/eval.py`.

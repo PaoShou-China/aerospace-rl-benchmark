@@ -504,8 +504,8 @@
           <div class="task-body">
             <p class="cat" data-i18n="task.satellite.cat">Spacecraft · CMG attitude</p>
             <h3>Satellite Attitude</h3>
-            <p class="desc" data-i18n="task.satellite.desc">Attitude control with 4 or 6 control moment gyros and a singularity-aware allocator.</p>
-            <p class="spec" data-i18n="task.satellite.spec"><span>obs 26 / 32</span> <span>act 4 / 6</span> <span>40 Hz</span> <span>1200 steps / 30 s</span></p>
+            <p class="desc" data-i18n="task.satellite.desc">Attitude control with 4 control moment gyros and a singularity-aware allocator.</p>
+            <p class="spec" data-i18n="task.satellite.spec"><span>obs 26</span> <span>act 4</span> <span>40 Hz</span> <span>1200 steps / 30 s</span></p>
           </div>
         </article>
 
@@ -702,12 +702,9 @@ python scripts/baseline_eval.py quadx</code></pre>
             <li><a data-doc="readme" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/README.md"><span>README</span><span class="d" data-i18n="docs.overview">overview</span></a></li>
             <li><a data-doc="tasks" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/tasks.md"><span>docs/tasks</span><span class="d" data-i18n="docs.tasks">task table</span></a></li>
             <li><a data-doc="baselines" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baselines.md"><span>docs/baselines</span><span class="d" data-i18n="docs.baselines">baseline results</span></a></li>
-            <li><a data-doc="highlights" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/technical-highlights.md"><span>technical-highlights</span><span class="d" data-i18n="docs.reviewer">infrastructure claims</span></a></li>
             <li><a data-doc="protocol" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/evaluation_protocol.md"><span>evaluation_protocol</span><span class="d" data-i18n="docs.protocol">protocol</span></a></li>
             <li><a data-doc="method" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/method/README.md"><span>docs/method</span><span class="d" data-i18n="docs.method">per-task methods</span></a></li>
-            <li><a data-doc="baseline-report" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/baseline_test_report.md"><span>baseline_test_report</span><span class="d" data-i18n="docs.baseline">multi-seed</span></a></li>
             <li><a data-doc="report" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/benchmark_report.md"><span>benchmark_report</span><span class="d" data-i18n="docs.report">full report</span></a></li>
-            <li><a data-doc="rocket" href="https://github.com/PaoShou-China/aerospace-rl-benchmark/blob/main/docs/rocket_benchmark_v2.md"><span>rocket_benchmark_v2</span><span class="d" data-i18n="docs.rocket">criterion</span></a></li>
           </ul>
         </div>
       </div>
@@ -773,12 +770,9 @@ python scripts/baseline_eval.py quadx</code></pre>
     readme: { en: "README.md", zh: "README.zh-CN.md" },
     tasks: { en: "docs/tasks.md", zh: "docs/tasks.zh-CN.md" },
     baselines: { en: "docs/baselines.md", zh: "docs/baselines.zh-CN.md" },
-    highlights: { en: "docs/technical-highlights.md", zh: "docs/technical-highlights.zh-CN.md" },
     protocol: { en: "docs/evaluation_protocol.md", zh: "docs/evaluation_protocol.zh-CN.md" },
     method: { en: "docs/method/README.md", zh: "docs/method/README.zh-CN.md" },
-    "baseline-report": { en: "docs/baseline_test_report.md", zh: "docs/baseline_test_report.zh-CN.md" },
-    report: { en: "benchmark_report.md", zh: "benchmark_report.zh-CN.md" },
-    rocket: { en: "docs/rocket_benchmark_v2.md", zh: "docs/rocket_benchmark_v2.zh-CN.md" }
+    report: { en: "benchmark_report.md", zh: "benchmark_report.zh-CN.md" }
   };
 
   const I18N = {
@@ -820,8 +814,8 @@ python scripts/baseline_eval.py quadx</code></pre>
       "task.missile.desc": "6-DOF tail-controlled missile intercepting a kinematic manoeuvring target with a proximity fuse.",
       "task.missile.spec": "<span>obs 34</span> <span>act 3</span> <span>60 Hz</span> <span>900 steps / 15 s</span>",
       "task.satellite.cat": "Spacecraft · CMG attitude",
-      "task.satellite.desc": "Attitude control with 4 or 6 control moment gyros and a singularity-aware allocator.",
-      "task.satellite.spec": "<span>obs 26 / 32</span> <span>act 4 / 6</span> <span>40 Hz</span> <span>1200 steps / 30 s</span>",
+      "task.satellite.desc": "Attitude control with 4 control moment gyros and a singularity-aware allocator.",
+      "task.satellite.spec": "<span>obs 26</span> <span>act 4</span> <span>40 Hz</span> <span>1200 steps / 30 s</span>",
       "task.transfer.cat": "Spacecraft · low thrust",
       "task.transfer.desc": "Perigee raising with 10 mN electric propulsion; 166 steps cover roughly five revolutions.",
       "task.transfer.spec": "<span>obs 8</span> <span>act 3</span> <span>300 s / step</span> <span>166 steps</span>",
@@ -938,8 +932,8 @@ python scripts/baseline_eval.py quadx</code></pre>
       "task.missile.desc": "6 自由度尾翼控制导弹，以近炸引信拦截三维机动目标。",
       "task.missile.spec": "<span>观测 34</span> <span>动作 3</span> <span>60 Hz</span> <span>900 步 / 15 s</span>",
       "task.satellite.cat": "航天 · CMG 姿态",
-      "task.satellite.desc": "采用 4 或 6 个控制力矩陀螺的姿态控制，并带奇异性感知的分配器。",
-      "task.satellite.spec": "<span>观测 26 / 32</span> <span>动作 4 / 6</span> <span>40 Hz</span> <span>1200 步 / 30 s</span>",
+      "task.satellite.desc": "采用 4 个控制力矩陀螺的姿态控制，并带奇异性感知的分配器。",
+      "task.satellite.spec": "<span>观测 26</span> <span>动作 4</span> <span>40 Hz</span> <span>1200 步 / 30 s</span>",
       "task.transfer.cat": "航天 · 低推力",
       "task.transfer.desc": "以 10 mN 电推进抬升近地点；166 步约覆盖 5 圈轨道。",
       "task.transfer.spec": "<span>观测 8</span> <span>动作 3</span> <span>300 s / 步</span> <span>166 步</span>",

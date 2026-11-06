@@ -16,7 +16,7 @@
   host sync is `bool(done.any())`, which gates episode-boundary bookkeeping.
 
 Design claims and their verification conditions are written up in
-[technical-highlights.md](technical-highlights.md).
+[benchmark_report.md §Appendix A](../benchmark_report.md#appendix-a-infrastructure-and-reproducibility).
 
 ## Wind disturbance
 

@@ -13,7 +13,7 @@
 - 物理、接触、奖励、重置与随机数都是带掩码的张量核，未激活副本被冻结且不消耗随机数。
   每步唯一的 host 同步是 `bool(done.any())`，仅用于回合边界记账。
 
-设计主张及其验证条件见 [technical-highlights.zh-CN.md](technical-highlights.zh-CN.md)。
+设计主张及其验证条件见 [benchmark_report.zh-CN.md 附录 A](../benchmark_report.zh-CN.md#附录-a基础设施与可复验性)。
 
 ## 风扰
 

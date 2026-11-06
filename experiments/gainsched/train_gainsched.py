@@ -38,7 +38,7 @@ from algorithms.train_utils import run_training  # noqa: E402
 # ---------------------------------------------------------------- task table
 # task -> (env module path, env class name, best baseline variant or None)
 # The 'variant' is passed to build_baseline so the BEST classical method is
-# used as the scheduling base (see docs/baseline_test_report.md).
+# used as the scheduling base (see docs/baselines.md).
 TASK_TABLE = {
     "quadx": ("environments.multirotor", "QuadXWaypointsEnv", None),
     "quadx_track": ("environments.multirotor", "QuadXTrackEnv", None),

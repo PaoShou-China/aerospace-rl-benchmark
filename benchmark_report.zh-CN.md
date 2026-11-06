@@ -838,3 +838,135 @@ benchmark 的核心价值在于：
 2. **每任务配多个经典 GNC 基线**（主基线 + 结构变体）提供非学习参照系，传统方法与学习算法共享同一环境、奖励与成功判据；各控制器的实际有效性须由独立实验判定。
 3. **三类利用传统控制器的 RL 范式**——BC warm-start、residual RL、增益调度 RL——覆盖从"模仿后微调"到"动作残差"再到"参数调度"的连续谱，为比较不同机制提供统一实验框架；具体优劣不在无结果时预设。
 4. **冻结评测协议**用于保证同任务、同分布下的跨算法可比性，双维度成本报告区分样本效率与工程吞吐，物理代价指标独立于奖励补充评价学习效果；跨任务比较必须保留时域与难度边界。
+
+---
+
+## 附录 A：基础设施与可复验性
+
+面向审稿人的补充材料。本附录只写**能落到代码行、并注明复验条件**的内容。
+每条亮点按"断言 → 机制 → 证据 → 意义 → 边界"组织，最后单列"不声称什么"和"断言状态表"。
+
+### A.1 摘要
+
+与一般 RL 环境库相比，本套件的增量不在环境数量，而在六类**面向对照实验的基础设施**：
+
+1. **哈希清单化的参考基准**：上游 PyFlyt 0.29.0 任务代码以冻结副本随仓库提供；张量 plant 惯量直接解析自参考 URDF。
+2. **多执行路径**：4 个纯张量任务 + 6 个 Genesis 刚体任务；后者另有"原版 NumPy 代码不改一行"的共享场景批处理桥，可做实现级交叉校验。
+3. **训练基础设施**：warmup-cosine LR 调度、确定性评测、跨任务共享的受控超参旋钮。
+4. **结果溯源**：`run.json` 记录任务配置、真实转场数、物理步调用数、设备端完成指标。
+5. **经典基线库**：10 个任务各配一个解析 GNC 基线，同一环境/奖励/判据下给出非学习参照，并保留诚实失败模式作为 RL 攻击面。
+
+### A.2 亮点一：可审计的参考基准
+
+参考实现以"冻结副本 + 哈希清单 + 惯量解析"形式存在；审计原语可手动执行，但目前不是运行时门禁。
+
+- 原版代码导入仓库内冻结副本 `environments/common/original_pyflyt`
+  （[original_backend.py:455-468](environments/common/original_backend.py#L455-L468)）。
+- `verify_installed_reference()` 校验已安装的 `PyFlyt==0.29.0` 版本与资产 SHA-256
+  （[consistency.py:26-44](environments/common/consistency.py#L26-L44)）。
+- `contract()` 对 `environments/common/assets/reference_*` 做哈希并生成 `plant_id`
+  （[consistency.py:97-127](environments/common/consistency.py#L97-L127)）。
+- 惯量解析自参考 URDF，非手写常数
+  （[consistency.py:63-95](environments/common/consistency.py#L63-L95)）。
+
+**边界**：两个校验函数未被训练/评测入口调用；哈希一致不等于物理一致
+（[original_backend.py:1-5](environments/common/original_backend.py#L1-L5)）。
+
+### A.3 亮点二：可交叉校验的多执行路径
+
+三种执行方式：纯张量（无引擎）、张量化 plant（Genesis 刚体）、原版 NumPy 桥接。
+
+1. **纯张量路径**（satellite / transfer / docking / rendezvous）：RK4 / 辛 Euler 直接在 env 内，状态/RNG/统计全在设备上；每步是带掩码张量核，未激活副本不消耗随机数。
+2. **张量 plant 路径**（quadx / quadx_track / fixedwing / quadplane / rocket / missile）：`TensorPlant` 统一承载几何/作动/物理/接触/reset
+   （[plant.py:1-9](environments/common/plant.py#L1-L9)）；`TensorRandom` 为每副本维护独立计数器流，分布兼容但非 NumPy 位流兼容
+   （[plant.py:60-72](environments/common/plant.py#L60-L72)）。
+3. **原版代码桥接**（quadx / fixedwing / rocket）：`OriginalTaskBatch` 用一个 Genesis scene 托管 N 副本，Python 侧仍是未修改的 PyFlyt 对象
+   （[original_batch.py:1-7](environments/common/original_batch.py#L1-L7)）。
+
+**边界**：原版 NumPy 桥接正确性优先、跑在 host，不是吞吐最优路径。
+
+### A.4 亮点三：风扰是统一 Plant 钩子
+
+5 个大气任务共享风扰路径——气动力统一用空速 `v_air = v - wind` 评估；quadx/fixedwing/quadplane 训练入口硬编码 30% Dryden 阵风，rocket 固定 `dryden=0.0`，missile 静风。静风与发表基准逐位一致。
+
+- `TensorPlant` 持有 `wind`，`_air_velocity` 减风后旋到体轴
+  （[plant.py](environments/common/plant.py)）。
+- 风生成走 `environments/common/disturbances.py` 的 `WindDisturbance`。
+- `eval.py` 从 `results/<task>/config.json` 恢复训练 `env_kwargs`，带风训练的策略在同风配置下评测。
+
+### A.5 亮点四：训练基础设施
+
+- **warmup-cosine LR 调度**内置在 PPO 侧
+  （[train_utils.py:27-36](algorithms/train_utils.py#L27-L36)）。
+- **受控旋钮**：`lr_sigma_coupling`、`sigma_pin`、`freeze_obs_norm`，均 opt-in 且互斥检查
+  （[train_utils.py:551-566](algorithms/train_utils.py#L551-L566)）。
+
+### A.6 亮点五：结果溯源
+
+- `run.json` 记录任务配置、迭代数、transitions、wall time、逐副本完成指标、`physics_step_calls`、数值不等价声明
+  （[train_utils.py:750-801](algorithms/train_utils.py#L750-L801)）。
+- `config.json` 深拷贝后交给 runner，防原地修改
+  （[train_utils.py:318-352](algorithms/train_utils.py#L318-L352)）。
+- `eval.py` 用冻结确定性策略（均值动作），成功/回报在设备端累计写入 `eval.json`
+  （[eval.py](scripts/eval.py)）。
+
+### A.7 亮点六：每任务一个非学习基线
+
+10 个任务各有解析经典 GNC 默认基线（+结构变体），共享同一环境/奖励/判据；部分任务 100%，部分保留有取证失败模式。
+
+- 所有基线在 [baselines.py](algorithms/baselines/baselines.py)，工厂 `build_baseline(vehicle, env)`；只读 `'policy'` 观测组。
+- 多种子战绩与变体成功率见 [baselines.zh-CN.md](docs/baselines.zh-CN.md)。
+- 基线既非稻草人也非天花板：missile 77.3%、quadx_track 85.9%、fixedwing 87.0% 留出可攻击空间。
+
+### A.8 不声称什么
+
+1. 不声称与 PyFlyt/Bullet 逐位物理等价（Genesis 引擎数值不同）。
+2. 不声称 NumPy 随机位流一致（`TensorRandom` 仅分布兼容）。
+3. 不声称基线最优（手工设计，非上界）。
+4. 原版代码桥接不是高性能路径。
+5. 单 seed 结果不构成统计结论。
+
+### A.9 断言状态表
+
+| 主张 | 状态 | 证据/复验 |
+|---|---|---|
+| PyFlyt 0.29.0 源码/资产可哈希校验 | 已实现；未自动接线 | `python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"` |
+| `plant_id` 受控对象证书 | 已实现；未被入口调用 | `contract()` |
+| 张量 plant 惯量取自参考 URDF | 已接线 | [plant.py:441-462](environments/common/plant.py#L441-L462) |
+| 未激活副本不消耗 RNG | 设计保证 + 代码路径 | [plant.py:1-9](environments/common/plant.py#L1-L9) |
+| 评测使用训练记录的配置 | 已保证 | [eval.py](scripts/eval.py) |
+| PPO warmup-cosine LR | 已接线（opt-in） | [train_utils.py:27-36](algorithms/train_utils.py#L27-L36) |
+| 每任务一个经典基线 | 已实现 + 实测 | `python scripts/baseline_eval.py <task>` |
+| 与上游物理逐位等价 | 不声称 | 见 A.8 第 1 条 |
+
+### A.10 复验清单
+
+```bash
+# 1) 基准哈希校验（需安装 PyFlyt 0.29.0）
+python -c "from environments.common.consistency import verify_installed_reference as v; print(v())"
+
+# 2) 确定性评测（恢复训练 env_kwargs）
+python scripts/eval.py quadx --num-envs 16 --max-steps 400
+
+# 3) 查看训练记录
+python -c "import json;r=json.load(open('results/smoke/quadx_ppo/run.json'));print(r['task']);print(r['transitions'], r['physics_step_calls'])"
+
+# 4) 风扰钩子
+grep -n "wind" environments/common/plant.py environments/common/disturbances.py | head -20
+
+# 5) 经典基线
+python scripts/baseline_eval.py quadx
+```
+
+### A.11 代码索引
+
+| 能力 | 文件 |
+|---|---|
+| 哈希校验、URDF 惯量解析、`plant_id` | [environments/common/consistency.py](environments/common/consistency.py) |
+| 纯张量 plant、逐副本随机流 | [environments/common/plant.py](environments/common/plant.py) |
+| Genesis 兼容后端 | [environments/common/original_backend.py](environments/common/original_backend.py) |
+| 原版任务共享场景批处理 | [environments/common/original_batch.py](environments/common/original_batch.py) |
+| 训练/记录管线、LR 调度 | [algorithms/train_utils.py](algorithms/train_utils.py) |
+| 10 任务经典基线库 | [algorithms/baselines/baselines.py](algorithms/baselines/baselines.py) |
+| 基线统一评测入口 | [scripts/baseline_eval.py](scripts/baseline_eval.py) |
+| 确定性评测 | [scripts/eval.py](scripts/eval.py) |

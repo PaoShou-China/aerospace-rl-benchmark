@@ -13,7 +13,7 @@
 | Quadplane-VTOL | `QuadplaneWaypointsEnv` | URDF 混合构型（240 Hz）：4 个旋翼电机、固定翼舵面、前向推进器 | 47 | 8 | 40 Hz | 1200 步 · 30 s | 4/4 航点 < 15 m |
 | Rocket-Landing | `RocketLandingEnv` | URDF F9 级助推器（240 Hz）+ 栅格舵、万向节 | 30 | 7 | 40 Hz | 1200 步 · 30 s | 平台接触，\|v\| < 0.02 m/s，\|ω\| < 0.02 rad/s，倾角 < 0.1 rad 并持续 2 s（81 个采样） |
 | Missile-Intercept | `MissileInterceptEnv` | URDF 150 kg 导弹（240 Hz）+ 尾舵气动、助推-滑翔发动机、运动学 3-DOF 目标 | 34 | 3 | 60 Hz | 900 步 · 15 s | 脱靶距离 < 15 m（近炸引信，任意物理子步） |
-| Satellite attitude (CMG) | `SatelliteAttitudeEnv` | 刚体 + 4/6-CMG 群，RK4 2.5 ms | 26 / 32 | 4 / 6 | 40 Hz | 1200 步 · 30 s | 姿态误差 < 0.05 rad 且 \|ω\| < 0.02 rad/s；\|ω\| > 10 rad/s 判失败 |
+| Satellite attitude (CMG) | `SatelliteAttitudeEnv` | 刚体 + 4-CMG 群，RK4 2.5 ms | 26 | 4 | 40 Hz | 1200 步 · 30 s | 姿态误差 < 0.05 rad 且 \|ω\| < 0.02 rad/s；\|ω\| > 10 rad/s 判失败 |
 | Low-thrust transfer | `LowThrustTransferEnv` | 二体引力 + 三轴 10 mN 电推进，RK4 10 s | 8 | 3 | 300 s/步 | 166 步 ≈ 5 圈 | 极限处终端轨道根数返回 R > 0 |
 | Docking | `SpaceDockingEnv` | Clohessy–Wiltshire–Hill，辛 Euler 1 s | 6 | 3 | 1 s/步 | 500 步 ≈ 8.3 min | 距离 < 1 m，速度 < 0.1 m/s |
 | Rendezvous | `SpaceRendezvousEnv` | Clohessy–Wiltshire–Hill，辛 Euler 1 s | 6 | 3 | 1 s/步 | 1000 步 ≈ 16.7 min | 距离 < 10 m，速度 < 0.5 m/s，遵守 keep-out |

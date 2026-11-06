@@ -28,8 +28,7 @@ python scripts/baseline_eval.py quadx            # 评测经典基线
 ```
 
 六个 Genesis 任务在 GPU 后端上需要 CUDA 版 PyTorch；四个张量动力学任务与全部经典基线也可在纯 CPU 版 PyTorch 上运行。精确版本、环境契约与可选的 Dryden 风扰接口见
-[environment-contract.zh-CN.md](docs/environment-contract.zh-CN.md)；完整训练入口、运行产物与目录结构见
-[repository-layout.zh-CN.md](docs/repository-layout.zh-CN.md)。
+[environment-contract.zh-CN.md](docs/environment-contract.zh-CN.md)；完整训练入口、运行产物与目录结构见下方[仓库结构](#仓库结构)一节。
 
 ## CUDA 加速
 
@@ -84,7 +83,7 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 
 | 任务 | 观测维度 | 动作维度 | 策略频率 / 步长 | 成功判据摘要 |
 |---|---:|---:|---|---|
-| Satellite attitude (CMG) | 26 或 32 | 4 或 6 | 40 Hz | 姿态误差 < 0.05 rad，\|ω\| < 0.02 rad/s |
+| Satellite attitude (CMG) | 26 | 4 | 40 Hz | 姿态误差 < 0.05 rad，\|ω\| < 0.02 rad/s |
 | Low-thrust transfer | 8 | 3 | 300 s/步 | 末端轨道根数回报 |
 | Docking | 6 | 3 | 1 s/步 | 距离 < 1 m，速度 < 0.1 m/s |
 | Rendezvous | 6 | 3 | 1 s/步 | 距离 < 10 m，速度 < 0.5 m/s，遵守禁飞球 |
@@ -96,22 +95,83 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 基线成功率及其评测条件见
 [baselines.zh-CN.md](docs/baselines.zh-CN.md)。数值按任务、按控制器分别报告，不构成跨任务排名。火箭 v1 数值为瞬时成功率，与 v2 的稳定停留判据不可比。
 
+## 仓库结构
+
+```text
+environments/               # 任务定义
+├── multirotor/             # QuadX-Waypoints + QuadX-Track
+├── fixedwing/              # Fixedwing-Waypoints
+├── vtol/                   # Quadplane-VTOL
+├── rocket/                 # Rocket-Landing
+├── missile/                # Missile-Intercept
+├── satellite/              # attitude_control, orbit_transfer, rendezvous_docking
+└── common/                 # plant, dynamics, aero, contacts, disturbances
+algorithms/                 # 动作生成
+├── train_utils.py          # 各入口共用的 run_training()
+├── ppo/                    # rsl-rl PPO 配置构造器
+├── warmstart/              # 从基线做行为克隆 warm start
+├── residual/               # residual-RL 动作包装
+└── baselines/              # 经典 GNC 控制器，每任务一个
+experiments/                # controller-prior 研究（BC、residual、增益调度）
+scripts/                    # 通用 train / eval / baseline / sweep / summarize 工具
+docs/                       # 方法级文档、协议
+showcase/                   # GitHub Pages 落地页用的回放视频
+tests/                      # 单元、环境契约与基准测试
+```
+
+任务级深度 harness 与各自环境同目录（如
+`environments/missile/eval_missile_scenarios.py`、
+`environments/rocket/rocket_pdg_test.py`、
+`environments/satellite/rendezvous_docking/eval_docking_lqr.py`）。
+
+### 训练入口
+
+训练入口自包含：所有参数硬编码在文件中，无 CLI 参数。修改常量后运行：
+
+```bash
+python environments/multirotor/train_quadx.py
+python environments/multirotor/train_quadx_track.py
+python environments/fixedwing/train_fixedwing.py
+python environments/vtol/train_quadplane.py
+python environments/rocket/train_rocket.py
+python environments/missile/train_missile.py
+python environments/satellite/attitude_control/train_satellite.py
+python environments/satellite/orbit_transfer/train_transfer.py
+python environments/satellite/rendezvous_docking/train_docking.py
+python environments/satellite/rendezvous_docking/train_rendezvous.py
+```
+
+评测 checkpoint 或经典基线：
+
+```bash
+python scripts/eval.py quadx                # 恢复 results/<task>/config.json
+python scripts/baseline_eval.py quadx       # 任意已注册任务
+python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg
+python scripts/aggregate_5seed.py           # 多种子协议汇总
+```
+
+旧版 CLI 聚合器仍可用于快速扫描
+（`python scripts/train.py quadx`；注册 quadx、fixedwing、rocket、missile、
+satellite、transfer、docking、rendezvous —— `quadx_track` 与 `quadplane`
+使用上面的任务级入口）。
+
+### 运行产物
+
+每次运行写入 `results/<task>/`：`run.json`（配置、真实转场数、物理步计数、
+设备端完成指标）、`config.json`、`checkpoint.pt`，评测后还有 `eval.json`。
+基线产物为 `baseline.json`（默认控制器）与
+`baselines/<controller>_seed7.json`（任务内消融）。
+
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [tasks.zh-CN.md](docs/tasks.zh-CN.md) | 任务表、动力学、观测与动作布局 |
-| [baselines.zh-CN.md](docs/baselines.zh-CN.md) | 经典控制器结果与可比性说明 |
+| [baselines.zh-CN.md](docs/baselines.zh-CN.md) | 经典控制器结果（含多种子数据与复现命令） |
 | [method/README.zh-CN.md](docs/method/README.zh-CN.md) | 各任务、各算法的论文式方法文档（符号、方程、常量） |
 | [environment-contract.zh-CN.md](docs/environment-contract.zh-CN.md) | 张量契约、安装、风扰 |
 | [evaluation_protocol.zh-CN.md](docs/evaluation_protocol.zh-CN.md) | 评测协议与报告规则 |
-| [baseline_test_report.zh-CN.md](docs/baseline_test_report.zh-CN.md) | 多种子基线复分析 |
-| [technical-highlights.zh-CN.md](docs/technical-highlights.zh-CN.md) | 面向评审的基础设施说明 |
-| [repository-layout.zh-CN.md](docs/repository-layout.zh-CN.md) | 目录结构、训练入口、运行产物 |
-| [roadmap.zh-CN.md](docs/roadmap.zh-CN.md) | 计划任务与已有基础设施 |
-| [references.zh-CN.md](docs/references.zh-CN.md) | 文献与上游项目 |
-| [benchmark_report.zh-CN.md](benchmark_report.zh-CN.md) | 基准技术报告 |
-| [rocket_benchmark_v2.zh-CN.md](docs/rocket_benchmark_v2.zh-CN.md) | 火箭 v2 判据与复现说明 |
+| [benchmark_report.zh-CN.md](benchmark_report.zh-CN.md) | 基准技术报告 + 基础设施/可复现性附录 + 参考文献 |
 
 ## 致谢
 
@@ -132,4 +192,4 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 [gym-satellite-trajectory](https://github.com/zampanteymedio/gym-satellite-trajectory) ·
 SpaceGym（Supreeth & Mehta，CVPR 2026 Workshop on AI4Space）
 
-任务定义与默认参数沿用 [references.zh-CN.md](docs/references.zh-CN.md) 列出的公开工作；相应模型与基准的上游许可及引用要求适用。
+任务定义与默认参数沿用基准技术报告的[参考文献](benchmark_report.zh-CN.md#8-参考文献)一节列出的公开工作；相应模型与基准的上游许可及引用要求适用。

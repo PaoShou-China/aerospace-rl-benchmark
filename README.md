@@ -39,7 +39,7 @@ on CPU-only PyTorch. Exact versions, the environment contract and the optional
 Dryden wind interface are in
 [environment-contract.md](docs/environment-contract.md); all training
 entries, run artifacts and the repository tree are in
-[repository-layout.md](docs/repository-layout.md).
+[Repository layout](#repository-layout) below.
 
 ## CUDA acceleration
 
@@ -124,7 +124,7 @@ graph replays (`algorithms/performance.py`):
 
 | Task | Obs. dim. | Act. dim. | Policy rate / step | Success summary |
 |---|---:|---:|---|---|
-| Satellite attitude (CMG) | 26 or 32 | 4 or 6 | 40 Hz | attitude < 0.05 rad, \|ω\| < 0.02 rad/s |
+| Satellite attitude (CMG) | 26 | 4 | 40 Hz | attitude < 0.05 rad, \|ω\| < 0.02 rad/s |
 | Low-thrust transfer | 8 | 3 | 300 s/step | terminal orbital-element return |
 | Docking | 6 | 3 | 1 s/step | range < 1 m, speed < 0.1 m/s |
 | Rendezvous | 6 | 3 | 1 s/step | range < 10 m, speed < 0.5 m/s, keep-out |
@@ -138,22 +138,85 @@ Baseline success rates and their evaluation conditions are in
 controller; they are not a cross-task ranking. The rocket v1 figures are
 instantaneous rates and are not comparable to the v2 settled criterion.
 
+## Repository layout
+
+```text
+environments/               # everything that defines a task
+├── multirotor/             # QuadX-Waypoints + QuadX-Track
+├── fixedwing/              # Fixedwing-Waypoints
+├── vtol/                   # Quadplane-VTOL
+├── rocket/                 # Rocket-Landing
+├── missile/                # Missile-Intercept
+├── satellite/              # attitude_control, orbit_transfer, rendezvous_docking
+└── common/                 # plant, dynamics, aero, contacts, disturbances
+algorithms/                 # everything that produces actions
+├── train_utils.py          # shared run_training() used by every entry
+├── ppo/                    # rsl-rl PPO config builder
+├── warmstart/              # behavior-cloning warm start from baselines
+├── residual/               # residual-RL action wrapper
+└── baselines/              # classical GNC controllers, one per task
+experiments/                # controller-prior studies (BC, residual, gain scheduling)
+scripts/                    # generic train / eval / baseline / sweep / summarize tools
+docs/                       # method-level write-ups, protocol
+showcase/                   # replay clips used by the GitHub Pages landing page
+tests/                      # unit, env-contract and benchmark tests
+```
+
+Per-task deep-dive harnesses live next to their environments (e.g.
+`environments/missile/eval_missile_scenarios.py`,
+`environments/rocket/rocket_pdg_test.py`,
+`environments/satellite/rendezvous_docking/eval_docking_lqr.py`).
+
+### Training entries
+
+Training entries are self-contained: every parameter is hard-coded in the file,
+no CLI arguments. Edit the constants and run:
+
+```bash
+python environments/multirotor/train_quadx.py
+python environments/multirotor/train_quadx_track.py
+python environments/fixedwing/train_fixedwing.py
+python environments/vtol/train_quadplane.py
+python environments/rocket/train_rocket.py
+python environments/missile/train_missile.py
+python environments/satellite/attitude_control/train_satellite.py
+python environments/satellite/orbit_transfer/train_transfer.py
+python environments/satellite/rendezvous_docking/train_docking.py
+python environments/satellite/rendezvous_docking/train_rendezvous.py
+```
+
+Evaluate a checkpoint, or the classical baseline:
+
+```bash
+python scripts/eval.py quadx                # restores results/<task>/config.json
+python scripts/baseline_eval.py quadx       # any registered task
+python scripts/baseline_eval.py satellite --baseline quat_pd_mp_pinv_cmg
+python scripts/aggregate_5seed.py           # multi-seed protocol summary
+```
+
+The legacy CLI aggregator still works for quick sweeps
+(`python scripts/train.py quadx`; registers quadx, fixedwing, rocket, missile,
+satellite, transfer, docking, rendezvous — `quadx_track` and `quadplane` use
+their per-task entries above).
+
+### Run artifacts
+
+Each run writes `results/<task>/`: `run.json` (config, real transition counts,
+physical-step counts, device-side completion metrics), `config.json`,
+`checkpoint.pt`, plus `eval.json` when evaluated. Baseline artifacts are
+`baseline.json` (default controller) and `baselines/<controller>_seed7.json`
+(within-task ablations).
+
 ## Documentation
 
 | Document | Contents |
 |---|---|
 | [tasks.md](docs/tasks.md) | task table, dynamics, observation and action layouts |
-| [baselines.md](docs/baselines.md) | classical controller results and comparability notes |
+| [baselines.md](docs/baselines.md) | classical controller results (incl. multi-seed data and reproduction commands) |
 | [method/README.md](docs/method/README.md) | per-task and per-algorithm method docs (notation, equations, constants) |
 | [environment-contract.md](docs/environment-contract.md) | tensor contract, installation, wind disturbance |
 | [evaluation_protocol.md](docs/evaluation_protocol.md) | evaluation protocol and reporting rules |
-| [baseline_test_report.md](docs/baseline_test_report.md) | multi-seed baseline reanalysis |
-| [technical-highlights.md](docs/technical-highlights.md) | reviewer-oriented infrastructure claims |
-| [repository-layout.md](docs/repository-layout.md) | repository tree, training entries, run artifacts |
-| [roadmap.md](docs/roadmap.md) | planned tasks and landed infrastructure |
-| [references.md](docs/references.md) | publications and upstream projects |
-| [benchmark_report.md](benchmark_report.md) | Benchmark technical report |
-| [rocket_benchmark_v2.md](docs/rocket_benchmark_v2.md) | Rocket v2 criterion and reproduction notes |
+| [benchmark_report.md](benchmark_report.md) | benchmark technical report + infrastructure/reproducibility appendix + references |
 
 ## Acknowledgments
 
@@ -174,6 +237,7 @@ We thank the following teachers and fellow students for their support and help.
 [gym-satellite-trajectory](https://github.com/zampanteymedio/gym-satellite-trajectory) ·
 SpaceGym (Supreeth & Mehta, CVPR 2026 Workshop on AI4Space)
 
-Task definitions and defaults follow the published work listed in
-[references.md](docs/references.md). Upstream licenses and citation
-requirements apply to the corresponding models and benchmarks.
+Task definitions and defaults follow the published work listed in the
+[References](benchmark_report.md#8-references) section of the benchmark
+report. Upstream licenses and citation requirements apply to the
+corresponding models and benchmarks.

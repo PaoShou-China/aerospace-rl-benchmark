@@ -13,7 +13,7 @@ Last updated: 2026-11-01 (dataset size budget added; full rerun in progress).
 * Pre-existing uncommitted work (BEFORE this task): 22 modified files and 8
   untracked files, including `algorithms/baselines/variants_*.py`,
   `environments/common/residual.py` (an env-internal residual mixin, unused by
-  this study), `docs/baseline_test_report.md`, `scripts/baseline_suite.py`.
+  this study), `docs/baselines.md`, `scripts/baseline_suite.py`.
   All of it was preserved; this study only adds files and the opt-in hooks
   listed below.
 * New uncommitted work from this task is listed in §9.
@@ -49,7 +49,7 @@ Last updated: 2026-11-01 (dataset size budget added; full rerun in progress).
     experiment does not depend on those historical entries.
   * `docs/method/README.md` still points the quadplane controller doc at a
     "not yet validated" baseline; this study does not use quadplane.
-  * `docs/baseline_test_report.md` and the extra `variants_*.py` modules are
+  * `docs/baselines.md` and the extra `variants_*.py` modules are
     untracked work present before this task; the variants used here
     (`quat_pd_mp_pinv_cmg`, etc.) were checked in the current worktree.
   * README statements about old rocket "ever-success" numbers are explicitly

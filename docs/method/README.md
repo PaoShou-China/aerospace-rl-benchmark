@@ -90,4 +90,4 @@ reachable through `--baseline`).
 The two "default arm, selectable by key" rows are duplicates of 3.1 under the
 CLI name: they are not extra controllers. Per-arm success rates, Wilson
 intervals, and failure-mode tables for all 30 distinct controllers are in
-[baseline_test_report.md](../baseline_test_report.md).
+[baselines.md](../baselines.md).

@@ -86,4 +86,4 @@ CLI 可选的替代控制律（`scripts/baseline_eval.py --baseline <key>`）。
 
 两行“默认臂，可通过键选择”是 3.1 在 CLI 名称下的重复项：它们不是额外控制器。
 全部 30 个不同控制器的逐臂成功率、Wilson 区间与失败模式表见
-[baseline_test_report.zh-CN.md](../baseline_test_report.zh-CN.md)。
+[baselines.zh-CN.md](../baselines.zh-CN.md)。
