@@ -37,8 +37,9 @@ from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
 from environments.common.domain_randomization import (
     apply_static_perturbation,
-    apply_domain_randomization,
+    apply_staged_domain_randomization,
     resolve_domain_randomize,
+    stage_domain_randomization,
 )
 
 NUM_TARGETS = 4
@@ -58,6 +59,13 @@ CAPTURE_RADIUS = 0.2
 WAYPOINT_MIN_RADIUS = 1.5
 WAYPOINT_MAX_RADIUS = 4.8
 WAYPOINT_MIN_HEIGHT = 0.4
+EPISODE_KEYS = (
+    "success_rate",
+    "waypoints_reached",
+    "crash_rate",
+    "out_of_bounds_rate",
+    "timeout_rate",
+)
 
 
 class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
@@ -183,6 +191,10 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
             (num_envs,), torch.inf, device=self.device, dtype=COMPUTE_DTYPE
         )
         self.new_distance = torch.full_like(self.old_distance, torch.inf)
+        # per-step accumulators (persistent so a step segment updates them in place)
+        self._old_potential = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
+        self._crash = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        self._reach_count = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
         self._observation = None
         self.obs_buf = None
         self._slots_arange = None
@@ -274,44 +286,82 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
         inner step, detect collisions, waypoint captures and bounds violations,
         accumulate the telescoping potential-based reward, and return
         (observations, reward, terminated, truncated, extras).
+
+        The tensor work is split at the host decisions (pause-restore and
+        reset) into segments that update persistent buffers in place, so an
+        execution backend may replay each segment as one CUDA graph.
         """
         if actions.device != torch.device(self.device):
             raise ValueError(
                 "Actions must already be on env.device; implicit host/device copies are disabled"
             )
         actions = self._residual_input(actions)
+        self._step_begin(actions)
+        for i in range(self.inner_steps):
+            # Constant for the whole control step: one sync here lets every
+            # substep skip the no-op pause-restore write-back. Every replica is
+            # active when a step starts (each step ends by resetting all done
+            # replicas), so the first control step needs no sync.
+            restore = i > 0 and not bool((~(self.terminated | self.truncated)).all())
+            self._control_step(restore)
+        term_out, trunc_out, done, time_outs = self._step_end()
+        # Fresh tensors per step, as before: callers may keep them.
+        term_out, trunc_out = term_out.clone(), trunc_out.clone()
+        self.reset_buf = done.clone()
+        self.extras["time_outs"] = time_outs.clone()
+        self.extras["terminal_observations"] = self._terminal_obs_td
+        # single host sync per agent step (done == reset_buf; the same bool
+        # gates both the episode extras and the reset path)
+        done_any = bool(self.reset_buf.any())
+        if done_any:
+            self.extras["episode"] = dict(
+                zip(EPISODE_KEYS, (x.clone() for x in self._episode_stats(self.reset_buf)))
+            )
+            # reset_idx on an empty mask is a no-op for every buffer and
+            # plant.warmup early-exits on empty masks (see plant.warmup), so
+            # gating it with the already-synced done_any is purely a cost guard.
+            self.reset_idx(self.reset_buf, nonempty=True)
+        else:
+            self.extras.pop("episode", None)
+        self._update_observation()
+        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+
+    def _step_begin(self, actions):
+        """Map the action onto the plant and open the step's accumulators."""
         physical = self._scale_actions(actions)
         self.action.copy_(physical)
         if self._wind is not None:
             self.plant.wind.copy_(self._wind.step())
-        old_potential = self._potential()
+        self._old_potential.copy_(self._potential())
         self.count += 1
-        crash = torch.zeros_like(self.terminated)
-        reach_count = torch.zeros(self.num_envs, device=self.device, dtype=COMPUTE_DTYPE)
-        for _ in range(self.inner_steps):
-            active = ~(self.terminated | self.truncated)
-            # Constant for the whole control step: one sync here lets every
-            # substep skip the no-op pause-restore write-back.
-            restore = not bool(active.all())
-            self.plant.clear_contacts()
-            self.plant.controller(physical, active)
-            for _ in range(self.plant.physics_per_control):
-                self.plant.physics_step(physical, active, restore=restore)
-            p, _, v, wb, vb = self._observe(active)
-            collision = self.plant.ground_contact
-            bounds = p.norm(dim=-1) > self.bounds_radius
-            reached = self.new_distance < CAPTURE_RADIUS
-            self.target_index += (reached & active).to(torch.long)
-            complete = self.target_index >= NUM_TARGETS
-            term = collision | bounds
-            trunc = complete
-            crash |= term & active
-            reach_count += (reached & active).to(COMPUTE_DTYPE)
-            self.terminated |= term & active
-            self.truncated |= trunc & active
-            self.collision |= collision & active
-            self.out_of_bounds |= bounds & active
-            self.complete |= complete & active
+        self._crash.zero_()
+        self._reach_count.zero_()
+
+    def _control_step(self, restore):
+        """One control step: mixer, physics substeps, observation, events."""
+        active = ~(self.terminated | self.truncated)
+        self.plant.clear_contacts()
+        self.plant.controller(self.action, active)
+        for _ in range(self.plant.physics_per_control):
+            self.plant.physics_step(self.action, active, restore=restore)
+        p, _, v, wb, vb = self._observe(active)
+        collision = self.plant.ground_contact
+        bounds = p.norm(dim=-1) > self.bounds_radius
+        reached = self.new_distance < CAPTURE_RADIUS
+        self.target_index += (reached & active).to(torch.long)
+        complete = self.target_index >= NUM_TARGETS
+        term = collision | bounds
+        trunc = complete
+        self._crash |= term & active
+        self._reach_count += (reached & active).to(COMPUTE_DTYPE)
+        self.terminated |= term & active
+        self.truncated |= trunc & active
+        self.collision |= collision & active
+        self.out_of_bounds |= bounds & active
+        self.complete |= complete & active
+
+    def _step_end(self):
+        """Time limit, reward and episode bookkeeping; returns step outputs."""
         # the time limit is applied AFTER the full control step (all physics
         # substeps) so the final control step is not cut short; accidents and
         # waypoint completion still terminate inside the substep loop above
@@ -320,60 +370,50 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
         # potential-based telescoping reward: progress + reach bonus - crash penalty
         self.reward.copy_(
             self._potential()
-            - old_potential
-            + REACH_BONUS * reach_count
-            - CRASH_PENALTY * crash.to(COMPUTE_DTYPE)
+            - self._old_potential
+            + REACH_BONUS * self._reach_count
+            - CRASH_PENALTY * self._crash.to(COMPUTE_DTYPE)
         )
-
-        self.reset_buf = self.terminated | self.truncated
+        done = self.terminated | self.truncated
         # update buffers
         self.rew_buf.copy_(self.reward)
         self.episode_length_buf += 1
         self.returns += self.reward
-        self.completed_returns += torch.where(self.reset_buf, self.returns, 0.0)
-        self.completed_episodes += self.reset_buf.to(torch.long)
-        self.completed_successes += (self.reset_buf & self.complete).to(torch.long)
-        done = self.reset_buf
+        self.completed_returns += torch.where(done, self.returns, 0.0)
+        self.completed_episodes += done.to(torch.long)
+        self.completed_successes += (done & self.complete).to(torch.long)
         # snapshot for the step return: reset_idx below clears terminated/truncated
         term_out, trunc_out = self.terminated.clone(), self.truncated.clone()
-
         # 'complete' marks eval success (all waypoints reached) -- it is NOT an
         # MDP termination in the bootstrap sense; reaching the last waypoint
         # ends the episode as a truncation so off-policy critics bootstrap from
         # it, only true terminations (crash / out-of-bounds) cut the bootstrap.
-        self.extras["time_outs"] = self.truncated & ~self.terminated & ~self.complete
+        time_outs = self.truncated & ~self.terminated & ~self.complete
         self._cache_terminal_observations()
-        # single host sync per agent step (done == reset_buf; the same bool
-        # gates both the episode extras and the reset path)
-        done_any = bool(done.any())
-        if done_any:
-            n = done.sum().clamp_min(1)
-            crashes = done & self.collision
-            oob = done & self.out_of_bounds
-            timeouts = done & self.truncated & ~self.complete
-            self.extras["episode"] = {
-                "success_rate": (done & self.complete).to(COMPUTE_DTYPE).sum() / n,
-                "waypoints_reached": self.target_index[done].to(COMPUTE_DTYPE).mean(),
-                "crash_rate": crashes.to(COMPUTE_DTYPE).sum() / n,
-                "out_of_bounds_rate": oob.to(COMPUTE_DTYPE).sum() / n,
-                "timeout_rate": timeouts.to(COMPUTE_DTYPE).sum() / n,
-            }
-            self.completed_metrics["waypoints_reached"] += (
-                self.target_index[done].to(COMPUTE_DTYPE).sum()
-            )
-            self.completed_metrics["crashes"] += crashes.to(COMPUTE_DTYPE).sum()
-            self.completed_metrics["out_of_bounds"] += oob.to(COMPUTE_DTYPE).sum()
-            self.completed_metrics["timeouts"] += timeouts.to(COMPUTE_DTYPE).sum()
-        else:
-            self.extras.pop("episode", None)
+        return term_out, trunc_out, done, time_outs
 
-        # reset_idx on an empty mask is a no-op for every buffer and plant.warmup
-        # early-exits on empty masks (see plant.warmup), so gating it with the
-        # already-synced done_any is purely a cost guard, not a correctness one.
-        if done_any:
-            self.reset_idx(self.reset_buf)
-        self._update_observation()
-        return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
+    def _episode_stats(self, done):
+        """Episode summary rates over the finishing replicas (``done`` non-empty).
+
+        Masked sums equal the boolean-indexed sums exactly (integer counts in
+        float32), without the data-dependent shapes of indexing.
+        """
+        n = done.sum().clamp_min(1)
+        crashes = done & self.collision
+        oob = done & self.out_of_bounds
+        timeouts = done & self.truncated & ~self.complete
+        reached = torch.where(done, self.target_index, 0).to(COMPUTE_DTYPE).sum()
+        self.completed_metrics["waypoints_reached"] += reached
+        self.completed_metrics["crashes"] += crashes.to(COMPUTE_DTYPE).sum()
+        self.completed_metrics["out_of_bounds"] += oob.to(COMPUTE_DTYPE).sum()
+        self.completed_metrics["timeouts"] += timeouts.to(COMPUTE_DTYPE).sum()
+        return (
+            (done & self.complete).to(COMPUTE_DTYPE).sum() / n,
+            reached / n,
+            crashes.to(COMPUTE_DTYPE).sum() / n,
+            oob.to(COMPUTE_DTYPE).sum() / n,
+            timeouts.to(COMPUTE_DTYPE).sum() / n,
+        )
 
     def get_observations(self):
         """Return the current observation packed in a TensorDict under 'policy'."""
@@ -426,15 +466,25 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
         else:
             raise KeyError(name)
 
-    def reset_idx(self, envs_idx):
-        """Reset selected replicas; envs_idx is a device-resident boolean mask."""
-        mask = envs_idx
+    def reset_idx(self, envs_idx, nonempty=None):
+        """Reset selected replicas; envs_idx is a device-resident boolean mask.
+
+        ``nonempty`` (optional) states whether the mask selects any replica,
+        sparing the reset warmup its host read when the caller already knows.
+        """
         # domain randomization: resample plant params for the resetting replicas
+        # (host-side draw here; applied to the masked replicas on device below)
         if self._domain_randomize:
             self._dr_counter += 1
-            apply_domain_randomization(
-                self, self._domain_randomize, self._seed, self._dr_counter, mask
-            )
+            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
+        if nonempty is None:
+            nonempty = bool(envs_idx.any())
+        self._reset_replicas(envs_idx, nonempty)
+
+    def _reset_replicas(self, mask, nonempty):
+        """Device half of reset_idx (graph-capturable for a fixed ``nonempty``)."""
+        if self._domain_randomize:
+            apply_staged_domain_randomization(self, mask)
         p, q, v, w = self.plant.state()
         spawn = torch.zeros_like(p)
         spawn[:, 2] = 1.0
@@ -501,7 +551,7 @@ class QuadXWaypointsEnv(BaseEnv, ResidualActionMixin):
         self.target_index.masked_fill_(mask, 0)
         self.old_distance.masked_fill_(mask, torch.inf)
         self.new_distance.masked_fill_(mask, torch.inf)
-        self.plant.warmup(mask)
+        self.plant.warmup(mask, nonempty=nonempty)
         self._observe(mask)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)

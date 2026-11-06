@@ -112,7 +112,8 @@ from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
 from environments.common.domain_randomization import (
     apply_static_perturbation,
-    apply_domain_randomization,
+    apply_staged_domain_randomization,
+    stage_domain_randomization,
     resolve_domain_randomize,
 )
 
@@ -401,7 +402,11 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         # This exposes the fixed CMG geometry (a bilinear map of the raw obs the
         # policy MLP cannot represent, verified by a supervised probe) without
         # giving away the control law (gains, damping, timing, avoidance).
-        alloc=(J.transpose(1,2)@torch.linalg.solve(J@J.transpose(1,2)+I3,quat_err.unsqueeze(-1))).squeeze(-1)
+        # solve_ex without error checks: the same factorization and result as
+        # linalg.solve, minus its host read of the singularity flag (the
+        # damped system J J^T + I is positive definite).
+        alloc=(J.transpose(1,2)@torch.linalg.solve_ex(J@J.transpose(1,2)+I3,quat_err.unsqueeze(-1),
+                                                      check_errors=False)[0]).squeeze(-1)
         m_norm,_=self._manipulability()
         obs=torch.cat((self.q,quat_err,self.omega,self.gimbal.sin(),self.gimbal.cos(),
                        self.gimbal_rate,m_norm[:,None],alloc),-1)
@@ -415,17 +420,40 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
             self.obs_buf=torch.zeros(self._observation.shape,device=self.device,dtype=torch.float32)
         self.obs_buf.copy_(self._observation)
 
-    def step(self,actions):
-        """Advance one policy step: integrate CMG dynamics and evaluate reward.
+    def step(self, actions):
+        """Advance one policy step (see ``_step_core`` for the dynamics and reward).
 
-        Multiply scaled gimbal rates through the CMG RK4 integrator, compute
-        the telescoping potential-based progress reward, and return
-        (observations, reward, terminated, truncated, extras). Success and
-        runaway-spin failure both terminate immediately.
+        The tensor work up to the done decision runs in ``_step_core``, which
+        updates persistent buffers in place, so an execution backend may replay
+        it as one CUDA graph; the reset and logging decisions stay here.
         """
-        if actions.device!=torch.device(self.device):
-            raise ValueError('Actions must already be on env.device; implicit host/device copies are disabled')
-        actions=self._residual_input(actions)
+        if actions.device != torch.device(self.device):
+            raise ValueError(
+                "Actions must already be on env.device; implicit host/device copies are disabled"
+            )
+        actions = self._residual_input(actions)
+        term_out, trunc_out, done, time_outs, success_rate = self._step_core(actions)
+        # Fresh tensors per step, as before: callers may keep them.
+        term_out, trunc_out = term_out.clone(), trunc_out.clone()
+        self.reset_buf = done = done.clone()
+        self.extras["time_outs"] = time_outs.clone()
+        self.extras["terminal_observations"] = self._terminal_obs_td
+        done_any = bool(done.any())
+        if done_any:
+            self.extras["episode"] = {"success_rate": success_rate.clone()}
+        else:
+            self.extras.pop("episode", None)
+
+        if done_any or not getattr(self, "_skip_empty_resets", False):
+            self.reset_idx(self.reset_buf)
+        elif self._domain_randomize:
+            # Preserve the original per-step randomization seed sequence.
+            self._dr_counter += 1
+        self._update_observation()
+        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
+
+    def _step_core(self, actions):
+        """Dynamics, reward and episode bookkeeping of one policy step."""
         rates=actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions,self.clip_actions)*self.action_scale
         self.action.copy_(rates)
         active=~(self.terminated|self.truncated)
@@ -462,7 +490,7 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         reward=(torch.where(active,shaping,0.)
                 +torch.where(active,terminal,0.)
                 -self.ctrl_cost_weight*(rates**2).sum(-1))
-        self._prev_phi=torch.where(active,phi,self._prev_phi)
+        self._prev_phi.copy_(torch.where(active,phi,self._prev_phi))
         self.count+=1
         timeout=self.count>=self.max_steps
         self.reward.copy_(torch.where(active,reward,self.reward))
@@ -470,35 +498,23 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         self.terminated|=fail&active
         self.truncated|=(timeout|success)&active
 
-        self.reset_buf=self.terminated|self.truncated
+        done = self.terminated | self.truncated
         self.rew_buf.copy_(self.reward)
         self.episode_length_buf+=1
         self.returns+=self.reward
-        self.completed_returns+=torch.where(self.reset_buf,self.returns,0.)
-        self.completed_episodes+=self.reset_buf.to(torch.long)
-        self.completed_successes+=(self.reset_buf&self.complete).to(torch.long)
-        done=self.reset_buf
+        self.completed_returns+=torch.where(done,self.returns,0.)
+        self.completed_episodes+=done.to(torch.long)
+        self.completed_successes+=(done&self.complete).to(torch.long)
         # snapshot for the step return: reset_idx below clears terminated/truncated
         term_out,trunc_out=self.terminated.clone(),self.truncated.clone()
 
-        self.extras['time_outs']=self.truncated&~self.terminated&~self.complete
+        time_outs = self.truncated&~self.terminated&~self.complete
         # snapshot BEFORE reset_idx: reset_idx calls _observe(mask), which would
         # otherwise overwrite _observation with the post-reset initial state and
         # hand downstream bootstrapping the wrong transition target.
         self._cache_terminal_observations()
-        done_any = bool(done.any())
-        if done_any:
-            self.extras['episode']={'success_rate':(done&self.complete).to(COMPUTE_DTYPE).sum()/done.sum().clamp_min(1)}
-        else:
-            self.extras.pop('episode',None)
-
-        if done_any or not getattr(self, "_skip_empty_resets", False):
-            self.reset_idx(self.reset_buf)
-        elif self._domain_randomize:
-            # Preserve the original per-step randomization seed sequence.
-            self._dr_counter += 1
-        self._update_observation()
-        return self.get_observations(),self.rew_buf,term_out,trunc_out,self.extras
+        success_rate = (done & self.complete).to(COMPUTE_DTYPE).sum() / done.sum().clamp_min(1)
+        return term_out, trunc_out, done, time_outs, success_rate
 
     def _apply_perturbation(self, name, scale):
         """Scale inertia or rotor_h_dyn; called by the DR helper."""
@@ -514,14 +530,17 @@ class SatelliteAttitudeEnv(BaseEnv, ResidualActionMixin):
         else:
             raise KeyError(name)
 
-    def reset_idx(self,envs_idx):
+    def reset_idx(self, envs_idx):
         """Reset selected replicas; envs_idx is a device-resident boolean mask."""
-        mask=envs_idx
         if self._domain_randomize:
             self._dr_counter += 1
-            apply_domain_randomization(
-                self, self._domain_randomize, self._seed, self._dr_counter, mask
-            )
+            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
+        self._reset_replicas(envs_idx)
+
+    def _reset_replicas(self, mask):
+        """Device half of reset_idx (graph-capturable)."""
+        if self._domain_randomize:
+            apply_staged_domain_randomization(self, mask)
         u=self.rng.uniform(3,mask)
         s1=torch.sqrt(1-u[:,0]);s2=torch.sqrt(u[:,0])
         ang1=2*math.pi*u[:,1];ang2=2*math.pi*u[:,2]

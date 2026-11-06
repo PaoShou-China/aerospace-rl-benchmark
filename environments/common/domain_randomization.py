@@ -151,6 +151,58 @@ def as_env_mask(env, mask):
     return bool_mask
 
 
+def stage_domain_randomization(env, randomize_spec, seed, counter):
+    """Host half of :func:`apply_domain_randomization`: draw this reset's scales.
+
+    The scales come from the seeded CPU generator exactly as before and are
+    copied into persistent device buffers (``env._dr_staged``), so the device
+    half can run inside a captured graph.
+    """
+    spec = parse_perturbation_spec(randomize_spec)
+    staged = getattr(env, "_dr_staged", None)
+    if staged is None:
+        staged = env._dr_staged = {}
+    for name, value in sample_scales(spec, env.num_envs, env.device, seed, counter).items():
+        if name not in env.PERTURBABLE_PARAMS:
+            raise KeyError(f"{type(env).__name__}: unknown perturbable param {name!r}")
+        current = staged.get(name)
+        if current is not None and current.shape == value.shape and current.dtype == value.dtype:
+            staged[name].copy_(value)
+        else:
+            staged[name] = value
+    return staged
+
+
+def apply_staged_domain_randomization(env, mask=None):
+    """Device half: apply the staged scales to the replicas in ``mask``.
+
+    The applied scales are kept in persistent per-parameter buffers updated in
+    place (``env._dr_scales``); values are those of a fresh assignment.
+    """
+    sel = as_env_mask(env, mask)
+    applied = getattr(env, "_dr_scales", None)
+    if applied is None:
+        applied = {}
+        env._dr_scales = applied
+    for name, s in env._dr_staged.items():
+        base = env._static_scales.get(name, 1.0)
+        new = s * base
+        keep = applied.get(name)
+        if sel is not None:
+            if keep is None:
+                # nothing randomized yet for this param: the live plant runs on
+                # the static perturbation (or the nominal value) for every env
+                keep = torch.full_like(new, float(base))
+            new = torch.where(sel, new, keep)
+        current = applied.get(name)
+        if current is not None and current.shape == new.shape and current.dtype == new.dtype:
+            applied[name].copy_(new)
+        else:
+            applied[name] = new
+        env._apply_perturbation(name, applied[name])
+    return dict(applied)
+
+
 def apply_domain_randomization(env, randomize_spec, seed, counter, mask=None):
     """Per-episode: sample fresh scale factors and apply to the plant.
 
@@ -165,27 +217,5 @@ def apply_domain_randomization(env, randomize_spec, seed, counter, mask=None):
 
     Returns the per-env, per-parameter scales actually applied now.
     """
-    spec = parse_perturbation_spec(randomize_spec)
-    scales = sample_scales(spec, env.num_envs, env.device, seed, counter)
-    sel = as_env_mask(env, mask)
-    applied = getattr(env, "_dr_scales", None)
-    if applied is None:
-        applied = {}
-        env._dr_scales = applied
-    for name, s in scales.items():
-        if name not in env.PERTURBABLE_PARAMS:
-            raise KeyError(
-                f"{type(env).__name__}: unknown perturbable param {name!r}"
-            )
-        base = env._static_scales.get(name, 1.0)
-        new = s * base
-        if sel is not None:
-            keep = applied.get(name)
-            if keep is None:
-                # nothing randomized yet for this param: the live plant runs on
-                # the static perturbation (or the nominal value) for every env
-                keep = torch.full_like(new, float(base))
-            new = torch.where(sel, new, keep)
-        applied[name] = new
-        env._apply_perturbation(name, new)
-    return dict(applied)
+    stage_domain_randomization(env, randomize_spec, seed, counter)
+    return apply_staged_domain_randomization(env, mask)

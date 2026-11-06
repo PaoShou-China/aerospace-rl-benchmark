@@ -17,8 +17,9 @@ device-tensor interface. No Gym / Gymnasium wrappers.
 
 Each task shares the same `step` / `reset` / buffer contract, ships a classical
 GNC baseline on the same reward and success bar, and runs physics, contacts,
-reward, reset and RNG as masked tensor kernels. The only per-step host sync is
-`bool(done.any())`.
+reward, reset and RNG as masked tensor kernels. Host decisions such as
+episode-completion checks can still trigger CPU/GPU synchronization; the accelerated path reduces repeated dispatch through caching
+and segmented CUDA graphs.
 
 ## Quick start
 
@@ -43,11 +44,9 @@ entries, run artifacts and the repository tree are in
 ## CUDA acceleration
 
 All ten tasks support opt-in execution adapters for expert data collection,
-behavior cloning (BC) and PPO training. CUDA Graphs and fused Adam reduce
-kernel launch overhead; deterministic inference uses a frozen policy snapshot.
-Task equations, rewards, model precision and training budgets keep their
-existing configuration. FP32 environment computations retain native arithmetic
-ordering. There are no GPU-model or VRAM-capacity branches.
+behavior cloning (BC) and PPO training. Task equations, rewards, model
+precision and training budgets keep their existing configuration. There are
+no GPU-model or VRAM-capacity branches.
 
 From the repository root, enable training acceleration through the task's
 existing `main` function (Rocket-Landing shown here):
@@ -64,25 +63,49 @@ python scripts/eval.py rocket --performance --out results/cuda_rocket
 ```
 
 These acceleration options default to off. Unsupported PPO configurations
-retain the upstream update implementation. Batched expert episode exports and
-lazy Genesis imports also apply in the default mode. Standalone inference uses
-`algorithms.inference.InferencePolicy(actor.eval())`: recreate the snapshot
-after changing source weights, call each instance serially, and match the
-input device and dtype to the snapshot.
+retain the upstream update implementation.
 
-Based on [`4439708`](https://github.com/PaoShou-China/aerospace-rl-benchmark/commit/4439708d3bfaf97c585be84727fd7df48eedefaa), paired measurements on one NVIDIA GPU reached
-**1.88–15.29×** PPO update throughput relative to main across 9 completed comparisons, with
-1024 parallel environments, seed 7, original per-task training budgets and
-64 host threads. Timings are the median of three updates after two warmup
-updates, including rollout and logging but excluding startup and BC.
-All ten optimized runs completed; main returned NaN for `quadx_track`,
-so no speedup is reported for those incomplete baselines.
-Time to convergence and success-rate equivalence over complete training runs
-remain unvalidated; long BC fits can accumulate floating-point differences.
+### Execution layers
 
-Measurements used Python 3.12.3, PyTorch 2.8.0+cu128, Genesis 1.4.4,
-Quadrants 1.3.3 and rsl-rl 5.3.0. The PyTorch 2.11 pin in `requirements.txt`
-has not been validated for these acceleration paths.
+With `performance=True` the environment step runs as a short sequence of CUDA
+graph replays (`algorithms/performance.py`):
+
+1. **Genesis performance mode.** Genesis compiles static-array kernels
+   specialised to the scene. For these single-body (6-DOF) vehicles it then
+   solves contacts with its one-kernel *monolith* Newton arm. The generic
+   kernels instead pin the *decomposed* arm, whose iteration loop runs on the
+   host with a synchronization per iteration on GPUs below SM 9.0 (RTX 30/40
+   series). Both arms use the same physical problem and solver tolerance, but their
+   execution paths differ and may produce floating-point differences. Equal
+   tolerances alone do not establish equivalence of complete trajectories or
+   training behavior.
+2. **Whole-substep graphs with Genesis kernels inside.** Quadrants kernels
+   are recorded into the same CUDA graph as the Torch math: Quadrants' own
+   graph launches are switched to plain launches while capturing, the launch
+   contexts whose host argument buffers back the recorded copies are kept
+   alive, and Genesis' periodic error check and host step counter are replayed
+   at Genesis' own cadence.
+3. **Graphed step segments.** Each `env.step` is split at its host decisions
+   (pause-restore, reset, episode logging) into segments that update
+   persistent buffers in place (`_step_begin`, `_control_step`, `_step_end`,
+   `_reset_replicas`; `_step_core` for the spacecraft tasks). Each segment
+   replays as one graph. Before a segment is captured, its second warmup and
+   the capture are audited: integer counters are replayed, and any other host
+   state change (a tensor attribute replaced instead of updated in place)
+   keeps that segment eager with a message instead of replaying stale state.
+4. **Optional fused task math** (`AEROSPACE_FUSE=1`). Inductor fuses the
+   elementwise plant, controller, observation and integrator math into Triton
+   kernels that the segment graphs then record. Fusion contracts
+   multiply-adds and may reorder reductions (float32-rounding differences),
+   and adds a one-time compilation at startup.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `AEROSPACE_GENESIS_PERFORMANCE` | `1` | `0` keeps Genesis' generic kernels (bitwise as before; layers 2-3 then fall back to Torch-only segments) |
+| `AEROSPACE_NATIVE_CAPTURE` | `1` | `0` keeps Genesis calls outside CUDA graphs |
+| `AEROSPACE_SEGMENT_GRAPHS` | `1` | `0` disables graphed step segments |
+| `AEROSPACE_FUSE` | `0` | `1` enables fused task math (layer 4) |
+| `AEROSPACE_SEGMENT_DEBUG` | `0` | `1` reports why a segment re-warms |
 
 ## Task overview
 

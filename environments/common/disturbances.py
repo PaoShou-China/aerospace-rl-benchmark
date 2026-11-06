@@ -166,6 +166,11 @@ class WindDisturbance:
         if env_ids is None:
             self._state.zero_()
             return
+        if (torch.is_tensor(env_ids) and env_ids.dtype == torch.bool
+                and env_ids.device == self._state.device):
+            # Boolean masks reset in place without a host-synchronizing nonzero().
+            self._state.masked_fill_(env_ids.reshape(1, -1), 0.0)
+            return
         idx = self._index(env_ids)
         self._state[:, idx] = 0.0
 
@@ -181,7 +186,8 @@ class WindDisturbance:
         if env_ids is None:
             sel = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
             g = self._gauss(sel).T  # (3, N)
-            self._state = self._pole.unsqueeze(1) * self._state + self._gain.unsqueeze(1) * g
+            # In place: the filter state keeps its storage across steps.
+            self._state.copy_(self._pole.unsqueeze(1) * self._state + self._gain.unsqueeze(1) * g)
             return self._steady + self._state.T  # (N, 3)
         idx = self._index(env_ids)
         sel = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
