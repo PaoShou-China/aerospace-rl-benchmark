@@ -108,7 +108,14 @@ on the quadplane; raceway clamps, RCS pods, grid-fin actuators, leg pistons
 and soot streaks on the booster; seeker dome, band and access panels on the
 missile; MLI seams, star-tracker hoods, thruster quads, dish struts, radiator
 louvers and array hinges on the spacecraft; and IDSS petals, windows,
-SuperDraco pods and trunk fins on the chaser.
+SuperDraco pods and trunk fins on the chaser. Moving hardware is split into
+independent local-frame rigs: quadrotor and fixed-wing propellers follow the
+recorded throttle with display-rate reduction to avoid video strobing;
+fixed-wing surfaces, rocket grid fins, missile fins and the rocket TVC cluster
+follow the plant's actual first-order actuation states; engine glow uses real
+ignition/burning flags; and spacecraft exhaust dots oppose the recorded thrust
+vector. No landing-leg or docking-lock sequence is invented when the
+environment exposes no corresponding state.
 """
 
 import argparse
@@ -352,6 +359,9 @@ def record(task, env, policy, max_steps):
                     "tgt": env.target_pos.cpu().numpy()[0].copy(),
                 }
             )
+            frames[-1]["throttle"] = env.plant.throttle.cpu().numpy()[0].copy()
+            frames[-1]["surfaces"] = env.plant.surfaces.actuation.cpu().numpy()[0].copy()
+            frames[-1]["aux"] = env.plant.auxiliary().cpu().numpy()[0].copy()
         elif task in ("quadx", "fixedwing", "quadplane", "rocket"):
             frames.append(
                 {
@@ -359,6 +369,11 @@ def record(task, env, policy, max_steps):
                     "quat": env.plant.drone.get_quat().cpu().numpy()[0],
                 }
             )
+            frames[-1]["throttle"] = env.plant.throttle.cpu().numpy()[0].copy()
+            if task != "quadx":
+                frames[-1]["surfaces"] = env.plant.surfaces.actuation.cpu().numpy()[0].copy()
+            if task == "rocket":
+                frames[-1]["aux"] = env.plant.auxiliary().cpu().numpy()[0].copy()
             if task in ("quadx", "fixedwing", "quadplane"):
                 # active waypoint for the GCS overlay; the index increments on
                 # reach, so clamp keeps the final pre-reset snap in range
@@ -390,6 +405,7 @@ def record(task, env, policy, max_steps):
                 {
                     "pos": env.r.cpu().numpy()[0].copy() * 1e-6,
                     "vel": env.v.cpu().numpy()[0].copy() * 1e-6,
+                    "action": env.action.cpu().numpy()[0].copy(),
                     "quat": None,
                 }
             )  # 1 unit = 1000 km; velocity uses the same length unit per second
@@ -398,6 +414,8 @@ def record(task, env, policy, max_steps):
                 "pos": env.p.cpu().numpy()[0].copy(),
                 "quat": None,
                 "vel": env.v.cpu().numpy()[0].copy(),
+                "action": env.action.cpu().numpy()[0].copy()
+                / (float(env.f_max[0]) if torch.is_tensor(env.f_max) else float(env.f_max)),
             }
             frames.append(f)
 
@@ -761,6 +779,88 @@ def _model(scene, name, groups, scale=1.0, pos=(0.0, 0.0, 0.0)):
     return rig
 
 
+def _axis_quat(axis, angle):
+    """wxyz quaternion for a local hinge/spin axis and angle in radians."""
+    axis = np.asarray(axis, float)
+    axis = axis / max(float(np.linalg.norm(axis)), 1e-12)
+    h = 0.5 * float(angle)
+    return np.array((math.cos(h), *(axis * math.sin(h))))
+
+
+def _prop_groups(radius, blade, tip, pitch=20.0, tip_width=0.022, tip_thick=0.0024):
+    """Independent blade set; display-rate reduction prevents video strobing."""
+    return {
+        blade: [_m_prop(radius, pitch=pitch)],
+        tip: [_m_prop_tips(radius, width=tip_width, thick=tip_thick)],
+    }
+
+
+def _add_motion(ents, rig, pos, scale, kind, index=0, base=(1, 0, 0, 0),
+                axis=(0, 0, 1), limit=0.0, sign=1.0, phase=0.0):
+    """Register an independently hinged rig in the parent body's local frame."""
+    ents.setdefault("motion", []).append(
+        dict(rig=rig, pos=np.asarray(pos, float), scale=float(scale), kind=kind,
+             index=int(index), base=np.asarray(base, float), axis=np.asarray(axis, float),
+             limit=float(limit), sign=float(sign), phase=float(phase))
+    )
+
+
+def _hinge_mesh(mesh, hinge, base=(1, 0, 0, 0), rot=None):
+    """Bake a body-frame mesh into coordinates relative to its rotated hinge."""
+    if rot is not None:
+        mesh.apply_transform(rot)
+    mesh.apply_translation(-_quat_rot(np.asarray(base, float), np.asarray(hinge, float)))
+    return mesh
+
+
+def _update_motion(ents, f, dt, phases):
+    """Pose moving parts from recorded actuator states, never new dynamics."""
+    q = f.get("quat")
+    if q is None:
+        return
+    q = np.asarray(q, float)
+    origin = np.asarray(f["pos"], float) + np.array((0.0, 0.0, ents.get("body_lift", 0.0)))
+    throttle = np.asarray(f.get("throttle", np.zeros(1)), float)
+    surfaces = np.asarray(f.get("surfaces", np.zeros(8)), float)
+    for i, part in enumerate(ents.get("motion", [])):
+        kind = part["kind"]
+        if kind == "prop":
+            # Display-rate reduction avoids 30 fps strobing; relative speed and
+            # direction still come from the plant's real throttle and spin map.
+            command = abs(float(throttle[min(part["index"], len(throttle) - 1)]))
+            rate = 0.0 if command < 0.02 else 4.0 + 24.0 * min(command, 1.0)
+            phases[i] += dt * part["sign"] * rate
+            angle = phases[i] + part["phase"]
+            local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
+        elif kind == "tvc":
+            angles = np.asarray(f.get("aux", np.zeros(9)), float)[-2:] * math.radians(5.0)
+            local_q = _quat_mul_np(
+                _axis_quat((1, 0, 0), angles[0]), _axis_quat((0, 1, 0), angles[1])
+            )
+        else:
+            command = float(surfaces[min(part["index"], len(surfaces) - 1)])
+            angle = part["sign"] * command * part["limit"]
+            local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
+        part["rig"].set_pos(tuple(origin + _quat_rot(q, part["pos"] * part["scale"])))
+        part["rig"].set_quat(tuple(_quat_mul_np(q, local_q)))
+
+
+def _update_thruster(markers, origin, action, spacing):
+    """Short inertial-frame exhaust trace aligned opposite the recorded thrust."""
+    action = np.asarray(action, float)
+    magnitude = float(np.linalg.norm(action))
+    origin = np.asarray(origin, float)
+    if magnitude < 0.02:
+        for marker in markers:
+            marker.set_pos(tuple(HIDDEN))
+        return
+    direction = action / magnitude
+    count = max(1, min(len(markers), int(math.ceil(magnitude * len(markers)))))
+    for i, marker in enumerate(markers):
+        point = origin - direction * spacing * (i + 1) if i < count else HIDDEN
+        marker.set_pos(tuple(map(float, point)))
+
+
 def _build_quadrotor():
     """Crazyflie 2.1: PCB stack, four carbon arms, 7 mm motors, 45 mm props."""
     g = {}
@@ -784,15 +884,9 @@ def _build_quadrotor():
         add("motor", _m_cyl(0.0044, 0.0115, (tx, ty, 0.0095)))
         add("metal", _m_cyl(0.0048, 0.0030, (tx, ty, 0.0162)))
         add("metal", _m_cyl(0.0009, 0.0040, (tx, ty, 0.0195)))
-        col = "propw" if sx * sy > 0 else "propd"
-        add(col, _m_xf(_m_prop(0.0225, pitch=16.0, phase=20.0 * sx),
-                       (tx, ty, 0.0212)))
-        # phase wires running out along each arm + contrasting blade tips
+        # phase wires running out along each arm; blades are independent rigs
         add("wire", _m_rod((sx * 0.017, sy * 0.017, 0.0024),
                            (tx - sx * 0.0025, ty - sy * 0.0025, 0.0042), 0.00055))
-        add("propd" if col == "propw" else "propw",
-            _m_xf(_m_prop_tips(0.0225, phase=20.0 * sx, width=0.009, thick=0.0016),
-                  (tx, ty, 0.0212)))
     # board hardware: battery strap, USB, header, chips, corner screws
     add("carbon", _m_box((0.032, 0.0035, 0.0060), (0.0, -0.001, 0.0080)))
     for cx, cy, cw, ch in ((0.006, -0.012, 0.010, 0.008),
@@ -821,6 +915,23 @@ def _build_quadrotor():
     return g
 
 
+def _add_quadrotor_motion(scene, ents, scale):
+    positions = ((1, -1), (1, 1), (-1, -1), (-1, 1))
+    spins = (-1, -1, 1, 1)  # TensorPlant quadx motor order
+    for i, ((sx, sy), spin) in enumerate(zip(positions, spins)):
+        blade = "propw" if sx * sy > 0 else "propd"
+        tip = "propd" if blade == "propw" else "propw"
+        rig = _model(
+            scene, f"cf_prop{i}",
+            _prop_groups(0.0225, blade, tip, 16.0, tip_width=0.009, tip_thick=0.0016),
+            scale=scale
+        )
+        _add_motion(
+            ents, rig, (sx * 0.028, sy * 0.028, 0.0212), scale,
+            "prop", index=i, sign=spin, phase=0.63 * i,
+        )
+
+
 def _build_fixedwing():
     """Cessna-172-like high-wing trainer matching PyFlyt's 1.4 m x 1.8 m frame."""
     g = {}
@@ -844,10 +955,6 @@ def _build_fixedwing():
     )
     add("shell", _m_cyl(0.063, 0.030, (0.712, 0.0, 0.004), _rot((0.0, 1.0, 0.0), 90)))
     add("metal", _m_cone(0.040, 0.070, (0.760, 0.0, 0.004), _rot((0.0, 1.0, 0.0), 90)))
-    add("grey", _m_xf(_m_prop(0.165, pitch=24.0), (0.733, 0.0, 0.004),
-                      _rot((0.0, 1.0, 0.0), 90)))
-    add("white", _m_xf(_m_prop_tips(0.165, width=0.030, thick=0.004),
-                       (0.733, 0.0, 0.004), _rot((0.0, 1.0, 0.0), 90)))
     add("glass", _m_sph(1.0, (0.285, 0.0, 0.090), (0.195, 0.080, 0.055)))
     for sy in (-1.0, 1.0):
         add("glass", _m_box((0.150, 0.006, 0.032), (0.330, sy * 0.090, 0.060)))
@@ -868,14 +975,15 @@ def _build_fixedwing():
     for s in (-1.0, 1.0):
         wing = _m_plate(
             [(0.140, 0.020 * s), (-0.180, 0.020 * s),
-             (-0.180, 0.900 * s), (0.020, 0.900 * s)],
+             (-0.180, 0.550 * s), (-0.100, 0.550 * s),
+             (-0.100, 0.900 * s), (0.020, 0.900 * s)],
             0.150, 0.178,
         )
         wing.apply_transform(_rot((1.0, 0.0, 0.0), 3.0 * s))
         add("white", wing)
         tip = _m_plate(
-            [(-0.020, 0.780 * s), (-0.180, 0.780 * s),
-             (-0.180, 0.900 * s), (0.008, 0.900 * s)],
+            [(-0.020, 0.780 * s), (-0.100, 0.780 * s),
+             (-0.100, 0.900 * s), (0.008, 0.900 * s)],
             0.150, 0.179,
         )
         tip.apply_transform(_rot((1.0, 0.0, 0.0), 3.0 * s))
@@ -899,18 +1007,61 @@ def _build_fixedwing():
     add("carbon", _m_cyl(0.030, 0.018, (0.550, 0.0, -0.180),
                          _rot((1.0, 0.0, 0.0), 90), n=18))
     add("blue", _m_vplate(
-        [(-0.600, 0.052), (-0.760, 0.052), (-0.745, 0.300), (-0.635, 0.300)],
+        [(-0.600, 0.052), (-0.680, 0.052), (-0.680, 0.300), (-0.635, 0.300)],
         -0.012, 0.012,
     ))
     add("white", _m_plate(
-        [(-0.600, 0.300), (-0.790, 0.300), (-0.790, 0.060), (-0.660, 0.060)],
+        [(-0.600, -0.300), (-0.700, -0.300), (-0.700, 0.300), (-0.600, 0.300)],
         0.060, 0.080,
     ))
     add("blue", _m_plate(
-        [(-0.600, 0.300), (-0.660, 0.300), (-0.660, 0.245), (-0.600, 0.245)],
+        [(-0.600, -0.300), (-0.660, -0.300), (-0.660, 0.300), (-0.600, 0.300)],
         0.060, 0.081,
     ))
     return g
+
+
+def _add_fixedwing_motion(scene, ents, scale):
+    prop_base = _axis_quat((0, 1, 0), math.pi / 2.0)
+    prop = _model(
+        scene, "cessna_prop",
+        _prop_groups(0.165, "grey", "white", 24.0, tip_width=0.030, tip_thick=0.004),
+        scale=scale,
+    )
+    _add_motion(ents, prop, (0.733, 0.0, 0.004), scale, "prop", base=prop_base)
+    for s in (-1.0, 1.0):
+        base = _axis_quat((1, 0, 0), math.radians(3.0 * s))
+        rot = _rot((1.0, 0.0, 0.0), 3.0 * s)
+        hinge = (-0.100, 0.0, 0.164)
+        white = _hinge_mesh(_m_plate(
+            [(-0.100, 0.550 * s), (-0.180, 0.550 * s),
+             (-0.180, 0.780 * s), (-0.100, 0.780 * s)], 0.150, 0.178,
+        ), hinge, base, rot)
+        tip = _hinge_mesh(_m_plate(
+            [(-0.100, 0.780 * s), (-0.180, 0.780 * s),
+             (-0.180, 0.900 * s), (-0.100, 0.900 * s)], 0.150, 0.179,
+        ), hinge, base, _rot((1.0, 0.0, 0.0), 3.0 * s))
+        rig = _model(scene, f"cessna_ail{int(s)}", {"white": [white], "blue": [tip]}, scale=scale)
+        _add_motion(
+            ents, rig, hinge, scale, "surface", index=0 if s > 0 else 1,
+            base=base, axis=(0, 1, 0), limit=math.radians(30.0), sign=-1.0,
+        )
+    hinge = (-0.700, 0.0, 0.070)
+    elevator = _hinge_mesh(_m_plate(
+        [(-0.700, -0.300), (-0.790, -0.300), (-0.790, 0.300), (-0.700, 0.300)],
+        0.060, 0.080,
+    ), hinge)
+    rig = _model(scene, "cessna_elevator", {"white": [elevator]}, scale=scale)
+    _add_motion(ents, rig, hinge, scale, "surface", index=2,
+                axis=(0, 1, 0), limit=math.radians(20.0), sign=-1.0)
+    hinge = (-0.680, 0.0, 0.052)
+    rudder = _hinge_mesh(_m_vplate(
+        [(-0.680, 0.052), (-0.760, 0.052), (-0.745, 0.300), (-0.680, 0.300)],
+        -0.012, 0.012,
+    ), hinge)
+    rig = _model(scene, "cessna_rudder", {"blue": [rudder]}, scale=scale)
+    _add_motion(ents, rig, hinge, scale, "surface", index=3,
+                axis=(0, 0, 1), limit=math.radians(20.0), sign=-1.0)
 
 
 def _build_quadplane():
@@ -937,7 +1088,8 @@ def _build_quadplane():
     for s in (-1.0, 1.0):
         wing = _m_plate(
             [(-0.200, 0.020 * s), (-0.500, 0.020 * s),
-             (-0.470, 0.900 * s), (-0.270, 0.900 * s)],
+             (-0.500, 0.550 * s), (-0.432, 0.550 * s),
+             (-0.432, 0.900 * s), (-0.270, 0.900 * s)],
             0.092, 0.122,
         )
         wing.apply_transform(_rot((1.0, 0.0, 0.0), 2.0 * s))
@@ -951,8 +1103,8 @@ def _build_quadplane():
         strip.apply_transform(_rot((1.0, 0.0, 0.0), 2.0 * s))
         add("blue", strip)
         tip = _m_plate(
-            [(-0.262, 0.800 * s), (-0.473, 0.800 * s),
-             (-0.470, 0.900 * s), (-0.272, 0.900 * s)],
+            [(-0.262, 0.800 * s), (-0.432, 0.800 * s),
+             (-0.432, 0.900 * s), (-0.272, 0.900 * s)],
             0.092, 0.123,
         )
         tip.apply_transform(_rot((1.0, 0.0, 0.0), 2.0 * s))
@@ -963,42 +1115,28 @@ def _build_quadplane():
             add("carbon", _m_cyl(0.030, 0.070, (mx, 0.500 * s, 0.140), n=14))
             add("white", _m_cyl(0.036, 0.036, (mx, 0.500 * s, 0.150), n=16))
             add("motor", _m_cyl(0.022, 0.030, (mx, 0.500 * s, 0.180), n=14))
-            add("grey", _m_xf(_m_prop(0.150, pitch=14.0), (mx, 0.500 * s, 0.198)))
-            add("propw", _m_xf(_m_prop_tips(0.150, width=0.020, thick=0.002),
-                               (mx, 0.500 * s, 0.198)))
             add("metal", _m_cyl(0.004, 0.030, (mx, 0.500 * s, 0.205), n=10))
         add("carbon", _m_box((0.026, 0.020, 0.060), (0.050, 0.500 * s, 0.085)))
         add("carbon", _m_box((0.026, 0.020, 0.060), (-0.950, 0.500 * s, 0.085)))
-        # winglet at the tip (same dihedral) + aileron hinge line
+        # winglet at the tip (same dihedral); ailerons are independent rigs
         winglet = _m_vplate(
             [(-0.470, 0.122), (-0.500, 0.122), (-0.505, 0.230), (-0.478, 0.230)],
             (0.890 * s), (0.902 * s),
         )
         winglet.apply_transform(_rot((1.0, 0.0, 0.0), 2.0 * s))
         add("blue", winglet)
-        hinge = _m_plate(
-            [(-0.452, 0.020 * s), (-0.466, 0.020 * s),
-             (-0.446, 0.880 * s), (-0.432, 0.880 * s)],
-            0.1222, 0.1238,
-        )
-        hinge.apply_transform(_rot((1.0, 0.0, 0.0), 2.0 * s))
-        add("dark", hinge)
         # twin fin + stabiliser
         add("blue", _m_vplate(
-            [(-1.020, 0.080), (-1.180, 0.080), (-1.150, 0.310), (-1.055, 0.310)],
+            [(-1.020, 0.080), (-1.090, 0.080), (-1.090, 0.310), (-1.055, 0.310)],
             (-0.012 + 0.500 * s), (0.012 + 0.500 * s),
         ))
         add("metal", _m_rod((0.150, 0.105 * s, -0.060), (-0.120, 0.140 * s, -0.135), 0.008))
         add("carbon", _m_cyl(0.024, 0.016, (-0.120, 0.140 * s, -0.145),
                              _rot((1.0, 0.0, 0.0), 90), n=14))
     add("white", _m_plate(
-        [(-1.020, -0.500), (-1.190, -0.500), (-1.190, 0.500), (-1.020, 0.500)],
+        [(-1.020, -0.500), (-1.100, -0.500), (-1.100, 0.500), (-1.020, 0.500)],
         0.245, 0.270,
     ))
-    add("grey", _m_xf(_m_prop(0.155, pitch=18.0), (-0.700, 0.0, 0.016),
-                      _rot((0.0, 1.0, 0.0), 90)))
-    add("propw", _m_xf(_m_prop_tips(0.155, width=0.020, thick=0.002),
-                       (-0.700, 0.0, 0.016), _rot((0.0, 1.0, 0.0), 90)))
     add("shell", _m_cyl(0.040, 0.050, (-0.668, 0.0, 0.016), _rot((0.0, 1.0, 0.0), 90)))
     # EO/IR turret under the nose, pitot, antennas, gear hubs
     add("metal", _m_cyl(0.020, 0.030, (0.500, 0.0, -0.086), n=14))
@@ -1011,14 +1149,64 @@ def _build_quadplane():
                          _rot((1.0, 0.0, 0.0), 90), n=14))
     add("metal", _m_cyl(0.010, 0.018, (0.470, 0.0, -0.160),
                         _rot((1.0, 0.0, 0.0), 90), n=12))
-    # blue caps on the stabiliser tips
-    for s in (-1.0, 1.0):
-        add("blue", _m_plate(
-            [(-1.030, 0.490 * s), (-1.190, 0.490 * s),
-             (-1.190, 0.500 * s), (-1.020, 0.500 * s)],
-            0.245, 0.271,
-        ))
     return g
+
+
+def _add_quadplane_motion(scene, ents, scale):
+    # TensorPlant order: front-right, rear-left, front-left, rear-right.
+    motors = ((0.050, -0.500), (-0.950, 0.500), (0.050, 0.500), (-0.950, -0.500))
+    for i, ((x, y), spin) in enumerate(zip(motors, (1, 1, -1, -1))):
+        rig = _model(
+            scene, f"qp_lift_prop{i}",
+            _prop_groups(0.150, "grey", "propw", 14.0, tip_width=0.020, tip_thick=0.002),
+            scale=scale,
+        )
+        _add_motion(ents, rig, (x, y, 0.198), scale, "prop", index=i,
+                    sign=spin, phase=0.63 * i)
+    prop_base = _axis_quat((0, 1, 0), math.pi / 2.0)
+    prop = _model(
+        scene, "qp_pusher_prop",
+        _prop_groups(0.155, "grey", "propw", 18.0, tip_width=0.020, tip_thick=0.002),
+        scale=scale,
+    )
+    _add_motion(ents, prop, (-0.700, 0.0, 0.016), scale, "prop", index=4, base=prop_base)
+    for s in (-1.0, 1.0):
+        base = _axis_quat((1, 0, 0), math.radians(2.0 * s))
+        hinge = (-0.432, 0.0, 0.108)
+        white = _hinge_mesh(_m_plate(
+            [(-0.432, 0.550 * s), (-0.470, 0.550 * s),
+             (-0.470, 0.800 * s), (-0.432, 0.800 * s)], 0.092, 0.122,
+        ), hinge, base, _rot((1.0, 0.0, 0.0), 2.0 * s))
+        tip = _hinge_mesh(_m_plate(
+            [(-0.432, 0.800 * s), (-0.470, 0.800 * s),
+             (-0.470, 0.900 * s), (-0.432, 0.900 * s)], 0.092, 0.123,
+        ), hinge, base, _rot((1.0, 0.0, 0.0), 2.0 * s))
+        rig = _model(scene, f"qp_ail{int(s)}", {"white": [white], "blue": [tip]}, scale=scale)
+        _add_motion(ents, rig, hinge, scale, "surface", index=0 if s > 0 else 1,
+                    base=base, axis=(0, 1, 0), limit=math.radians(30.0), sign=-1.0)
+    hinge = (-1.100, 0.0, 0.2575)
+    elevator = _hinge_mesh(_m_plate(
+        [(-1.100, -0.460), (-1.190, -0.460), (-1.190, 0.460), (-1.100, 0.460)],
+        0.245, 0.270,
+    ), hinge)
+    caps = []
+    for s in (-1.0, 1.0):
+        caps.append(_hinge_mesh(_m_plate(
+            [(-1.100, 0.460 * s), (-1.190, 0.460 * s),
+             (-1.190, 0.500 * s), (-1.100, 0.500 * s)], 0.245, 0.271,
+        ), hinge))
+    rig = _model(scene, "qp_elevator", {"white": [elevator], "blue": caps}, scale=scale)
+    _add_motion(ents, rig, hinge, scale, "surface", index=2,
+                axis=(0, 1, 0), limit=math.radians(20.0), sign=-1.0)
+    for s in (-1.0, 1.0):
+        hinge = (-1.090, 0.500 * s, 0.080)
+        rudder = _hinge_mesh(_m_vplate(
+            [(-1.090, 0.080), (-1.180, 0.080), (-1.150, 0.310), (-1.090, 0.310)],
+            (-0.012 + 0.500 * s), (0.012 + 0.500 * s),
+        ), hinge)
+        rig = _model(scene, f"qp_rudder{int(s)}", {"blue": [rudder]}, scale=scale)
+        _add_motion(ents, rig, hinge, scale, "surface", index=3,
+                    axis=(0, 0, 1), limit=math.radians(20.0), sign=-1.0)
 
 
 def _build_rocket():
@@ -1048,17 +1236,8 @@ def _build_rocket():
                          _rot((0.0, 1.0, 0.0), 90), n=10)
         nozzle.apply_transform(_rot((0.0, 0.0, 1.0), 45.0 + 90.0 * k))
         add("metal", nozzle)
-    # four titanium grid fins near the top
+    # grid-fin actuators stay on the tank; the fins themselves hinge independently
     for k in range(4):
-        fin = []
-        fin.append(_m_box((0.020, 0.290, 0.230), (0.315, 0.0, 2.020)))
-        for dz in (-0.075, 0.0, 0.075):
-            fin.append(_m_box((0.024, 0.270, 0.018), (0.315, 0.0, 2.020 + dz)))
-        for dy in (-0.085, 0.0, 0.085):
-            fin.append(_m_box((0.024, 0.018, 0.210), (0.315, dy, 2.020)))
-        for m in fin:
-            m.apply_transform(_rot((0.0, 0.0, 1.0), 45.0 + 90.0 * k))
-            add("grey", m)
         actuator = _m_cyl(0.030, 0.075, (0.205, 0.0, 1.930), n=12)
         actuator.apply_transform(_rot((0.0, 0.0, 1.0), 45.0 + 90.0 * k))
         add("metal", actuator)
@@ -1081,15 +1260,35 @@ def _build_rocket():
         streak.apply_transform(_rot((0.0, 0.0, 1.0), a))
         add("black", streak)
     add("grey", _m_cyl(0.200, 0.050, (0.0, 0.0, -2.330), n=32))  # heat shield ring
-    # nine Merlin bells: one centre + eight around, tucked above the feet so
-    # the deployed legs (not the engine bells) are the lowest display point
-    add("metal", _m_cone(0.105, 0.260, (0.0, 0.0, -2.380), _rot((1.0, 0.0, 0.0), 180)))
+    return g
+
+
+def _add_rocket_motion(scene, ents, scale):
+    for k in range(4):
+        angle = 45.0 + 90.0 * k
+        base = _axis_quat((0, 0, 1), math.radians(angle))
+        hinge = (0.205, 0.0, 2.020)
+        fin = [_m_box((0.020, 0.290, 0.230), (0.315, 0.0, 2.020))]
+        for dz in (-0.075, 0.0, 0.075):
+            fin.append(_m_box((0.024, 0.270, 0.018), (0.315, 0.0, 2.020 + dz)))
+        for dy in (-0.085, 0.0, 0.085):
+            fin.append(_m_box((0.024, 0.018, 0.210), (0.315, dy, 2.020)))
+        fin = [_hinge_mesh(m, hinge, base, _rot((0, 0, 1), angle)) for m in fin]
+        rig = _model(scene, f"f9_gridfin{k}", {"grey": fin}, scale=scale)
+        _add_motion(ents, rig, hinge, scale, "surface", index=k, base=base,
+                    axis=(0, 1, 0), limit=math.radians(45.0), sign=-1.0)
+    hinge = (0.0, 0.0, -2.280)
+    bells = [_hinge_mesh(
+        _m_cone(0.105, 0.260, (0.0, 0.0, -2.380), _rot((1, 0, 0), 180)), hinge
+    )]
     for k in range(8):
         a = math.radians(22.5 + 45.0 * k)
-        add("metal", _m_cone(0.062, 0.200,
-                             (0.142 * math.cos(a), 0.142 * math.sin(a), -2.430),
-                             _rot((1.0, 0.0, 0.0), 180), n=16))
-    return g
+        bells.append(_hinge_mesh(_m_cone(
+            0.062, 0.200, (0.142 * math.cos(a), 0.142 * math.sin(a), -2.430),
+            _rot((1, 0, 0), 180), n=16,
+        ), hinge))
+    rig = _model(scene, "f9_tvc_cluster", {"metal": bells}, scale=scale)
+    _add_motion(ents, rig, hinge, scale, "tvc")
 
 
 def _build_missile():
@@ -1113,12 +1312,6 @@ def _build_missile():
     add("metal", _m_cone(0.086, 0.150, (-1.350, 0.0, 0.0), _rot((0.0, 1.0, 0.0), -90), n=20))
     add("dark", _m_cone(0.062, 0.090, (-1.390, 0.0, 0.0), _rot((0.0, 1.0, 0.0), -90), n=16))
     for deg in (45.0, 135.0, 225.0, 315.0):
-        fin = _m_vplate(
-            [(-1.470, 0.098), (-1.020, 0.098), (-1.060, 0.360), (-1.470, 0.300)],
-            0.0, 0.016,
-        )
-        fin.apply_transform(_rot((1.0, 0.0, 0.0), deg))
-        add("shell", fin)
         strake = _m_vplate(
             [(-0.150, 0.098), (0.450, 0.098), (0.450, 0.165), (-0.150, 0.165)],
             0.0, 0.012,
@@ -1138,6 +1331,20 @@ def _build_missile():
         add("grey", _m_box((w, 0.010, h), (x, 0.0995, zc)))
     add("dark", _m_box((0.050, 0.030, 0.070), (0.720, -0.090, -0.040)))
     return g
+
+
+def _add_missile_motion(scene, ents, scale):
+    # X-fin display positions mapped to the plant's left/top/right/bottom channels.
+    for k, (deg, channel) in enumerate(zip((45.0, 135.0, 225.0, 315.0), (0, 2, 1, 3))):
+        base = _axis_quat((1, 0, 0), math.radians(deg))
+        hinge = (-1.240, 0.0, 0.098)
+        fin = _hinge_mesh(_m_vplate(
+            [(-1.470, 0.098), (-1.020, 0.098), (-1.060, 0.360), (-1.470, 0.300)],
+            0.0, 0.016,
+        ), hinge, base, _rot((1, 0, 0), deg))
+        rig = _model(scene, f"amraam_fin{k}", {"shell": [fin]}, scale=scale)
+        _add_motion(ents, rig, hinge, scale, "surface", index=channel, base=base,
+                    axis=(1, 0, 0), limit=math.radians(35.0), sign=-1.0)
 
 
 def _build_satellite():
@@ -2945,6 +3152,7 @@ def build_scene(task, extras, first):
         _ground(scene)
         _grid(scene, 12.0, 1.0)
         ents["body"] = _model(scene, "crazyflie", _build_quadrotor(), scale=9.0)
+        _add_quadrotor_motion(scene, ents, 9.0)
         ents["goal"] = _marker(scene, 0.18, (0.0, 1.0, 0.0, 1.0), extras["target"])
         gx, gy, gz = (float(v) for v in extras["target"])
         _ring(scene, 0.55, (0.20, 1.0, 0.55, 0.95), (gx, gy, gz), n=48, tube=0.028)
@@ -2966,6 +3174,7 @@ def build_scene(task, extras, first):
         _ground(scene)
         _grid(scene, 24.0, 2.0)
         ents["body"] = _model(scene, "crazyflie", _build_quadrotor(), scale=14.0)
+        _add_quadrotor_motion(scene, ents, 14.0)
         ents["target"] = _marker(scene, 0.8, (0.9, 0.15, 0.1, 1.0), first["tgt"])
         tx, ty, tz = (float(v) for v in first["tgt"])
         _ring(scene, 1.6, (1.0, 0.22, 0.20, 0.95), (tx, ty, tz), n=56, tube=0.075)
@@ -2993,6 +3202,7 @@ def build_scene(task, extras, first):
         _ground(scene)
         _grid(scene, 220.0, 20.0)
         ents["body"] = _model(scene, "cessna", _build_fixedwing(), scale=10.0)
+        _add_fixedwing_motion(scene, ents, 10.0)
         ents["wps"] = [_marker(scene, 1.2, (0.92, 0.18, 0.14, 1.0), t) for t in extras["targets"]]
         for t in extras["targets"]:
             wx, wy, wz = (float(v) for v in t)
@@ -3024,6 +3234,7 @@ def build_scene(task, extras, first):
         _ground(scene)
         _grid(scene, 220.0, 20.0)
         ents["body"] = _model(scene, "quadplane", _build_quadplane(), scale=10.0)
+        _add_quadplane_motion(scene, ents, 10.0)
         ents["wps"] = [_marker(scene, 1.2, (0.92, 0.18, 0.14, 1.0), t) for t in extras["targets"]]
         for t in extras["targets"]:
             wx, wy, wz = (float(v) for v in t)
@@ -3064,6 +3275,7 @@ def build_scene(task, extras, first):
         # after scene.build below), otherwise the 16x body would sink ~39 m into
         # the pad as it lands (the true base only clears the pad by centimetres).
         ents["body"] = _model(scene, "falcon9", _build_rocket(), scale=16.0)
+        _add_rocket_motion(scene, ents, 16.0)
         ents["glow"] = _marker(scene, 3.0, (1.0, 0.58, 0.18, 1.0), (0, 0, -1e5))
         ents["trail"] = _trail(scene, 1.2, (0.25, 0.55, 0.95, 0.75))
         # descent corridor: pad in the lower third, apex near the top
@@ -3179,6 +3391,9 @@ def build_scene(task, extras, first):
                     (0.80, 0.88, 1.0, 0.85), sp)
         ents["body"] = _model(scene, "smallsat", _build_smallsat())
         ents["trail"] = _trail(scene, 0.22, (1.0, 0.65, 0.1, 1.0))
+        ents["plume"] = [
+            _marker(scene, 0.10, (0.25, 0.85, 1.0, 0.85)) for _ in range(6)
+        ]
         # Live osculating prediction: dotted violet ellipse + moving apsides.
         # This is recomputed from the recorded r/v state, not propagated with a
         # second simulation and not fitted to the already-flown trajectory.
@@ -3227,6 +3442,7 @@ def build_scene(task, extras, first):
         _ground(scene, 100000.0)
         _grid(scene, 9000.0, 750.0)
         ents["body"] = _model(scene, "amraam", _build_missile(), scale=200.0)
+        _add_missile_motion(scene, ents, 200.0)
         ents["me"] = _marker(scene, 24.0, (1.0, 0.9, 0.25, 1.0), tuple(p0))
         ents["target"] = _marker(scene, 60.0, (0.9, 0.2, 0.2, 0.9), tuple(first["tgt"]))
         tg = np.asarray(first["tgt"], dtype=float)
@@ -3283,6 +3499,9 @@ def build_scene(task, extras, first):
         # per-frame attach list is no longer needed -- the model carries the
         # nose adapter, heat shield, trunk and RCS pods.
         ents["body"] = _model(scene, "dragon", _build_chaser(), scale=c)
+        ents["plume"] = [
+            _marker(scene, 0.035 * k, (0.25, 0.85, 1.0, 0.82)) for _ in range(6)
+        ]
         ents["c_attach"] = []
         # chaser port ring (8 spheres) + centre marker, positioned on the
         # target-facing (+X local) face each frame
@@ -3530,6 +3749,7 @@ def render(task, frames, extras, out_path, fps):
             out["result"] = result
         return out
 
+    spin_phases = np.zeros(len(ents.get("motion", [])))
     for fi, f in enumerate(frames):
         # display-only lift (rocket): keeps the enlarged airframe off the pad
         pos = tuple(map(float, f["pos"]))
@@ -3537,6 +3757,8 @@ def render(task, frames, extras, out_path, fps):
         ents["body"].set_pos((pos[0], pos[1], pos[2] + lift))
         if f["quat"] is not None:
             ents["body"].set_quat(tuple(map(float, f["quat"])))
+        motion_dt = 0.0 if fi == 0 else float(f["_t"] - frames[fi - 1]["_t"])
+        _update_motion(ents, f, motion_dt, spin_phases)
         if task == "missile":
             ents["target"].set_pos(tuple(map(float, f["tgt"])))
         if task == "quadx_track":
@@ -3606,7 +3828,7 @@ def render(task, frames, extras, out_path, fps):
                 ("Altitude", f"{p[2]:.2f} m"),
                 [("Waypoints", "4 inside the 5 m dome"), ("Body", "scaled 9x")],
                 [("green", "active waypoint"), ("grey", "ground shadow")],
-                "slow pan camera · PyFlyt 30/30 close-up",
+                "slow pan · throttle-driven props · PyFlyt close-up",
                 fi,
                 terminal if fi == n_frames - 1 else None,
             )
@@ -3643,7 +3865,7 @@ def render(task, frames, extras, out_path, fps):
                  ("Body", "scaled 14x")],
                 [("red", "ground target"), ("grey", "LOS occluder"),
                  ("white", "line of sight")],
-                "fixed global view · true target state",
+                "fixed global · true target · throttle-driven props",
                 fi,
                 terminal if fi == n_frames - 1 else None,
             )
@@ -3672,6 +3894,9 @@ def render(task, frames, extras, out_path, fps):
             ents["body"].set_pos(tuple(map(float, pd)))
             qc = _quat_x_to(d)
             ents["body"].set_quat(qc)
+            _update_thruster(
+                ents["plume"], pd - d * (0.45 * c_size), f["action"], spacing=0.14 * k
+            )
             for ent, lp, lq in ents.get("c_attach", []):
                 ent.set_pos(tuple(map(float, pd + _quat_rot(qc, lp))))
                 ent.set_quat(tuple(map(float, _quat_mul_np(qc, lq))))
@@ -3786,10 +4011,14 @@ def render(task, frames, extras, out_path, fps):
                     lookat=tuple(centre),
                     up=WORLD_UP,
                 )
-                # engine glow (display-only) just under the scaled nozzle,
-                # which sits on the true airframe base thanks to body_lift
-                ents["glow"].set_pos(tuple(p + np.array((0.0, 0.0, -2.2))))
-                if p[2] < 1.5:
+                # Real ignition / fuel / throttle state drives the engine glow.
+                aux = np.asarray(f["aux"], float)
+                burning = aux[4] > 0.5 and aux[5] > 0.0 and f["throttle"][0] > 0.01
+                if burning:
+                    ents["glow"].set_pos(
+                        tuple(p + np.array((0.0, 0.0, ents["body_lift"] - 2.45 * scale)))
+                    )
+                else:
                     ents["glow"].set_pos(tuple(HIDDEN))
             else:
                 # Left wingtip camera, rigidly mounted to the displayed 10x
@@ -3816,14 +4045,14 @@ def render(task, frames, extras, out_path, fps):
             if task == "rocket":
                 rows = [("Landing pad", "at origin"), ("Body", f"scaled {scale}x")]
                 legend = [("grey", "ground plane"), ("blue", "descent path")]
-                note = "ground telephoto tracking · fixed global descent view · 16x pad-anchored model"
+                note = "ground telephoto · live grid fins/TVC · 16x pad-anchored model"
             else:
                 rows = [("Waypoints", "4 red spheres"), ("Body", f"scaled {scale}x")]
                 legend = [("red", "waypoint target"), ("blue", "flown path")]
                 note = (
-                    "left wingtip camera · live VTOL attitude · no synthetic tilt"
+                    "left wingtip · 5 live props · baseline surfaces neutral"
                     if task == "quadplane"
-                    else "left wingtip camera · body-attitude tracking · global waypoint view"
+                    else "left wingtip · recorded prop + surface actuation"
                 )
             state = _state_task(
                 names[task],
@@ -3849,6 +4078,7 @@ def render(task, frames, extras, out_path, fps):
                 marker.set_pos(tuple(map(float, pt)))
             ents["pred_peri"].set_pos(tuple(map(float, orb["peri"])))
             ents["pred_apo"].set_pos(tuple(map(float, orb["apo"])))
+            _update_thruster(ents["plume"], p, f["action"], spacing=0.42)
             rgb = _main_render(cam)
             state = _state_task(
                 "Orbital transfer · GCRF",
@@ -3857,7 +4087,7 @@ def render(task, frames, extras, out_path, fps):
                  ("Inclination", f"{math.degrees(orb['inc']):.2f} deg")],
                 [("green", "initial orbit"), ("cyan", "target circle"),
                  ("violet", "osculating prediction")],
-                "orange = flown · 1 unit = 1000 km · spacecraft oversized",
+                "orange = flown · cyan plume = recorded thrust · oversized spacecraft",
                 fi,
                 terminal if fi == n_frames - 1 else None,
             )
@@ -3914,7 +4144,10 @@ def render(task, frames, extras, out_path, fps):
             # to the target, so the tail is away from the line of sight)
             los = tgt - p
             los = los / max(float(np.linalg.norm(los)), 1e-9)
-            ents["glow"].set_pos(tuple(p - los * 345.0))
+            if float(f["aux"][5]) > 0.5:  # actual boost-coast burning flag
+                ents["glow"].set_pos(tuple(p - los * 345.0))
+            else:
+                ents["glow"].set_pos(tuple(HIDDEN))
             png = _main_render(cam)
             # inset: chaser-framed far out, sliding to the missile+target pair
             # as the engagement closes (same convention as docking)
@@ -3934,7 +4167,7 @@ def render(task, frames, extras, out_path, fps):
                 ("Altitude", f"{p[2] / 1000.0:.2f} km"),
                 [("Target", "red 60 m marker"), ("Body", "scaled 200x")],
                 [("yellow", "missile + locator"), ("red", "target marker")],
-                "fixed global engagement view (0-4 km)",
+                "live fin actuation + boost-coast plume · global engagement view",
                 fi,
                 terminal if fi == n_frames - 1 else None,
             )
