@@ -649,6 +649,8 @@ _MODEL_MATS = {
     "glass": ((0.045, 0.060, 0.080, 1.0), 0.15, 0.35),
     "chip": ((0.020, 0.020, 0.025, 1.0), 0.50, 0.10),
     "wire": ((0.16, 0.05, 0.05, 1.0), 0.55, 0.05),
+    # propeller motion blur: a thin translucent disc under the blades
+    "blur": ((0.88, 0.90, 0.93, 0.13), 0.35, 0.0),
 }
 
 
@@ -758,7 +760,7 @@ def _m_prop_tips(radius, phase=0.0, width=0.022, thick=0.0024):
 def _model(scene, name, groups, scale=1.0, pos=(0.0, 0.0, 0.0)):
     """Load a multi-material model as one mesh entity per material."""
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    ents, lowest = [], 0.0
+    ents, lowest, by_key = [], 0.0, {}
     for key, meshes in groups.items():
         mesh = trimesh.util.concatenate(meshes)
         mesh.remove_unreferenced_vertices()
@@ -766,19 +768,20 @@ def _model(scene, name, groups, scale=1.0, pos=(0.0, 0.0, 0.0)):
         path = _MODEL_DIR / f"{name}_{key}.obj"
         mesh.export(path)
         color, rough, metallic = _MODEL_MATS[key]
-        ents.append(
-            scene.add_entity(
-                gs.morphs.Mesh(
-                    file=str(path), scale=scale, pos=tuple(pos),
-                    collision=False, fixed=False,
-                ),
-                surface=gs.surfaces.Plastic(
-                    color=color, roughness=rough, metallic=metallic, smooth=False
-                ),
-            )
+        ent = scene.add_entity(
+            gs.morphs.Mesh(
+                file=str(path), scale=scale, pos=tuple(pos),
+                collision=False, fixed=False,
+            ),
+            surface=gs.surfaces.Plastic(
+                color=color, roughness=rough, metallic=metallic, smooth=False
+            ),
         )
+        by_key[key] = ent
+        ents.append(ent)
     rig = _Rig(ents)
     rig.lowest = lowest
+    rig.by_key = by_key
     return rig
 
 
@@ -795,6 +798,8 @@ def _prop_groups(radius, blade, tip, pitch=20.0, tip_width=0.022, tip_thick=0.00
     return {
         blade: [_m_prop(radius, pitch=pitch)],
         tip: [_m_prop_tips(radius, width=tip_width, thick=tip_thick)],
+        # translucent motion-blur disc: hides the per-frame blade stepping
+        "blur": [_m_cyl(radius * 0.985, 0.0012, (0.0, 0.0, 0.0), n=40)],
     }
 
 
@@ -804,7 +809,8 @@ def _add_motion(ents, rig, pos, scale, kind, index=0, base=(1, 0, 0, 0),
     ents.setdefault("motion", []).append(
         dict(rig=rig, pos=np.asarray(pos, float), scale=float(scale), kind=kind,
              index=int(index), base=np.asarray(base, float), axis=np.asarray(axis, float),
-             limit=float(limit), sign=float(sign), phase=float(phase))
+             limit=float(limit), sign=float(sign), phase=float(phase),
+             disc=rig.by_key.get("blur"))
     )
 
 
@@ -831,10 +837,11 @@ def _update_motion(ents, f, phases):
             # Sweep a fixed angle per RENDERED frame (not per simulated second):
             # the highlight cut resamples whole episodes, so a physical-time rate
             # would advance ~2 rad between composite frames and alias into noise.
-            # Keep the step under a quarter turn: two-blade props strobe once it
-            # approaches half a turn, while 0.55-1.5 rad reads as a fast spin.
+            # The translucent disc in the prop rig covers the stepping, so the
+            # blades can run faster than a quarter turn per frame without the
+            # two-blade strobe reading as a wobble.
             command = abs(float(throttle[min(part["index"], len(throttle) - 1)]))
-            step = 0.0 if command < 0.02 else 0.55 + 0.95 * min(command, 1.0)
+            step = 0.0 if command < 0.02 else 0.90 + 1.30 * min(command, 1.0)
             phases[i] += part["sign"] * step
             angle = phases[i] + part["phase"]
             local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
@@ -849,6 +856,9 @@ def _update_motion(ents, f, phases):
             local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
         part["rig"].set_pos(tuple(origin + _quat_rot(q, part["pos"] * part["scale"])))
         part["rig"].set_quat(tuple(_quat_mul_np(q, local_q)))
+        if kind == "prop" and part.get("disc") is not None and command < 0.05:
+            # parked blades should not sit under a motion-blur disc
+            part["disc"].set_pos(tuple(HIDDEN))
 
 
 def _surf_rows(surfaces):
