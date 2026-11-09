@@ -389,6 +389,9 @@ def record(task, env, policy, max_steps):
                     "visible": bool(env.vis.cpu()[0]),
                 }
             )
+            # prop motion rigs read the recorded motor commands, so this branch
+            # must publish them too or the blades stay frozen
+            frames[-1]["throttle"] = env.plant.throttle.cpu().numpy()[0].copy()
         elif task == "satellite":
             frames.append(
                 {
@@ -3494,7 +3497,19 @@ def build_scene(task, extras, first):
         tg = np.asarray(first["tgt"], dtype=float)
         _ring(scene, 150.0, (1.0, 0.25, 0.22, 0.75), tuple(tg), n=72, tube=4.0)
         _beam(scene, (tg[0], tg[1], 0.0), float(tg[2]), (1.0, 0.25, 0.22, 0.16), 6.0)
-        ents["glow"] = _marker(scene, 18.0, (1.0, 0.55, 0.16, 1.0), tuple(p0))
+        # display-only exhaust chain: a taper from the nozzle backwards, sized
+        # against the 200x display body so the plume reads at inset range
+        ents["glow"] = [
+            _marker(scene, r, c, tuple(p0))
+            for r, c in (
+                (34.0, (1.0, 0.86, 0.52, 1.0)),
+                (27.0, (1.0, 0.70, 0.30, 1.0)),
+                (20.0, (1.0, 0.58, 0.18, 1.0)),
+                (14.0, (1.0, 0.48, 0.12, 1.0)),
+                (9.0, (1.0, 0.40, 0.10, 1.0)),
+                (5.0, (1.0, 0.34, 0.08, 1.0)),
+            )
+        ]
         # dashed line of sight: reads the closing geometry at km range
         ents["los"] = [_marker(scene, 11.0, (1.0, 0.42, 0.32, 0.85)) for _ in range(30)]
         ents["trail"] = _trail(scene, 8.0, (0.25, 0.52, 0.92, 0.65))
@@ -4189,12 +4204,15 @@ def render(task, frames, extras, out_path, fps):
                 m.set_pos(tuple(p + (tgt - p) * (i + 1) / (len(ents["los"]) + 1)))
             # display-only exhaust plume behind the airframe (it flies nose-on
             # to the target, so the tail is away from the line of sight)
-            los = tgt - p
-            los = los / max(float(np.linalg.norm(los)), 1e-9)
             if float(f["aux"][5]) > 0.5:  # actual boost-coast burning flag
-                ents["glow"].set_pos(tuple(p - los * 345.0))
+                # nozzle is the body -x end; taper the chain down that axis so
+                # the flame stays behind the airframe through the whole turn
+                back = _quat_rot(np.asarray(f["quat"], float), np.array((-1.0, 0.0, 0.0)))
+                for k, m in enumerate(ents["glow"]):
+                    m.set_pos(tuple(p + back * (300.0 + 40.0 * k)))
             else:
-                ents["glow"].set_pos(tuple(HIDDEN))
+                for m in ents["glow"]:
+                    m.set_pos(tuple(HIDDEN))
             png = _main_render(cam)
             # inset: chaser-framed far out, sliding to the missile+target pair
             # as the engagement closes (same convention as docking)
