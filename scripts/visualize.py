@@ -831,9 +831,10 @@ def _update_motion(ents, f, phases):
             # Sweep a fixed angle per RENDERED frame (not per simulated second):
             # the highlight cut resamples whole episodes, so a physical-time rate
             # would advance ~2 rad between composite frames and alias into noise.
-            # 0.30-0.85 rad per frame reads as a blade actually turning.
+            # Keep the step under a quarter turn: two-blade props strobe once it
+            # approaches half a turn, while 0.55-1.5 rad reads as a fast spin.
             command = abs(float(throttle[min(part["index"], len(throttle) - 1)]))
-            step = 0.0 if command < 0.02 else 0.30 + 0.55 * min(command, 1.0)
+            step = 0.0 if command < 0.02 else 0.55 + 0.95 * min(command, 1.0)
             phases[i] += part["sign"] * step
             angle = phases[i] + part["phase"]
             local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
