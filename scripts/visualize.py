@@ -3325,7 +3325,17 @@ def build_scene(task, extras, first):
         # the pad as it lands (the true base only clears the pad by centimetres).
         ents["body"] = _model(scene, "falcon9", _build_rocket(), scale=16.0)
         _add_rocket_motion(scene, ents, 16.0)
-        ents["glow"] = _marker(scene, 3.0, (1.0, 0.58, 0.18, 1.0), (0, 0, -1e5))
+        # display-only flame taper under the engine section: a single small
+        # sphere read as a speck at the 570 m telephoto stand-off
+        ents["glow"] = [
+            _marker(scene, r, c, (0, 0, -1e5))
+            for r, c in (
+                (5.0, (1.0, 0.86, 0.52, 1.0)),
+                (4.2, (1.0, 0.70, 0.30, 1.0)),
+                (3.4, (1.0, 0.58, 0.16, 1.0)),
+                (2.6, (1.0, 0.45, 0.10, 1.0)),
+            )
+        ]
         ents["trail"] = _trail(scene, 1.2, (0.25, 0.55, 0.95, 0.75))
         # descent corridor: pad in the lower third, apex near the top
         cam = scene.add_camera(
@@ -4075,11 +4085,17 @@ def render(task, frames, extras, out_path, fps):
                 aux = np.asarray(f["aux"], float)
                 burning = aux[4] > 0.5 and aux[5] > 0.0 and f["throttle"][0] > 0.01
                 if burning:
-                    ents["glow"].set_pos(
-                        tuple(p + np.array((0.0, 0.0, ents["body_lift"] - 2.45 * scale)))
-                    )
+                    # engine-bell exit in the 16x display frame: the model's
+                    # lowest point is the landing legs (-2.645), not the bells
+                    nozzle = p + np.array((0.0, 0.0, ents["body_lift"] - 2.43 * scale))
+                    for k, m in enumerate(ents["glow"]):
+                        # keep the tail above the pad: at touchdown the chain
+                        # collapses onto a bright pool instead of vanishing
+                        z = max(float(nozzle[2]) - 6.0 * k, 1.2)
+                        m.set_pos((float(nozzle[0]), float(nozzle[1]), z))
                 else:
-                    ents["glow"].set_pos(tuple(HIDDEN))
+                    for m in ents["glow"]:
+                        m.set_pos(tuple(HIDDEN))
             else:
                 # Body-frame 3/4 front-left tracking shot. The previous wingtip
                 # mount could not see the nose propeller at all; this framing
