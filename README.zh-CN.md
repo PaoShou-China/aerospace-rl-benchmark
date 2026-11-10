@@ -182,7 +182,7 @@ satellite、transfer、docking、rendezvous —— `quadx_track` 与 `quadplane`
 
 **老师：** 程林 · 龚胜平 · 师鹏
 
-**同学：** 王翰 · 史运翰 · 龚钰轩 · 代雨航
+**同学：** 王翰 · 史运翰 · 龚钰轩 · 代雨航 · 祁科羽
 
 **相关项目：** [Genesis](https://github.com/Genesis-Embodied-AI/Genesis) ·
 [PyTorch](https://pytorch.org) ·

@@ -227,7 +227,7 @@ We thank the following teachers and fellow students for their support and help.
 
 **Teachers:** Lin Cheng · Shengping Gong · Peng Shi
 
-**Fellow students:** Wang Han · Shi Yunhan · Gong Yuxuan · Dai Yuhang
+**Fellow students:** Wang Han · Shi Yunhan · Gong Yuxuan · Dai Yuhang · Qi Keyu
 
 **Related projects:** [Genesis](https://github.com/Genesis-Embodied-AI/Genesis) ·
 [PyTorch](https://pytorch.org) ·
