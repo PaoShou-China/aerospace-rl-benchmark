@@ -72,6 +72,10 @@ v_{\mathrm{eff}}=\min(v_\eta,v_d,v_{\mathrm{cl}}),\qquad
 I\leftarrow\mathrm{clip}(I+k_{E,i}\delta_E\Delta t-\dot I_{\mathrm{aw}}\Delta t,0,I_{\max}),\quad
 \theta=\mathrm{clip}(\theta_{\mathrm{trim}}+k_E\delta_E+I,0,1). \tag{9}
 \end{equation}
+legacy 上 $I_{\max}=0.2$（天花板 $0.35+0.2+0.2=0.75$）。realistic 预设的定距桨
+前进比损失使该天花板在 14–16 m/s 时不足以提供爬升功率，因此该预设下控制器把
+$I_{\max}$ 提到 $0.45$、可到满油门；legacy 表不变（全局提高实测 79.7%，低于已发布
+的 91%，主要由越界导致）。
 俯仰指令（$\delta_B$ 上 P）带倾斜飞行迎角前馈、欠速能量保护与超速爬升权衡：
 \begin{equation}
 \theta^{\mathrm{cmd}}=\theta_{\mathrm{trim}}-k_B\delta_B
@@ -98,7 +102,7 @@ a_1=k_\theta(\theta^{\mathrm{cmd}}-\theta)-k_{d,\theta}(\omega_{b,y}-q_{\mathrm{
 | 横向 | `l1_distance` / `l1_min_distance`；`l1_dist_gain` / `l1_dist_offset` | 40.0 m / 12.0 m；0.6 / 8.0 m |
 | 横向 | `max_bank_deg`；`v_stall_guard`；`k_roll` / `kd_roll` | 60°；11.5 m/s；3.0 / 0.5 |
 | 纵向 | `v_ref` / `v_turn_min`；`k_speed_bleed` / `k_dist_slow` / `d_slow_ref` | 20.0 / 14.0 m/s；2.5 / 0.35 / 10.0 m |
-| 纵向 | `k_energy` / `k_energy_i` / `integral_max` / `throttle_trim`；`k_aw_speed` | 0.008 / 0.005 / 0.2 / 0.35；0.012 |
+| 纵向 | `k_energy` / `k_energy_i` / `integral_max` / `throttle_trim`；`k_aw_speed` | 0.008 / 0.005 / 0.2（realistic 下 0.45）/ 0.35；0.012 |
 | 纵向 | `k_balance` / `k_speed_keep` / `k_geo_up` | 0.008 / 0.05 / 0.6 |
 | 纵向 | `k_pp` / `d_pp_entry` / `eta_pp_gate_deg` | 1.2 / 35.0 m / 40° |
 | 纵向 | `bank_climb_deg` / `v_climb_ref` / `h_climb_gate` | 45° / 14.0 m/s / 5.0 m |

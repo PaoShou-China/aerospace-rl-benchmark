@@ -29,7 +29,7 @@ benchmark **v2** 下三层速率：**策略 40 Hz**（$\Delta t=1/40$ s；研究
 - **质量特性**：结构质量 138.2 kg（`base_link` 91.0 kg、`booster_link` 47.0 kg、四片栅格翼各 0.05 kg）。`fueltank_link` 质量每物理步改写为 $f\cdot410.9$ kg，惯量 $f\cdot\mathrm{diag}(1678,1678,7.01)$ kg·m²，故出生质量 $138.2+0.05\times410.9\approx158.7$ kg（满燃料最大 549.1 kg）。
 - **助推器**：可重启发动机，每物理步当点火指令超过 0.5 时置点火锁存。油门目标为重映射 $u\in[0,1]\mapsto0.39+0.61u$，经一阶滞后（$\tau=0.01$ s）跟踪并每物理步乘 $1+0.01\mathcal N(0,1)$ 噪声。推力 $T=\text{throttle}\times7607.0$ N（39% 下限 = 2966.7 N），作用于 `booster_link`，方向为万向节方向 $(\sin g_y,\ -\sin g_x\cos g_y,\ \cos g_x\cos g_y)$；两轴万向节限 $\pm5^{\circ}$，滞后 $\tau=0.01$ s。满油门耗油 1.451 kg/s；$f=0$ 后推力为零。
 - **栅格翼**：四个升力面（`fin_pos_x, fin_neg_x, fin_pos_y, fin_neg_y`；弦 0.5 m、展 0.5 m、$C_{l\alpha}=2\pi$、$\eta=0.65$、失速 $\pm20^{\circ}$、偏度限 $\pm45^{\circ}$、滞后 $\tau=0.05$ s）。鳍指令 $(a_x,a_y,a_\psi)$ 混合为 $(a_y{+}a_\psi,\ a_y{-}a_\psi,\ a_x{-}a_\psi,\ a_x{+}a_\psi)$，裁剪到 $[-1,1]$。
-- **体阻力**：$F=-\tfrac12\rho C_d A\lvert v_{\text{air}}\rvert v_{\text{air}}$，$\rho=1.225$ kg/m³，$C_d=(1.16,1.16,2.0)$，$A=(1.7649,1.7649,0.1075)$ m²，作用于 `base_link`。
+- **体阻力**：$F=-\tfrac12\rho C_d A\lvert v_{\text{air}}\rvert v_{\text{air}}$，$\rho=1.225$ kg/m³，$C_d=(1.16,1.16,2.0)$，$A=(1.7649,1.7649,0.1075)$ m²，作用于 `base_link`。`aero="realistic"` 时 $\rho$ 取该高度 ISA 密度，升力面升/阻力系数乘压缩性因子，发动机推力随环境压力下降而增大，舵机速率限幅 200 deg/s 与 1% 死区，观测带 IMU/GPS 噪声与一步延迟，并为助推器启用 Genesis 接触约束求解器（realistic 模式下所有大气任务均启用），使着陆台能够真实支撑、倾倒并提供摩擦耗散，而非仅做接触检测；v2 成功还要求连续稳定接触 0.5 s，而非单次触地采样。
 
 reset 时先做 10 次零指令 warmup（20 物理子步）以沉降接触与作动器。
 

@@ -1278,8 +1278,16 @@ the link origin, so an 8× rocket would sink ~17 m into the landing platform/gro
 on touchdown, causing obvious clipping; anchoring at the lowest point keeps the
 scaled belly coincident with the true belly, so it stands exactly on the platform
 while card readouts and success radii remain true values. Positions, ranges and
-success radii remain in true meters; atmospheric tasks use a gray ground + light
-blue sky background, and spacecraft tasks retain a dark starfield. QuadX-Track
+success radii remain in true meters; atmospheric tasks composite a
+task-specific photographic sky plate behind the depth-masked scene (procedural
+sky fallback when the asset is absent), spacecraft tasks use task-specific
+starfield / Earth-limb plates, ground planes are repainted in post as grassland
+(multi-octave meadow, clump and field-scale variation faded against the pixel
+footprint; world-space, so the cover stays locked during pans),
+and rocket/missile exhausts are emissive plumes (dense multi-ring taper with a
+white-hot throat, orange body and ember tail) driven by the real throttle /
+burn flags, with a screen-space hot-core/glow pass projected from the nozzle so
+the flame reads as light rather than a painted cone. QuadX-Track
 and Quadplane reuse PyFlyt body URDFs, camera angles and waypoint styling;
 QuadX-Track additionally shows the real target, LOS and environmental occluders.
 
@@ -1287,12 +1295,12 @@ QuadX-Track additionally shows the real target, LOS and environmental occluders.
 
 | Task | Panoramic main view (left 960×810, uncovered) | Top-right status card (480×430) | Bottom-right close-up (480×354) |
 |------|------|------|------|
-| QuadX-Waypoints | cf2x URDF (6× display scale) + gray ground + green active waypoint sphere (scaled to 0.18 m radius); fixed global view (fov 45°, covering the 5 m flight dome) | Primary metric Altitude; Waypoints "4 inside the 5 m dome" / Body "scaled 6x"; green waypoint and gray ground-shadow legend; progress bar and RESULT badge | PyFlyt yaw-30°/pitch-30° body |
+| QuadX-Waypoints | cf2x URDF (6× display scale) + grass ground + green active waypoint sphere (scaled to 0.18 m radius); fixed global view (fov 45°, covering the 5 m flight dome) | Primary metric Altitude; Waypoints "4 inside the 5 m dome" / Body "scaled 6x"; green waypoint and ground-shadow legend; progress bar and RESULT badge | PyFlyt yaw-30°/pitch-30° body |
 | QuadX-Track | same cf2x (12×) + red ground target sphere (1 m radius) + 6 gray LOS occluder columns + white LOS point sequence + blue/red history tracks | Primary metric Altitude; Target VISIBLE/LOST / Body "scaled 12x"; red/gray/white legend; RESULT badge | body |
 | Fixedwing-Waypoints | fixedwing URDF (8×), 4 red waypoint spheres, history track | Primary metric Altitude; Waypoints "4 red spheres" / Body "scaled 8x"; red/blue legend; RESULT badge | body |
 | Quadplane-VTOL | quadplane URDF (8×), 4 red waypoint spheres, history track (rotor/fixed-wing configuration shown by true attitude, no fake tilt animation) | Primary metric Altitude; Waypoints "4 red spheres" / Body "scaled 8x"; red/blue legend; footnote noting true VTOL attitude and no synthetic tilt animation | body (true VTOL attitude) |
-| Rocket-Landing | rocket URDF (8×, anchored at the belly's lowest point, standing on the pad without clipping) + landing pad + gray ground, covering 0–450 m descent | Primary metric Altitude; Landing pad "at origin" / Body "scaled 8x"; gray ground and blue descent-track legend; footnote noting fixed global view and magnification anchor | rocket (full raised body + engine plume) |
-| Missile-Intercept | missile URDF (200×) + yellow locator point, kinematic target marked by a 60 m red marker, engagement track, 4 km altitude ground/sky background; fixed global engagement view | Primary metric Altitude (km); Target "red 60 m marker" / Body "scaled 200x"; yellow/red legend; fixed global engagement view footnote | missile |
+| Rocket-Landing | rocket URDF (8×, anchored at the belly's lowest point, standing on the pad without clipping) + landing pad + grass ground, covering 0–450 m descent | Primary metric Altitude; Landing pad "at origin" / Body "scaled 8x"; grass ground and blue descent-track legend; footnote noting fixed global view and magnification anchor | rocket (full raised body + engine plume) |
+| Missile-Intercept | missile URDF (200×) + yellow locator point, kinematic target marked by a 60 m red marker, engagement track, 4 km altitude grassland/sky background; fixed global engagement view | Primary metric Altitude (km); Target "red 60 m marker" / Body "scaled 200x"; yellow/red legend; fixed global engagement view footnote | missile |
 | Satellite Attitude | satellite bus (gray body with +z/−z equipment bays, +x sensor face, −x thruster, top antenna, ±y solar panels), body-axis tri-color frame following attitude, yellow target-attitude frame, cyan CMG gimbal axis columns, red target-attitude ghost; fixed oblique camera (3.4/−3.4/2.15, not rotating with the body) | Primary metric Attitude error (deg); Gimbal X/Y/Z (rad) key-values; red/green/blue = body X/Y/Z legend; footnote explaining yellow/cyan/ghost semantics | bus + CMG axes |
 | Low-Thrust Transfer | Earth sphere + spacecraft box (schematic scale, 1 unit = 1000 km), green dashed initial orbit ellipse, cyan dotted target circular orbit, red/yellow perigee/apogee markers, orange true-state track, 2000 km scale bar; fixed 45° global view (camera distance 36 units) | Primary metric Scale bar "2000 km"; 1 unit = 1000 km / Frame = GCRF / Markers key-values; green/cyan/orange legend; footnote noting the spacecraft box is not to scale | spacecraft |
 | Docking | gray target station (4×) + ±y solar panels, +x docking ring (green edge + center marker + translucent approach-axis column), orange chaser (4×) with docking face toward the target, center connecting dashed line, true velocity arrow (10 m/m·s⁻¹), approach track; fixed view aligned with the terminal approach segment (~70 m) | Primary metric Range to target; Relative speed / Success "< pos_goal" / Fail "> range_fail" key-values; gray/green/orange legend | chaser + station (continuously zoomed with range, including solar panels) |
@@ -1302,6 +1310,7 @@ QuadX-Track additionally shows the real target, LOS and environmental occluders.
 
 ```bash
 python scripts/visualize.py <task>    # task ∈ {quadx, quadx_track, fixedwing, quadplane, rocket, missile, satellite, transfer, docking, rendezvous}
+python scripts/visualize.py <task> --closeup    # standalone close-up camera, native 960x540
 ```
 
 The script restores the environment configuration from

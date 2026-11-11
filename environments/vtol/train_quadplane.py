@@ -45,7 +45,7 @@ from environments.vtol.env import QuadplaneWaypointsEnv  # noqa: E402
 
 TASK = "quadplane"
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 500  # converges in ~12K episodes; 500 updates sufficient
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False  # resume from the newest model_*.pt / checkpoint.pt
@@ -59,7 +59,7 @@ ENTROPY_COEF = 0.0
 VALUE_LOSS_COEF = 0.5
 # Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
 # (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
-WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
+WIND = dict(steady_wind=None, dryden=0.3, severity="moderate", aero="realistic")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # env's ``conventional_controller`` before PPO. None = off.

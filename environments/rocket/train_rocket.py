@@ -66,12 +66,12 @@ ALGORITHM = "ppo"
 # four-arm comparison (the classical-baseline records in results/rocket were
 # evaluated with env_kwargs={} calm air -- same caliber required; the dryden
 # robustness arm is a separate study, not this benchmark).
-WIND = dict(steady_wind=None, dryden=0.0, severity="moderate")
+WIND = dict(steady_wind=None, dryden=0.0, severity="moderate", aero="realistic")
 # Rocket benchmark version:
 #   'v2' (default, current Falcon9): 7-dim finlet mixer (finlet x/y/yaw, ignition, throttle, 2 gimbals),  # noqa: E501
 #     40 Hz, rocket_v2.urdf with 6 spherical footpads, ever_stable_2s primary metric
 #   'v1' (real-scale): single-Merlin terminal landing, dual-tank variable mass, 60 s horizon
-BENCHMARK_VERSION = "v2"  # 'v2' (scaled legacy) | 'v1' (real-scale F9)
+BENCHMARK_VERSION = "v1"  # 'v1' (real-scale F9, lenient success) | 'v2' (scaled legacy, strict)
 # separate from results/rocket, which holds the classical-baseline eval
 # records (baseline.json / baseline_pd_landing.json)
 OUT_DIR = (
@@ -141,11 +141,10 @@ def main(**overrides):
     env_wrapper / ...) let the 5-seed orchestrator drive the same constants.
 
     Hyperparameters (2026-11-03 5-seed protocol, arXiv:2407.15083 alignment):
-    num_steps_per_env 64 doubles the batch vs the shared 32 (at 32 the batch
-    holds only ~8 episodes and touch-quality clusters keep regressing);
-    lr 3e-4, gamma 0.995, lam 0.97, entropy 0.007, clip 0.2, 10 epochs --
-    64 steps/env x 1024 envs x 10 epochs gives 655k gradient samples/update,
-    close to the paper's ~600k."""
+    num_steps_per_env 100 (matches other tasks; at 64 the batch holds only ~8
+    episodes and touch-quality clusters keep regressing);
+    lr 3e-4, gamma 0.995, lam 0.97, entropy 0.007, clip 0.2, 5 epochs --
+    100 steps/env x 1024 envs x 5 epochs gives 512k gradient samples/update."""
     env_kwargs = dict(WIND, benchmark_version=BENCHMARK_VERSION)
     kwargs = dict(
         num_envs=NUM_ENVS,
@@ -157,13 +156,13 @@ def main(**overrides):
         out_dir=OUT_DIR,
         algo=ALGORITHM,
         init_std=INIT_STD,
-        num_steps_per_env=64,
+        num_steps_per_env=100,
         lr_schedule="fixed",
         learning_rate=3e-4,
         gamma=0.995,
         lam=0.97,
         entropy_coef=0.007,
-        num_learning_epochs=10,
+        num_learning_epochs=5,
         clip_param=0.2,
         value_loss_coef=1.0,
         desired_kl=0.01,

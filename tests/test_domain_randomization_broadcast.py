@@ -155,7 +155,7 @@ def test_atmospheric_controller_design_records_physical_nominal(task):
         backend="cpu",
         seed=7,
         domain_randomize=False,
-        param_mismatch={"thrust": 0.1, "mass": 0.1},
+        param_mismatch={"thrust": 0.1, "mass": 0.1, "aero": 0.1, "actuator": 0.1},
     )
     try:
         design = dict(env.controller_design)
@@ -163,10 +163,19 @@ def test_atmospheric_controller_design_records_physical_nominal(task):
         env.close()
     ref = make(task, num_envs=4, backend="cpu", seed=7, domain_randomize=False)
     try:
-        assert set(design) == set(ref.PERTURBABLE_PARAMS), task
+        # Every requested parameter must be recorded, and nothing outside the
+        # env's declared perturbable set may appear.  Realism-only params
+        # (sensor/cg/inertia) are absent from this legacy mismatch spec.
+        assert {"thrust", "mass", "aero", "actuator"} <= set(design)
+        assert set(design) <= set(ref.PERTURBABLE_PARAMS), task
         for name, value in design.items():
             assert isinstance(value, float), (task, name, type(value))
             assert value > 0.0, (task, name, value)
+            if name in ("aero", "actuator", "sensor", "cg", "inertia"):
+                # These are multiplicative scale factors with no physical
+                # nominal, so 1.0 is the correct design value.
+                assert value == pytest.approx(1.0)
+                continue
             assert value != pytest.approx(1.0), f"{task}: {name} kept the 1.0 scale placeholder"
             if task == "rocket" and name == "mass":
                 # The booster is built fully fuelled (549.1 kg) and reset() fills

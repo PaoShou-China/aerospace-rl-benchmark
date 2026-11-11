@@ -34,7 +34,7 @@ $M=\big[\begin{smallmatrix}-1&-1&-1&1\\1&1&-1&1\\1&-1&1&1\\-1&1&1&1\end{smallmat
 \theta_{t+1}=\theta_t+\frac{\Delta t}{\tau_m}(\pi_t-\theta_t),\qquad
 \theta_t\leftarrow\theta_t\big(1+0.02\,\xi_t\big),\qquad \xi_t\sim\mathcal N(4,1), \tag{2}
 \end{equation}
-$\tau_m=0.01$ s，每个物理步每副本一次高斯采样（上游约定；非零均值作为常数油门直流增益吸收）。单电机推力二次律 $f_i=\lvert\theta_i\rvert\theta_i\,F_{\max}/4$（$F_{\max}=2.0$ N 总量），反扭矩 $\tau_{z,i}=f_i(k_m/k_f)s_i$，$k_m/k_f=7.94\times10^{-12}/3.16\times10^{-10}$，旋向 $s=(-1,-1,1,1)$。体阻力 $F_d=-\tfrac12\rho C_d A\,\lvert v_{\mathrm{air}}\rvert\circ v_{\mathrm{air}}$（$C_d=3.0$，每轴 $A=4\times10^{-4}$ m²）与角阻力 $\tau_d=-10^{-4}\lvert\omega_b\rvert\circ\omega_b$（接触时抑制）。求解器保护：$\lVert v\rVert$、$\lVert\omega\rVert$ 仅在超过 15 m/s、30 rad/s 时缩放。
+$\tau_m=0.01$ s，每个物理步每副本一次高斯采样（上游约定；非零均值作为常数油门直流增益吸收）。单电机推力二次律 $f_i=\lvert\theta_i\rvert\theta_i\,F_{\max}/4$（$F_{\max}=2.0$ N 总量），反扭矩 $\tau_{z,i}=f_i(k_m/k_f)s_i$，$k_m/k_f=7.94\times10^{-12}/3.16\times10^{-10}$，旋向 $s=(-1,-1,1,1)$。体阻力 $F_d=-\tfrac12\rho C_d A\,\lvert v_{\mathrm{air}}\rvert\circ v_{\mathrm{air}}$（$C_d=3.0$，每轴 $A=4\times10^{-4}$ m²）与角阻力 $\tau_d=-10^{-4}\lvert\omega_b\rvert\circ\omega_b$（接触时抑制）。求解器保护：$\lVert v\rVert$、$\lVert\omega\rVert$ 仅在超过 15 m/s、30 rad/s 时缩放。`aero="realistic"` 时另加线性旋翼阻力（0.005 N 每 m/s）、旋翼陀螺力矩、逐旋翼按各自世界高度计算的地效推力因子、ISA 密度缩放与叶素前进比损失 $\max(0,1-(V_z/(V_p\theta))^2)$（$V_p=16.7$ m/s）、1S 350 mAh 电池包的电压下垂/耗尽因子 $(V/4.2)^2$，以及带噪声的观测（陀螺零偏、姿态/速度/位置噪声）；40 Hz 的 quadx 策略刻意保持零传输延迟。realistic 默认域随机化在 thrust/mass 之外还采样传感器质量、3D 质心偏移、逐轴惯量、独立气动系数，以及舵机死区/回差/正反速率不对称/传输延迟；legacy 保持原表不变。
 
 ## 4. 动作空间
 

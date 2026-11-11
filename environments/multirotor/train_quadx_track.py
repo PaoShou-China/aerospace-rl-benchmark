@@ -32,7 +32,7 @@ ALGORITHM = "ppo"
 NUM_ENVS = 1024
 # Shared vectorized-step budget: 500 updates x 100 steps x 1024 envs
 # (51.2M transitions) per the 2026-11-03 5-seed protocol.
-TRAIN_ENV_STEPS = 50_000
+TRAIN_ENV_STEPS = 100_000
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False

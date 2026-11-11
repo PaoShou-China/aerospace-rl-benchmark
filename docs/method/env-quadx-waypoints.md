@@ -58,7 +58,16 @@ body drag $F_d=-\tfrac12\rho C_d A\,\lvert v_{\mathrm{air}}\rvert\circ v_{\mathr
 $A=4\times10^{-4}$ m² per axis) and angular drag $\tau_d=-10^{-4}\lvert\omega_b\rvert\circ\omega_b$
 (suppressed while in contact) complete the plant. As a solver guard, $\lVert v\rVert$ and
 $\lVert\omega\rVert$ are rescaled to 15 m/s and 30 rad/s only when exceeded (`vel_clamp`), far above
-nominal waypoint flight.
+nominal waypoint flight. With `aero="realistic"` the plant adds a linear rotor-drag term
+($0.005$ N per m/s), a rotor gyroscopic body moment, a per-rotor ground-effect thrust factor
+(from each rotor's own world height), ISA density scaling with the blade-element
+advance-ratio loss $\max(0,1-(V_z/(V_p\theta))^2)$ ($V_p=16.7$ m/s) and the 1S 350 mAh pack's
+voltage sag/depletion factor $(V/4.2)^2$, and noisy observations
+(gyro bias, attitude/velocity/position noise). The 40 Hz quadx policy deliberately keeps zero
+transport delay. The realistic default domain randomization additionally samples
+sensor quality, 3-D CG offset, per-axis inertia, independent aero coefficients and
+actuator deadband/backlash/asymmetry/delay on top of thrust/mass; legacy keeps the
+original table.
 
 ## 4. Action space
 

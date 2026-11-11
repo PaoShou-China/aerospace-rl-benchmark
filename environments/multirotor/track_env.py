@@ -166,7 +166,27 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
     TARGET_AREA_RADIUS = TARGET_AREA_RADIUS
     SUCCESS_VISIBLE_FRACTION = SUCCESS_VISIBLE_FRACTION
     conventional_controller = QuadXTrackKFBaseline
-    PERTURBABLE_PARAMS = {"thrust": 1.0, "mass": 1.0}
+    PERTURBABLE_PARAMS = {
+        "thrust": 1.0,
+        "mass": 1.0,
+        "aero": 1.0,
+        "cl_alpha": 1.0,
+        "cd0": 1.0,
+        "stall": 1.0,
+        "oswald": 1.0,
+        "actuator": 1.0,
+        "actuator_deadband": 1.0,
+        "actuator_backlash": 1.0,
+        "actuator_asymmetry": 1.0,
+        "actuator_delay": 1.0,
+        "cg": 1.0,
+        "cg_y": 1.0,
+        "cg_z": 1.0,
+        "inertia": 1.0,
+        "inertia_x": 1.0,
+        "inertia_y": 1.0,
+        "inertia_z": 1.0,
+    }
     # Same Crazyflie-class airframe as quadx (see multirotor/env.py for the
     # literature backing the +/-20% thrust / +/-15% mass ranges).
     DEFAULT_DOMAIN_RANDOMIZE = {"thrust": (0.80, 1.20), "mass": (0.85, 1.15)}
@@ -292,8 +312,23 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         self.controller_design = {}
         apply_static_perturbation(self, param_mismatch)
         self._dr_counter = 0
-        self._domain_randomize = resolve_domain_randomize(
-            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        default_dr = self.DEFAULT_DOMAIN_RANDOMIZE
+        if self.plant.realistic:
+            default_dr = dict(default_dr)
+            default_dr.update(
+                {
+                    "cg": (0.9, 1.1),
+                    "cg_y": (0.9, 1.1),
+                    "cg_z": (0.9, 1.1),
+                    "inertia": (0.9, 1.1),
+                    "inertia_x": (0.9, 1.1),
+                    "inertia_y": (0.9, 1.1),
+                    "inertia_z": (0.9, 1.1),
+                }
+            )
+        self._domain_randomize = resolve_domain_randomize(domain_randomize, default_dr)
+        self.cfg["domain_randomize"] = (
+            dict(self._domain_randomize) if self._domain_randomize else None
         )
         self.residual = residual
         self._init_residual()
@@ -589,6 +624,40 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
             self.plant.perturb_thrust(scale)
         elif name == "mass":
             self.plant.perturb_mass(scale)
+        elif name == "aero":
+            self.plant.perturb_aero(scale)
+        elif name == "actuator":
+            self.plant.perturb_actuator(scale)
+        elif name == "cl_alpha":
+            self.plant.perturb_cl_alpha(scale)
+        elif name == "cd0":
+            self.plant.perturb_cd0(scale)
+        elif name == "stall":
+            self.plant.perturb_stall(scale)
+        elif name == "oswald":
+            self.plant.perturb_oswald(scale)
+        elif name == "actuator_deadband":
+            self.plant.perturb_actuator_deadband(scale)
+        elif name == "actuator_backlash":
+            self.plant.perturb_actuator_backlash(scale)
+        elif name == "actuator_asymmetry":
+            self.plant.perturb_actuator_asymmetry(scale)
+        elif name == "actuator_delay":
+            self.plant.perturb_actuator_delay(scale)
+        elif name == "cg":
+            self.plant.perturb_cg(scale, axis=0)
+        elif name == "cg_y":
+            self.plant.perturb_cg(scale, axis=1)
+        elif name == "cg_z":
+            self.plant.perturb_cg(scale, axis=2)
+        elif name == "inertia":
+            self.plant.perturb_inertia(scale)
+        elif name == "inertia_x":
+            self.plant.perturb_inertia(scale, axis=0)
+        elif name == "inertia_y":
+            self.plant.perturb_inertia(scale, axis=1)
+        elif name == "inertia_z":
+            self.plant.perturb_inertia(scale, axis=2)
         else:
             raise KeyError(name)
 
@@ -604,6 +673,10 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         if nonempty is None:
             nonempty = bool(envs_idx.any())
         self._reset_replicas(envs_idx, nonempty)
+        if getattr(self, "_dr_scales", None):
+            self.extras["dr_scales"] = {
+                name: value.detach() for name, value in self._dr_scales.items()
+            }
 
     def _reset_replicas(self, mask, nonempty):
         """Device half of reset_idx (graph-capturable for a fixed ``nonempty``)."""

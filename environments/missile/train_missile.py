@@ -84,7 +84,7 @@ from environments.missile import MissileInterceptEnv  # noqa: E402
 
 TASK = "missile"
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 1500  # slow convergence (~9% SR at 1000); give more budget
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False  # fresh from-scratch run; True resumes results/missile checkpoint
@@ -107,7 +107,9 @@ ALGORITHM = "ppo"
 # Everything else (PPO hyperparameters, seed, reward terminal grading) is held
 # fixed so the arms differ in exactly one shaping term.
 REWARD_VARIANT = "terminal_gauss"
-ENV_KWARGS = {"reward_variant": REWARD_VARIANT}
+# aero="realistic": ISA density/speed of sound at the 4 km engagement altitude
+# plus fin/body compressibility; pass aero="legacy" for the published benchmark.
+ENV_KWARGS = {"reward_variant": REWARD_VARIANT, "aero": "realistic"}
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 # (300 epochs at seed 7 previously reached 0.62 greedy SR at d=0 -- the fit can be

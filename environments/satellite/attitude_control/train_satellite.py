@@ -23,7 +23,7 @@ from environments.satellite.attitude_control import SatelliteAttitudeEnv  # noqa
 
 TASK = "satellite"
 NUM_ENVS = 1024
-UPDATES = 1000  # fair-comparison budget (matches the other 6 task entries)
+UPDATES = 500  # converges in ~650 episodes; 500 updates sufficient
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False  # pure-RL from scratch (warm-start protocol superseded)

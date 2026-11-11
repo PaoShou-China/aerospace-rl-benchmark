@@ -15,7 +15,7 @@
 | $w_k$，$k=0..3$；$i_t$ | 航路点；当前活动索引 |
 | $a\in[-1,1]^{4}$ | 原始策略动作 |
 | $\Delta t_\pi,\Delta t_c,\Delta t$ | 策略 $1/30$ s、控制 $1/120$ s、物理 $1/240$ s |
-| $\rho$；$\bar q=\tfrac12\rho\lVert v_{\mathrm{air}}\rVert^{2}$ | 空气密度 1.225 kg/m³；动压 |
+| $\rho$；$\bar q=\tfrac12\rho\lVert v_{\mathrm{air}}\rVert^{2}$ | 空气密度（legacy 1.225 kg/m³，realistic 用 ISA）；动压 |
 
 ## 3. 动力学与控制层级
 
@@ -27,12 +27,21 @@
 \end{equation}
 采用 PyFlyt 叶素升力面模型：有限翼展升力线斜率、30% 襟翼弦比 + 粘性修正 $\eta=0.65$、零升迎角（翼/副翼 $-2^\circ$，尾翼 $0^\circ$）、正负失速（翼 $+14^\circ/-9^\circ$，尾翼 $\pm9^\circ$）、蒙皮摩擦阻力 $C_{d0}=0.01$；均在面局部空速 $v_{\mathrm{air}}=v-w$ 上评估，力 $\bar q S(c_l,c_d)$，俯仰力矩 $\bar q S c\,c_m$。
 
+**真实模式** 默认 `aero="legacy"` 逐位保留上式。`aero="realistic"` 时 $\rho$ 由该副本高度处的 ISA 给出；Oswald 因子（机翼/副翼 $e=0.85$，尾翼 $0.90$）以诱导阻力增量 $\Delta c_d=(1/e-1)c_l^2/(\pi AR)$ 加入；升力线斜率乘 Prandtl-Glauert / 线性超声速因子，$c_{d0}$ 乘波阻因子；机身/起落架寄生阻力 $C_dA=0.010\ \mathrm{m^2}$（每体轴）作用于 base link。同一预设还加入 $c/V$ 一阶非定常升力/阻力/力矩滞后、Beddoes-Leishman 型动态失速增量（滞后分离点 + 分离速率驱动的涡升力状态，稳态附着流下为零）、舵机速率限幅（副翼 300 deg/s、尾翼 250 deg/s、1% 死区）、螺旋桨推力的 $(\rho/\rho_0)^{2/3}$ 缩放与前进比损失/电池电压因子（见下）、每个升力面 6 个展向条带（各自带 $\omega\times r$ 当地速度、马赫数、动压与失速状态，再求和回该面）、升力线机翼地效修正 $\phi=(16h/b)^2/(1+(16h/b)^2)$（作用于升力斜率与诱导阻力）、一阶集中扭转弹性模态（8 Hz、$\zeta=0.15$、弹性轴 35% 弦长、发散速度 100 m/s），以及带噪声/延迟的观测（陀螺零偏、姿态/速度/位置噪声、一步策略延迟）。Dryden 滤波器每个控制步按当前空速与高度重建；默认域随机化额外采样传感器质量、3D 质心、逐轴惯量、独立气动系数与舵机死区/回差/正反速率不对称/延迟（legacy 仍只随机化 thrust/mass）。
+
 **发动机（240 Hz）** 油门一阶滞后 + 乘性噪声：
 \begin{equation}
 \theta_{t+1}=\theta_t+\frac{\Delta t}{\tau_m}\big(\theta^{\mathrm{cmd}}-\theta_t\big),\qquad
 \theta_t\leftarrow\theta_t\big(1+0.02\,\xi_t\big),\qquad \xi_t\sim\mathcal N(1,1), \tag{2}
 \end{equation}
 $\tau_m=0.01$ s（每副本每物理步一次高斯采样）。螺旋桨推力 $F=\lvert\theta\rvert\theta\,F_{\max}$（$F_{\max}=18$ N）沿体 $+x$，反扭矩 $F(k_m/k_f)$，$k_m/k_f=7.94\times10^{-12}/3.16\times10^{-10}$。
+
+realistic 模式下该定距桨为 10x10 in：叶素理论给出 $C_T(J)=C_{T0}(1-(J/J_0)^2)$，$J=V_x/(nD)$、$J_0=\text{pitch}/D$，在 $n\propto\theta$ 下推力乘以 $\max(0,1-(V_x/(V_p\theta))^2)$，满油门桨距速度 $V_p=\text{pitch}\cdot n_{\max}=41.7$ m/s。3S 5 Ah 电池包（内阻 20 m$\Omega$、航电 5 W）端电压 $V=V_{\mathrm{oc}}(q)-IR$，$V_{\mathrm{oc}}=3.5+0.7q$ V/节，推力再乘 $(V/12.6)^2$。库仑积分用动量理论轴功率：
+\begin{equation}
+\dot q=-\frac{I}{Q},\qquad
+I=\frac{1}{V}\Big(\frac{T^{3/2}}{0.65\sqrt{2\rho A}}+P_{\mathrm{av}}\Big), \tag{3}
+\end{equation}
+因此长时间满油门飞行既会电压下垂也会耗尽电量。
 
 ## 4. 动作空间
 

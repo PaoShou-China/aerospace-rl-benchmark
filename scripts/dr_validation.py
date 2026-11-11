@@ -15,15 +15,22 @@ from environments import ENV_REGISTRY, make
 from algorithms.baselines.baselines import build_baseline
 from scripts.first_episode import FirstEpisodes
 
-TASKS = ["quadx", "rocket", "docking", "satellite"]
+TASKS = ["quadx", "quadx_track", "fixedwing", "quadplane", "rocket", "missile"]
 SEEDS = [7, 13, 21]
 NUM_ENVS = 128
 
-MAX_STEPS = {"quadx": 1000, "rocket": 2000, "docking": 500, "satellite": 300}
+MAX_STEPS = {
+    "quadx": 1000,
+    "quadx_track": 1000,
+    "fixedwing": 4000,
+    "quadplane": 1400,
+    "rocket": 2000,
+    "missile": 1000,
+}
 
 
-def run_one(task, seed, domain_randomize):
-    env_kwargs = {"domain_randomize": domain_randomize}
+def run_one(task, seed, domain_randomize, aero="realistic"):
+    env_kwargs = {"domain_randomize": domain_randomize, "aero": aero}
     env = make(task, num_envs=NUM_ENVS, backend="cpu", seed=seed, **env_kwargs)
     try:
         controller = build_baseline(task, env, None)

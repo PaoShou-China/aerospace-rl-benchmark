@@ -22,7 +22,7 @@ a fixed seed reproduces a waypoint layout bit-for-bit.
 | $w_k\in\mathbb{R}^{3}$, $k=0..3$ | waypoint positions; $i_t$ active index |
 | $a\in[-1,1]^{4}$ | raw policy action |
 | $\Delta t_\pi,\Delta t_c,\Delta t$ | periods: policy $1/30$ s, control $1/120$ s, physics $1/240$ s |
-| $\rho$; $\bar q=\tfrac12\rho\lVert v_{\mathrm{air}}\rVert^{2}$ | air density, 1.225 kg/m³; dynamic pressure |
+| $\rho$; $\bar q=\tfrac12\rho\lVert v_{\mathrm{air}}\rVert^{2}$ | air density (1.225 kg/m³ legacy, ISA in realistic mode); dynamic pressure |
 
 ## 3. Dynamics and control hierarchy
 
@@ -43,6 +43,28 @@ angle $\alpha_0$ ($-2^\circ$ on wing/ailerons, $0^\circ$ on the tails), positive
 surface-local air-relative velocity $v_{\mathrm{air}}=v-w$ with forces $\bar q S(c_l,c_d)$ and pitching
 moment $\bar q S c\, c_m$.
 
+**Realistic mode.** The default `aero="legacy"` keeps the expressions above bit-for-bit. With
+`aero="realistic"`, $\rho$ comes from the ISA at the replica's altitude, an Oswald factor
+$e=0.85$ (wing/ailerons) or $0.90$ (tails) adds the induced-drag increment
+$\Delta c_d=(1/e-1)c_l^2/(\pi AR)$, the lift slope is scaled by the Prandtl-Glauert /
+linear-supersonic factor and $c_{d0}$ by the wave-drag factor, and a fuselage/gear parasite
+drag with $C_dA=0.010\ \mathrm{m^2}$ per body axis acts on the base link. The same preset
+adds a first-order unsteady lift/drag/moment lag over $c/V$, a
+Beddoes-Leishman-style dynamic-stall increment (lagged separation point plus a
+rate-driven vortex-lift state, zero in steady attached flow), servo rate limits
+(300 deg/s ailerons, 250 deg/s tails, 1% deadband), propeller thrust scaling with
+$(\rho/\rho_0)^{2/3}$ plus the advance-ratio loss and battery voltage factor below,
+six spanwise stations per lifting surface (each with its own local velocity
+$\omega\times r$, Mach, dynamic pressure and stall state, summed back onto the
+surface), the lifting-line wing-in-ground-effect correction
+$\phi=(16h/b)^2/(1+(16h/b)^2)$ on lift slope and induced drag, a lumped
+torsional elastic mode (8 Hz, $\zeta=0.15$, 35 %-chord elastic axis, 100 m/s
+divergence speed), and noisy/delayed observations (gyro bias, attitude/velocity/position
+noise, one-policy-step delay). The Dryden filters rebuild from the current airspeed and
+altitude every control step, and the default domain randomization additionally samples
+sensor quality, 3-D CG, per-axis inertia, independent aero coefficients and actuator
+deadband/backlash/asymmetry/delay (legacy keeps only thrust/mass).
+
 **Engine (240 Hz).** The throttle state follows a first-order lag with multiplicative noise,
 \begin{equation}
 \theta_{t+1}=\theta_t+\frac{\Delta t}{\tau_m}\big(\theta^{\mathrm{cmd}}-\theta_t\big),\qquad
@@ -51,6 +73,19 @@ moment $\bar q S c\, c_m$.
 with $\tau_m=0.01$ s (one Gaussian draw per replica per physics step, upstream convention). Propeller
 thrust $F=\lvert\theta\rvert\theta\,F_{\max}$ with $F_{\max}=18$ N acts along the body $x$ axis, together
 with the reaction torque $F\,(k_m/k_f)$, $k_m/k_f=7.94\times10^{-12}/3.16\times10^{-10}$.
+
+In realistic mode the tractor propeller is a fixed-pitch 10 in x 10 in unit: blade-element
+theory gives $C_T(J)=C_{T0}(1-(J/J_0)^2)$ with $J=V_x/(nD)$ and $J_0=\text{pitch}/D$, so at
+$n\propto\theta$ the thrust is multiplied by $\max(0,1-(V_x/(V_p\theta))^2)$ with the
+full-throttle pitch speed $V_p=\text{pitch}\cdot n_{\max}=41.7$ m/s. The 3S 5 Ah pack
+(20 m$\Omega$, 5 W avionics) supplies $V=V_{\mathrm{oc}}(q)-IR$ with
+$V_{\mathrm{oc}}=3.5+0.7q$ V/cell, and thrust scales with $(V/12.6)^2$. Coulomb counting
+uses the momentum-theory shaft power,
+\begin{equation}
+\dot q=-\frac{I}{Q},\qquad
+I=\frac{1}{V}\Big(\frac{T^{3/2}}{0.65\sqrt{2\rho A}}+P_{\mathrm{av}}\Big), \tag{3}
+\end{equation}
+so a long full-throttle flight both sags the voltage and drains the pack.
 
 ## 4. Action space
 

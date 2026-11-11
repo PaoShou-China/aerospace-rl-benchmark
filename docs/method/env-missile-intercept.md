@@ -53,6 +53,25 @@ $h = 1/240$ s); episode limit 900 policy steps (15 s).
   $\tau = -c_{mq}\lVert v\rVert\,\omega_{\text{lat}}$ ($c_{mq}=4.0$) damps the
   otherwise nearly undamped fin weathercock mode. Speed clamps:
   $\lVert v\rVert\le 1200$ m/s, $\lVert\omega\rVert\le 40$ rad/s (`vel_clamp`).
+  With `aero="realistic"` $\rho$ and the speed of sound come from the ISA at
+  the missile's altitude (≈0.819 kg/m³ at the 4 km spawn), the axial drag is
+  multiplied by the wave-drag factor, the body normal force scales with
+  density, and the fin lift slopes receive the Prandtl-Glauert /
+  linear-supersonic factor (≈1.0 at M=1.8 for this 3/rad fin). The same preset
+  burns 30% of the 150 kg airframe as boost propellant over the 4 s burn,
+  scaling both mass and the inertia tensor, raises thrust with falling ambient
+  pressure, limits the kinematic target to 15 g, adds 800 deg/s fin rate limits
+  and 1% deadband, and corrupts the seeker-derived relative-state/LOS
+  observations with noise. The measured relative-state/LOS block also passes
+  through a first-order tracking filter ($\tau=0.02$ s, backward-Euler step at
+  120 Hz) and carries a radome-slope bias: the apparent LOS is rotated toward
+  the nose by $0.02$ rad per rad of AoA and by $-0.02$ rad per rad of sideslip,
+  which creates the classical parasitic LOS-rate loop. The body-fixed seeker also has a 60° half-angle
+  and 20 km range: outside them the target block `[23:34]` is zeroed and the
+  lock flag drops, including after the sensor-noise pass. The target carries
+  a point-mass energy model (parabolic drag, density-lapsed thrust, speed
+  hold), so sustained high-g manoeuvres bleed speed. The transport
+  delay is one 60 Hz policy step.
 - **Fins.** Four cross tail surfaces at $x=-1.3$ m (chord 0.45 m, span
   0.40 m, $C_{l\alpha}=3.0$, stall $\pm40^{\circ}$, deflection limit
   $\pm35^{\circ}$, actuator lag $\tau=0.02$ s).
@@ -142,6 +161,22 @@ heading ($v_T(0) \parallel h$) pins $\phi_b = \operatorname{atan2}(-h_x, h_y)$
 inward normal, $c = p_0 - R_b(\cos\phi_b,\sin\phi_b,0)$; otherwise the barrel
 target would start flying in an arbitrary direction and the engagement would
 degenerate into a tail chase.
+
+With `aero="realistic"` the equations above define only the maneuver *shape*:
+the target carries a speed state $V(t)$ initialised at $V_T$, integrates its
+position from $v_T = V(t)\,\hat v_T$, and updates the speed each physics
+substep with
+\begin{equation}
+\dot V = \frac{T(V,h) - D(V,n,h)}{m},\qquad
+D = qSC_{D0} + \frac{(nmg)^2}{qS\pi AR e},\qquad
+T = \mathrm{clip}\!\left(D + \frac{m(V_T - V)}{\tau_V}, 0, T_{\max}(h)\right) \tag{1d}
+\end{equation}
+with $q=\tfrac12\rho(h)V^2$, load factor $n=1$ (straight),
+$\sqrt{1+(a_T/g)^2}$ (weave) or $\sqrt{1+(V^2/(R_b g))^2}$ (barrel),
+$T_{\max}\propto\rho^{0.7}$ and $m=9$ t, $S=28$ m², $AR=3.5$, $e=0.85$,
+$C_{D0}=0.02$, $T_{\max,\mathrm{SL}}=90$ kN, $\tau_V=2$ s. A sustained 7.5 g
+turn at 4 km therefore bleeds speed; the legacy target keeps $V=V_T$ and the
+closed-form positions of (1a)–(1c) bit-for-bit.
 
 ## 7. Reward
 

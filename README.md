@@ -41,6 +41,59 @@ Dryden wind interface are in
 entries, run artifacts and the repository tree are in
 [Repository layout](#repository-layout) below.
 
+## Benchmark experiment
+
+One command runs the full protocol — train, classical baselines, and
+evaluation — across all 10 tasks. Each stage is resumable: runs with an
+existing `run.json` / `eval_seed_*.json` / `baseline.json` are skipped.
+
+```bash
+# all stages: train -> baselines -> evaluation (~2-3 days, one GPU)
+python scripts/run_experiment.py
+
+# single stage
+python scripts/run_experiment.py --phase train        # 150 training runs
+python scripts/run_experiment.py --phase baselines    # classical controllers
+python scripts/run_experiment.py --phase eval         # evaluate every checkpoint
+
+# subset of tasks / seeds
+python scripts/run_experiment.py --tasks quadx missile --seeds 11 22
+```
+
+**Experiment matrix** (fair comparison: every other hyperparameter is shared)
+
+| Axis | Value |
+|---|---|
+| Method | `ppo_scratch` · `bc_ppo` (BC warm start) · `residual_ppo` (ρ=0.05) |
+| Training seeds | 11, 22, 33, 44, 55 |
+| Evaluation seeds | 1011, 1022, 1033, 1044, 1055 |
+| Parallelism | 3 workers (best on one GPU; more only adds CPU overhead) |
+| Output | `results/5seed/<task>/<method>/seed_<s>/` |
+
+**Run artifacts** (per run directory)
+
+| File | Contents |
+|---|---|
+| `run.json` | training cost (transitions, wall clock, success rate) |
+| `eval_seed_<n>.json` | success rate, return and related metrics for one eval seed |
+| `checkpoint.pt` | final policy weights |
+| `config.json` | environment and training configuration (for reproduction) |
+
+Aggregate the runs into a report:
+
+```bash
+python scripts/aggregate_5seed.py
+# -> results/5seed/summary.json  +  results/5seed/report.md
+```
+
+> **Long runs:** detach from the terminal with `setsid` so a dropped session
+> does not kill the job:
+> ```bash
+> setsid python scripts/run_experiment.py > results/5seed/run.log 2>&1 &
+> ```
+> The log keeps key events only (start / finish / fail / progress) and does not
+> capture the child training output.
+
 ## CUDA acceleration
 
 All ten tasks support opt-in execution adapters for expert data collection,

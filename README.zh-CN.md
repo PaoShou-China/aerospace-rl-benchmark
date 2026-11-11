@@ -30,6 +30,55 @@ python scripts/baseline_eval.py quadx            # 评测经典基线
 六个 Genesis 任务在 GPU 后端上需要 CUDA 版 PyTorch；四个张量动力学任务与全部经典基线也可在纯 CPU 版 PyTorch 上运行。精确版本、环境契约与可选的 Dryden 风扰接口见
 [environment-contract.zh-CN.md](docs/environment-contract.zh-CN.md)；完整训练入口、运行产物与目录结构见下方[仓库结构](#仓库结构)一节。
 
+## Benchmark 实验
+
+一条命令跑完整个协议——训练、经典基线与评估——覆盖全部 10 个任务。各阶段可断点续跑：已有 `run.json` / `eval_seed_*.json` / `baseline.json` 的 run 会被跳过。
+
+```bash
+# 全部阶段：训练 → 基线 → 评估（约 2-3 天，单卡）
+python scripts/run_experiment.py
+
+# 只跑某一阶段
+python scripts/run_experiment.py --phase train        # 150 次训练
+python scripts/run_experiment.py --phase baselines    # 经典控制器基线
+python scripts/run_experiment.py --phase eval         # 评估所有 checkpoint
+
+# 只跑部分任务/种子
+python scripts/run_experiment.py --tasks quadx missile --seeds 11 22
+```
+
+**实验矩阵**（公平对比：除被测变量外超参完全一致）
+
+| 维度 | 值 |
+|---|---|
+| 方法 | `ppo_scratch` · `bc_ppo`（BC 热启动） · `residual_ppo`（ρ=0.05） |
+| 训练种子 | 11, 22, 33, 44, 55 |
+| 评估种子 | 1011, 1022, 1033, 1044, 1055 |
+| 并行 | 3 workers（单卡最优，再多只增 CPU 开销） |
+| 输出 | `results/5seed/<task>/<method>/seed_<s>/` |
+
+**产物说明**（每个 run 目录）
+
+| 文件 | 内容 |
+|---|---|
+| `run.json` | 训练成本（transitions、墙钟时间、成功率） |
+| `eval_seed_<n>.json` | 某评估种子下的成功率、回报等指标 |
+| `checkpoint.pt` | 最终策略权重 |
+| `config.json` | 环境与训练配置（用于复现实验） |
+
+训练完成后生成汇总报告：
+
+```bash
+python scripts/aggregate_5seed.py
+# → results/5seed/summary.json  +  results/5seed/report.md
+```
+
+> **后台运行**：训练耗时长，建议用 `setsid` 脱离终端，避免会话断开中断：
+> ```bash
+> setsid python scripts/run_experiment.py > results/5seed/run.log 2>&1 &
+> ```
+> 日志只记录关键事件（开始/完成/失败/进度），不保存子进程训练输出。
+
 ## CUDA 加速
 
 十个任务均支持可选的执行加速，覆盖专家数据采集、行为克隆（BC）与 PPO 训练。任务方程、奖励、模型精度与训练预算保持原有配置；代码中没有按 GPU 型号或显存容量分支。

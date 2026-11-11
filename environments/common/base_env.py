@@ -83,7 +83,15 @@ class BaseEnv:
             self._terminal_obs_td = TensorDict(
                 {"policy": self._terminal_obs}, batch_size=[self.num_envs]
             )
-        self._terminal_obs.copy_(self._observation)
+        # Keep the bootstrap observation on the same sensor pipeline as the
+        # policy observation; using the clean internal state here would leak
+        # privileged information under ``aero="realistic"``.
+        source = (
+            self.obs_buf
+            if getattr(self, "_sensor", None) is not None
+            else self._observation
+        )
+        self._terminal_obs.copy_(source)
         self.extras["terminal_observations"] = self._terminal_obs_td
 
     # -- space descriptors (policy-facing action space is uniform) ----------

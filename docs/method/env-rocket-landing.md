@@ -68,7 +68,16 @@ the Falcon 9 first stage (reference propellant 123.5 t RP-1 + 287.4 t LOX =
   $[-1,1]$.
 - **Body drag.** $F = -\tfrac12 \rho\, C_d A\, |v_{\text{air}}|\,v_{\text{air}}$
   with $\rho = 1.225$ kg/m³, $C_d = (1.16, 1.16, 2.0)$,
-  $A = (1.7649, 1.7649, 0.1075)$ m², applied at `base_link`.
+  $A = (1.7649, 1.7649, 0.1075)$ m², applied at `base_link`. With
+  `aero="realistic"` $\rho$ is the ISA density at the rocket's altitude, the
+  lifting-surface lift/drag coefficients receive the compressibility factors,
+  engine thrust grows with falling ambient pressure, the servo rate is capped
+  at 200 deg/s with a 1% deadband, the observations carry IMU/GPS noise and a
+  one-step delay, and the Genesis contact-constraint solver is enabled (on the
+  booster and, in realistic mode, on every atmospheric task) so the pad
+  supports, tips and frictionally dissipates it instead of being a
+  detection-only surface. v2 success also requires 0.5 s of continuous
+  settled pad contact, not a single touchdown sample.
 
 On reset, a 10-iteration zero-command warmup (20 physics substeps) settles
 contacts and actuators before the first observation.

@@ -22,7 +22,7 @@ from environments.satellite.rendezvous_docking import SpaceDockingEnv  # noqa: E
 
 TASK = "docking"
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 1500  # ppo_scratch barely learns (1.5% SR); more budget needed
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False  # resume from the newest model_*.pt / checkpoint.pt

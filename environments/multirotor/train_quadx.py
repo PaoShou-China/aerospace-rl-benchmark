@@ -44,7 +44,7 @@ NUM_LEARNING_EPOCHS = 5
 ALGORITHM = "ppo"
 # Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
 # (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
-WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
+WIND = dict(steady_wind=None, dryden=0.3, severity="moderate", aero="realistic")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before

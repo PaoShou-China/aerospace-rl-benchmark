@@ -70,7 +70,9 @@ ENTROPY_COEF = 0.0
 VALUE_LOSS_COEF = 0.5
 # Wind disturbance (environments/common/disturbances.py): pure Dryden gusts
 # (zero-mean, 30% of the moderate preset). None = calm air (benchmark).
-WIND = dict(steady_wind=None, dryden=0.3, severity="moderate")
+# aero="realistic" adds ISA density, Oswald induced drag, compressibility and
+# fuselage parasite drag; pass aero="legacy" for the published benchmark.
+WIND = dict(steady_wind=None, dryden=0.3, severity="moderate", aero="realistic")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.

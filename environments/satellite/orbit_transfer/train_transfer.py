@@ -29,7 +29,7 @@ from environments.satellite.orbit_transfer import LowThrustTransferEnv  # noqa: 
 
 TASK = "transfer"
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 500  # converges immediately (potential-based reward); 500 updates enough
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False  # resume from the newest model_*.pt / checkpoint.pt

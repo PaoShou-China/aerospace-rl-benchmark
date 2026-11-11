@@ -113,6 +113,11 @@ $\dot I_{\mathrm{aw}} = k_{\mathrm{aw}}(V - v_{\mathrm{eff}})^{+}\,\mathbb 1\{\d
 I \leftarrow \mathrm{clip}\big(I + k_{E,i}\,\delta_E\,\Delta t - \dot I_{\mathrm{aw}}\,\Delta t,\; 0,\; I_{\max}\big),\qquad
 \theta = \mathrm{clip}\big(\theta_{\mathrm{trim}} + k_E\,\delta_E + I,\; 0,\; 1\big). \tag{9}
 \end{equation}
+$I_{\max}=0.2$ on the legacy plant (ceiling $0.35+0.2+0.2=0.75$). The realistic
+preset's fixed-pitch advance-ratio thrust loss leaves that ceiling short of the
+climb power at 14-16 m/s, so on that plant the controller raises
+$I_{\max}$ to $0.45$ and can reach full throttle; the legacy table is unchanged
+(raising it globally measured 79.7 % vs the published 91 %, out-of-bounds driven).
 Pitch command (P on $\delta_B$) with banked-flight alpha feed-forward, underspeed energy protection, and
 the overspeed climb trade:
 \begin{equation}
@@ -143,7 +148,7 @@ All values from `algorithms/baselines/fixedwing_autopilot.json` (config name `l1
 | lateral | `l1_distance` / `l1_min_distance`; `l1_dist_gain` / `l1_dist_offset` | 40.0 m / 12.0 m; 0.6 / 8.0 m |
 | lateral | `max_bank_deg`; `v_stall_guard`; `k_roll` / `kd_roll` | 60°; 11.5 m/s; 3.0 / 0.5 |
 | longitudinal | `v_ref` / `v_turn_min`; `k_speed_bleed` / `k_dist_slow` / `d_slow_ref` | 20.0 / 14.0 m/s; 2.5 / 0.35 / 10.0 m |
-| longitudinal | `k_energy` / `k_energy_i` / `integral_max` / `throttle_trim`; `k_aw_speed` | 0.008 / 0.005 / 0.2 / 0.35; 0.012 |
+| longitudinal | `k_energy` / `k_energy_i` / `integral_max` / `throttle_trim`; `k_aw_speed` | 0.008 / 0.005 / 0.2 (0.45 on the realistic plant) / 0.35; 0.012 |
 | longitudinal | `k_balance` / `k_speed_keep` / `k_geo_up` | 0.008 / 0.05 / 0.6 |
 | longitudinal | `k_pp` / `d_pp_entry` / `eta_pp_gate_deg` | 1.2 / 35.0 m / 40° |
 | longitudinal | `bank_climb_deg` / `v_climb_ref` / `h_climb_gate` | 45° / 14.0 m/s / 5.0 m |

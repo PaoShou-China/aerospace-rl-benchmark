@@ -13,6 +13,13 @@ zero at v=0 and quickly grows as the vehicle accelerates. The agent
 naturally discovers the transition regime (~3–12 m/s body +x velocity)
 where both actuation paths are usable.
 
+`aero="realistic"` adds the shared ISA/compressibility/Oswald/parasite-drag
+stack, nonlinear servo rate limits, unsteady lift lag, sensor noise and a
+one-step delay, propeller density scaling, a momentum-theory propeller
+slipstream over the main wing (effective immersed-area fraction 0.05), rotor
+linear drag/gyroscopic moments and ground effect.  The legacy default keeps
+the published benchmark bit-for-bit.
+
 Task: reach 4 waypoints sampled in a 40–75 m radius sphere at ≥25 m altitude,
 starting from near-hover (z=15 m, |v| ~ 6 m/s, level). Capture radius 15 m,
 out-of-bounds at |p|>120 m, 1200 steps = 30 s at 40 Hz agent rate.
@@ -101,7 +108,28 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
     # (baselines.py hybrid_cascade; quad collective + tilt at low speed,
     # surfaces + pusher in wing-borne flight)
     conventional_controller = QuadplaneHybridBaseline
-    PERTURBABLE_PARAMS = {"thrust": 1.0, "mass": 1.0}
+    PERTURBABLE_PARAMS = {
+        "thrust": 1.0,
+        "mass": 1.0,
+        "aero": 1.0,
+        "cl_alpha": 1.0,
+        "cd0": 1.0,
+        "stall": 1.0,
+        "oswald": 1.0,
+        "actuator": 1.0,
+        "actuator_deadband": 1.0,
+        "actuator_backlash": 1.0,
+        "actuator_asymmetry": 1.0,
+        "actuator_delay": 1.0,
+        "sensor": 1.0,
+        "cg": 1.0,
+        "cg_y": 1.0,
+        "cg_z": 1.0,
+        "inertia": 1.0,
+        "inertia_x": 1.0,
+        "inertia_y": 1.0,
+        "inertia_z": 1.0,
+    }
     # Literature: hybrid VTOL UAVs combine multirotor hover propulsion with a
     # forward pusher/prop.  Uncertainty sits between multirotor (+/-20% thrust)
     # and fixed-wing (+/-15% thrust); mass variation from fuel/payload is
@@ -120,6 +148,7 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         param_mismatch=None,
         domain_randomize=None,
         warmup_iterations=None,
+        aero="legacy",
     ):
         """Initialize the Quadplane VTOL waypoints environment.
 
@@ -138,9 +167,29 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         }
         self.clip_actions = 1.0
         self.plant = TensorPlant(
-            "quadplane", num_envs, backend, seed, warmup_iterations=warmup_iterations
+            "quadplane",
+            num_envs,
+            backend,
+            seed,
+            warmup_iterations=warmup_iterations,
+            aero=aero,
         )
         self.device = self.plant.device
+        self._sensor = None
+        if self.plant.realistic:
+            from environments.common.sensors import SensorModel
+
+            self._sensor = SensorModel(
+                num_envs,
+                self.device,
+                seed,
+                gyro_sigma=0.005,
+                attitude_sigma=0.005,
+                velocity_sigma=0.1,
+                position_sigma=0.2,
+                bias_step=1e-4,
+                dt=1.0 / 40.0,
+            )
         self.agent_hz = 40
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)  # 3
         self.max_steps = 1200
@@ -228,12 +277,38 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         self._seed = seed
         self.extras = dict()
         self.cfg = dict(self.task_cfg)
+        self.cfg["aero"] = aero
+        self.cfg["realism_version"] = self.plant.realism_version
         self._init_wind(num_envs, seed, steady_wind, dryden, severity)
         self.controller_design = {}
         apply_static_perturbation(self, param_mismatch)
         self._dr_counter = 0
-        self._domain_randomize = resolve_domain_randomize(
-            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        default_dr = self.DEFAULT_DOMAIN_RANDOMIZE
+        if self.plant.realistic:
+            default_dr = dict(default_dr)
+            default_dr.update(
+                {
+                    "sensor": (0.8, 1.2),
+                    "cg": (0.9, 1.1),
+                    "cg_y": (0.9, 1.1),
+                    "cg_z": (0.9, 1.1),
+                    "inertia": (0.9, 1.1),
+                    "inertia_x": (0.9, 1.1),
+                    "inertia_y": (0.9, 1.1),
+                    "inertia_z": (0.9, 1.1),
+                    "cl_alpha": (0.92, 1.08),
+                    "cd0": (0.85, 1.15),
+                    "stall": (0.90, 1.10),
+                    "oswald": (0.95, 1.05),
+                    "actuator_deadband": (0.50, 2.0),
+                    "actuator_backlash": (0.50, 2.0),
+                    "actuator_asymmetry": (0.70, 1.30),
+                    "actuator_delay": (0.0, 2.0),
+                }
+            )
+        self._domain_randomize = resolve_domain_randomize(domain_randomize, default_dr)
+        self.cfg["domain_randomize"] = (
+            dict(self._domain_randomize) if self._domain_randomize else None
         )
         self.residual = residual
         self._init_residual()
@@ -252,6 +327,11 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
                 dryden=dryden,
                 severity=severity,
                 dt=1.0 / self.agent_hz,
+                airspeed=10.0 if self.plant.realistic else 15.0,
+                reference_altitude=40.0 if self.plant.realistic else None,
+                model="dryden" if self.plant.realistic else "first_order",
+                shear_exponent=0.14 if self.plant.realistic else 0.0,
+                time_varying=self.plant.realistic,
             )
             self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
             self.cfg["wind"] = dict(
@@ -326,7 +406,10 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         physical = self._scale_actions(actions)
         self.action.copy_(physical)
         if self._wind is not None:
-            self.plant.wind.copy_(self._wind.step())
+            _p0, _, _v0, _ = self.plant.state()
+            self.plant.wind.copy_(
+                self._wind.step(altitude=_p0[:, 2], airspeed=_v0.norm(dim=-1))
+            )
         self._old_potential.copy_(self._potential())
         self.count += 1
         self._crash.zero_()
@@ -447,12 +530,53 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
                 self._observation.shape, device=self.device, dtype=torch.float32
             )
         self.obs_buf.copy_(self._observation)
+        if self._sensor is not None:
+            active = ~(self.terminated | self.truncated)
+            self.obs_buf.copy_(self._sensor.apply(self.obs_buf, active))
 
     def _apply_perturbation(self, name, scale):
         if name == "thrust":
             self.plant.perturb_thrust(scale)
         elif name == "mass":
             self.plant.perturb_mass(scale)
+        elif name == "aero":
+            self.plant.perturb_aero(scale)
+        elif name == "actuator":
+            self.plant.perturb_actuator(scale)
+        elif name == "cl_alpha":
+            self.plant.perturb_cl_alpha(scale)
+        elif name == "cd0":
+            self.plant.perturb_cd0(scale)
+        elif name == "stall":
+            self.plant.perturb_stall(scale)
+        elif name == "oswald":
+            self.plant.perturb_oswald(scale)
+        elif name == "actuator_deadband":
+            self.plant.perturb_actuator_deadband(scale)
+        elif name == "actuator_backlash":
+            self.plant.perturb_actuator_backlash(scale)
+        elif name == "actuator_asymmetry":
+            self.plant.perturb_actuator_asymmetry(scale)
+        elif name == "actuator_delay":
+            self.plant.perturb_actuator_delay(scale)
+        elif name == "sensor":
+            if self._sensor is None:
+                raise KeyError("sensor perturbation requires the realistic preset")
+            self._sensor.set_scale(scale)
+        elif name == "cg":
+            self.plant.perturb_cg(scale, axis=0)
+        elif name == "cg_y":
+            self.plant.perturb_cg(scale, axis=1)
+        elif name == "cg_z":
+            self.plant.perturb_cg(scale, axis=2)
+        elif name == "inertia":
+            self.plant.perturb_inertia(scale)
+        elif name == "inertia_x":
+            self.plant.perturb_inertia(scale, axis=0)
+        elif name == "inertia_y":
+            self.plant.perturb_inertia(scale, axis=1)
+        elif name == "inertia_z":
+            self.plant.perturb_inertia(scale, axis=2)
         else:
             raise KeyError(name)
 
@@ -468,6 +592,10 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         if nonempty is None:
             nonempty = bool(envs_idx.any())
         self._reset_replicas(envs_idx, nonempty)
+        if getattr(self, "_dr_scales", None):
+            self.extras["dr_scales"] = {
+                name: value.detach() for name, value in self._dr_scales.items()
+            }
 
     def _reset_replicas(self, mask, nonempty):
         """Device half of reset_idx (graph-capturable for a fixed ``nonempty``)."""
@@ -533,6 +661,8 @@ class QuadplaneWaypointsEnv(BaseEnv, ResidualActionMixin):
         self.new_distance.masked_fill_(mask, torch.inf)
         self.plant.warmup(mask, nonempty=nonempty)
         self._observe(mask)
+        if self._sensor is not None:
+            self._sensor.reset(mask)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)
         if self._wind is not None:

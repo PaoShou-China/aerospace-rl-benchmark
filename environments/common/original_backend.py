@@ -90,11 +90,12 @@ class GenesisBulletClient:
     getEulerFromQuaternion = staticmethod(getEulerFromQuaternion)
     getMatrixFromQuaternion = staticmethod(getMatrixFromQuaternion)
 
-    def __init__(self, connection_mode=0, **kwargs):
+    def __init__(self, connection_mode=0, disable_constraint=True, **kwargs):
         if connection_mode != 0:
             raise NotImplementedError(
                 "Original-task backend currently supports headless operation only"
             )
+        self._disable_constraint = bool(disable_constraint)
         initialize_genesis(getattr(self, "_backend", "cpu"))
         self._scene = None
         self._built = False
@@ -135,7 +136,7 @@ class GenesisBulletClient:
             rigid_options=gs.options.RigidOptions(
                 batch_links_info=True,
                 enable_self_collision=False,
-                disable_constraint=True,
+                disable_constraint=self._disable_constraint,
             ),
         )
 

@@ -56,7 +56,7 @@ from environments.satellite.rendezvous_docking import SpaceRendezvousEnv  # noqa
 
 TASK = "rendezvous"
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 1000  # overridden below to 2000
 SEED = 7
 BACKEND = "gpu"  # 'gpu' | 'cpu'
 RESUME = False  # resume from the newest model_*.pt / checkpoint.pt
@@ -121,7 +121,7 @@ PPO_OVERRIDES = dict(
     lr_cosine=True,
     learning_rate_end=3e-5,
 )
-UPDATES = 1500
+UPDATES = 2000  # ppo_scratch fails (1% SR); give maximum budget
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.

@@ -23,7 +23,7 @@
 
 策略 60 Hz（$\Delta t=1/60$ s），控制 120 Hz（`inner_steps=2`），物理 240 Hz（每控制期 2 子步，$h=1/240$ s）；回合上限 900 策略步（15 s）。
 
-- **弹体**：150 kg 刚体。轴向体阻力 $F_x=-\tfrac12\rho C_{d,x}A_x\lvert v_x\rvert v_x$（$C_{d,x}=0.25$，$A_x=0.0314$ m²，$\rho=1.225$）；细长体法向力 $F_{\text{lat}}=-\tfrac12\rho\lVert v\rVert A_x C_{n\alpha}v_{\text{lat}}$（$C_{n\alpha}=16$），作用于压心 $x_{\text{cp}}=-0.45$ m（质心之后），同时提供转弯力、风标恢复力矩与转动阻尼；合成俯仰/偏航阻尼 $\tau=-c_{mq}\lVert v\rVert\omega_{\text{lat}}$（$c_{mq}=4.0$）抑制原本近乎无阻尼的舵面风标模态。速度钳位：$\lVert v\rVert\le1200$ m/s，$\lVert\omega\rVert\le40$ rad/s。
+- **弹体**：150 kg 刚体。轴向体阻力 $F_x=-\tfrac12\rho C_{d,x}A_x\lvert v_x\rvert v_x$（$C_{d,x}=0.25$，$A_x=0.0314$ m²，$\rho=1.225$）；细长体法向力 $F_{\text{lat}}=-\tfrac12\rho\lVert v\rVert A_x C_{n\alpha}v_{\text{lat}}$（$C_{n\alpha}=16$），作用于压心 $x_{\text{cp}}=-0.45$ m（质心之后），同时提供转弯力、风标恢复力矩与转动阻尼；合成俯仰/偏航阻尼 $\tau=-c_{mq}\lVert v\rVert\omega_{\text{lat}}$（$c_{mq}=4.0$）抑制原本近乎无阻尼的舵面风标模态。速度钳位：$\lVert v\rVert\le1200$ m/s，$\lVert\omega\rVert\le40$ rad/s。`aero="realistic"` 时 $\rho$ 与声速取自该高度 ISA（4 km 初值约 0.819 kg/m³），轴向阻力乘波阻因子，弹体法向力仅随密度缩放，舵面升力线斜率乘 Prandtl-Glauert / 线性超声速因子（该 3/rad 舵面在 M=1.8 约为 1.0）。同一预设还在 4 s 助推中烧掉 150 kg 弹体的 30% 推进剂并同步缩放质量与惯性张量、推力随环境压力下降而增大、目标横向过载限制 15 g、舵机 800 deg/s 速率限幅与 1% 死区，并为导引头相对状态/LOS 观测加入噪声；测量块再经一阶跟踪滤波（$\tau=0.02$ s，120 Hz 后向欧拉）并带天线罩斜率偏差（视在 LOS 朝机头旋转 $0.02$ rad/rad 迎角、$-0.02$ rad/rad 侧滑角），形成经典寄生 LOS 速率回路；传输延迟为 60 Hz 策略的一步。弹体导引头还具有 60° 半视场与 20 km 作用距离：超出时目标观测块 `[23:34]` 整块置零并丢失锁定（传感器加噪之后也无法恢复信息）。目标另带点质量能量模型（抛物线阻力、随密度衰减的推力、速度保持），持续高过载机动会掉速。
 - **舵面**：四片十字尾翼位于 $x=-1.3$ m（弦长 0.45 m，展长 0.40 m，$C_{l\alpha}=3.0$，失速 $\pm40^{\circ}$，偏度限 $\pm35^{\circ}$，作动滞后 $\tau=0.02$ s）。
 - **rate PID**：逐轴比例控制（$k_p=5.0$，$k_i=k_d=0$，输出限 ±1）于 120 Hz 作用在体角速度上，产生归一化（滚/俯/偏）舵指令；高 $k_p$ 补偿强风标弹簧（舵指令→稳态转弯率增益约 0.2–0.3 rad/s 每单位）。
 - **Skid-to-turn mixer**：滚转传动比 $g=0.01$（滚转惯量约为俯/偏的 1/150，故滚转通道降传动以保 120 Hz 环路稳定），[左,右,上,下] 舵指令为 $(q_c+g p_c,\ q_c-g p_c,\ -r_c-g p_c,\ -r_c+g p_c)$，裁剪到 $[-1,1]$。
@@ -80,6 +80,14 @@ v_T(t)=V_T h+n_\perp\frac{a_T}{\omega_w}\cos(\omega_w t+\phi). \tag{1b}
 p_T(t)=c+R_b(\cos\theta,\sin\theta,0),\quad v_T(t)=V_T(-\sin\theta,\cos\theta,0),\quad \theta=\omega_b t+\phi_b. \tag{1c}
 \end{equation}
 桶滚相位不自由：要求初始切向与出生航向一致（$v_T(0)\parallel h$）即固定 $\phi_b=\operatorname{atan2}(-h_x,h_y)$（$\omega_b<0$ 时加 $\pi$），圆心沿内法向一个半径处 $c=p_0-R_b(\cos\phi_b,\sin\phi_b,0)$；否则桶滚目标会朝任意方向起飞，交战退化为尾追。
+
+`aero="realistic"` 时上述公式只定义机动**形状**：目标带有速度状态 $V(t)$（初值 $V_T$），按 $v_T=V(t)\hat v_T$ 积分位置，并在每个物理子步用下式更新速度：
+\begin{equation}
+\dot V=\frac{T(V,h)-D(V,n,h)}{m},\qquad
+D=qSC_{D0}+\frac{(nmg)^2}{qS\pi AR e},\qquad
+T=\mathrm{clip}\!\left(D+\frac{m(V_T-V)}{\tau_V},0,T_{\max}(h)\right). \tag{1d}
+\end{equation}
+其中 $q=\tfrac12\rho(h)V^2$，过载因子 $n=1$（直线）、$\sqrt{1+(a_T/g)^2}$（蛇形）或 $\sqrt{1+(V^2/(R_bg))^2}$（桶滚），$T_{\max}\propto\rho^{0.7}$，$m=9$ t、$S=28$ m²、$AR=3.5$、$e=0.85$、$C_{D0}=0.02$、海平面 $T_{\max}=90$ kN、$\tau_V=2$ s。因此 4 km 高度持续 7.5 g 转弯会掉速；legacy 目标仍严格保持 $V=V_T$ 与 (1a)–(1c) 的闭式位置，逐位不变。
 
 ## 7. 奖励
 

@@ -389,12 +389,13 @@ def main():
     parser.add_argument("--seeds", nargs="*", type=int, default=TRAIN_SEEDS)
     parser.add_argument("--eval-seeds", nargs="*", type=int, default=EVAL_SEEDS)
     parser.add_argument("--methods", nargs="*", default=METHODS, choices=METHODS)
-    parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
 
     # Measured 2026-11-04 on one RTX 3090: 6 workers doubled per-job wall time
     # vs 3 (quadx 4.9h -> 9.1h) with zero throughput gain -- the GPU is the
     # bottleneck and each worker also burns a full CPU core launching kernels.
+    # 2026-11-10: default reduced to 2 to keep GPU util below 100%.
     if args.workers > 3:
         _log(
             f"WARNING: --workers {args.workers} > 3 on a single GPU historically "

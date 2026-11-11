@@ -782,18 +782,18 @@ benchmark 提供 `scripts/visualize.py`，对全部 10 个任务运行其传统�
 
 Genesis 相机的 `fov` 是**垂直视角**，因此画幅比例改变时脚本用 `_hfov_match` 重算垂直 fov 以保持原有的**水平视野**不变：从左 960×540 改为 960×810 时只增加上下天空/地面，原先相机调好的左右构图不被裁切。**主相机固定为全局视角**，不随被控对象平移或缩放；近景相机独立跟随被控对象（Satellite 也提供 `bus + CMG` 近景）。所有相机位姿显式给定世界竖直方向 `up=(0,0,1)`，避免相机继承上一帧姿态而产生画面滚转。
 
-真实尺度下机体与标记在远景中往往只有几像素，因此按任务做**纯显示放大**并在画面文字中标注倍率（QuadX 6×、QuadX-Track 12×、Fixedwing/Quadplane/Rocket 8×、Missile 200×、Docking 4×、Rendezvous 6×；Transfer 的盒体为示意尺寸、不按比例，真实尺度以画面下方 2000 km 比例尺为准）。放大是围绕**机体最低点**做的（`_scale_ground_lift`）：Genesis 按 link 原点缩放几何，若直接放大，8× 的火箭在落地时会有约 17 m 埋进着陆平台/地面，造成明显穿模；以最低点为锚后，放大后的机腹始终与真实机腹重合，落地时正好立在平台上，而卡片读数、判定半径仍是真实值。位置、距离、判定半径仍为真实米制；大气层任务使用灰色地面 + 浅蓝天空背景，航天器任务保留深色星空背景。QuadX-Track 与 Quadplane 复用 PyFlyt 机体 URDF、相机角度和航路点样式；QuadX-Track 仅额外显示真实目标、LOS 与环境遮挡物。
+真实尺度下机体与标记在远景中往往只有几像素，因此按任务做**纯显示放大**并在画面文字中标注倍率（QuadX 6×、QuadX-Track 12×、Fixedwing/Quadplane/Rocket 8×、Missile 200×、Docking 4×、Rendezvous 6×；Transfer 的盒体为示意尺寸、不按比例，真实尺度以画面下方 2000 km 比例尺为准）。放大是围绕**机体最低点**做的（`_scale_ground_lift`）：Genesis 按 link 原点缩放几何，若直接放大，8× 的火箭在落地时会有约 17 m 埋进着陆平台/地面，造成明显穿模；以最低点为锚后，放大后的机腹始终与真实机腹重合，落地时正好立在平台上，而卡片读数、判定半径仍是真实值。位置、距离、判定半径仍为真实米制；大气层任务会在深度掩码后合成按任务定制的写实天空背景板（素材缺失时回退程序化天空），航天器任务使用按任务定制的星空 / 地球临边背景板，地面在所有大气层任务中统一重绘为草原（多倍频草地：草簇、田块尺度变化，并按像素足迹淡出高频细节，世界坐标纹理，相机平移时保持锁定），火箭/导弹尾焰使用由真实油门与燃烧标志驱动的自发光羽流（多层密集锥体：白热喉部、橙色主体、暗红尾端），并叠加一层投影到屏幕空间的白热核心/辉光，让火焰读起来像光而不是涂色圆锥。QuadX-Track 与 Quadplane 复用 PyFlyt 机体 URDF、相机角度和航路点样式；QuadX-Track 仅额外显示真实目标、LOS 与环境遮挡物。
 
 ### 7.1 各任务可视化约定
 
 | 任务 | 全景主视图（左 960×810，不被任何元素覆盖） | 右上状态卡片（480×430） | 右下近景（480×354） |
 |------|------|------|------|
-| QuadX-Waypoints | cf2x URDF（显示放大 6×）+ 灰色地面 + 绿色活动航点球（放大至 0.18 m 半径）；固定全局视角（fov 45°，覆盖 5 m 飞行穹顶） | 主指标 Altitude；Waypoints「4 inside the 5 m dome」/ Body「scaled 6x」；绿色航点、灰色地面阴影图例；进度条与 RESULT 徽章 | PyFlyt yaw-30°/pitch-30° 机体 |
+| QuadX-Waypoints | cf2x URDF（显示放大 6×）+ 草地 + 绿色活动航点球（放大至 0.18 m 半径）；固定全局视角（fov 45°，覆盖 5 m 飞行穹顶） | 主指标 Altitude；Waypoints「4 inside the 5 m dome」/ Body「scaled 6x」；绿色航点、地面阴影图例；进度条与 RESULT 徽章 | PyFlyt yaw-30°/pitch-30° 机体 |
 | QuadX-Track | 同型 cf2x（放大 12×）+ 红色地面目标球（半径 1 m）+ 6 个灰色 LOS 遮挡柱 + 白色视线点序列 + 蓝/红历史轨迹 | 主指标 Altitude；Target VISIBLE/LOST / Body「scaled 12x」；红/灰/白图例；RESULT 徽章 | 机体 |
 | Fixedwing-Waypoints | fixedwing URDF（放大 8×），4 个航点红色球体，历史轨迹 | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 8x」；红/蓝图例；RESULT 徽章 | 机体 |
 | Quadplane-VTOL | quadplane URDF（放大 8×），4 个航点红色球体，历史轨迹（旋翼/固定翼构型由真实姿态呈现，不伪造倾转动画） | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 8x」；红/蓝图例；注脚注明真实 VTOL 姿态、无合成倾转动画 | 机体（真实 VTOL 姿态） |
-| Rocket-Landing | rocket URDF（放大 8×，以机腹最低点为锚，落地时立在平台上、不穿模）+ 着陆平台 + 灰色地面，覆盖 0–450 m 下降高度 | 主指标 Altitude；Landing pad「at origin」/ Body「scaled 8x」；灰色地面、蓝色下降轨迹图例；注脚注明固定全局视角与放大锚点 | 火箭（抬高后的完整机体 + 引擎羽流） |
-| Missile-Intercept | 导弹 URDF（放大 200×）+ 黄色定位点，运动学目标用半径 60 m 红色标记，交战轨迹，4 km 高度地面/天空背景；固定全局交战视角 | 主指标 Altitude（km）；Target「red 60 m marker」/ Body「scaled 200x」；黄/红图例；固定全局交战视角注脚 | 导弹 |
+| Rocket-Landing | rocket URDF（放大 8×，以机腹最低点为锚，落地时立在平台上、不穿模）+ 着陆平台 + 草地，覆盖 0–450 m 下降高度 | 主指标 Altitude；Landing pad「at origin」/ Body「scaled 8x」；草地、蓝色下降轨迹图例；注脚注明固定全局视角与放大锚点 | 火箭（抬高后的完整机体 + 引擎羽流） |
+| Missile-Intercept | 导弹 URDF（放大 200×）+ 黄色定位点，运动学目标用半径 60 m 红色标记，交战轨迹，4 km 高度草原/天空背景；固定全局交战视角 | 主指标 Altitude（km）；Target「red 60 m marker」/ Body「scaled 200x」；黄/红图例；固定全局交战视角注脚 | 导弹 |
 | Satellite Attitude | 卫星总线（灰身 +z/-z 设备舱、+x 传感面、-x 喷管、顶部天线、±y 太阳能板），体轴系三色轴架随动，目标姿态黄色轴架，青色 CMG 框架轴柱，红色目标姿态 ghost；固定斜视角相机（3.4/-3.4/2.15，不随翻滚体旋转） | 主指标 Attitude error（deg）；Gimbal X/Y/Z（rad）键值；红/绿/蓝 = 体轴 X/Y/Z 图例；注脚说明黄/青/ghost 语义 | bus + CMG 轴 |
 | Low-Thrust Transfer | 地球球体 + 航天器盒体（示意尺寸，1 单位 = 1000 km），绿色虚线初始轨道椭圆、青色点线目标圆轨道、红/黄近/远地点标记、橙色真实状态轨迹、2000 km 比例尺；固定 45° 全局视图（相机距离 36 单位） | 主指标 Scale bar「2000 km」；1 unit = 1000 km / Frame = GCRF / Markers 键值；绿/青/橙图例；注脚注明航天器盒体非真实比例 | 航天器 |
 | Docking | 灰色目标站（放大 4×）+ ±y 太阳能板，+x 面对接环（绿边 + 中心标记 + 半透明接近轴柱），橙色追踪器（放大 4×）对接面朝向目标，中心连线虚线，真实速度箭头（10 m/m·s⁻¹），接近轨迹；固定视角对准终端接近段（约 70 m） | 主指标 Range to target；Relative speed / Success「< pos_goal」/ Fail「> range_fail」键值；灰/绿/橙图例 | chaser + station（随距离连续变焦，含太阳翼） |
@@ -803,6 +803,7 @@ Genesis 相机的 `fov` 是**垂直视角**，因此画幅比例改变时脚本�
 
 ```bash
 python scripts/visualize.py <task>    # task ∈ {quadx, quadx_track, fixedwing, quadplane, rocket, missile, satellite, transfer, docking, rendezvous}
+python scripts/visualize.py <task> --closeup    # 独立特写机位，原生 960x540
 ```
 
 脚本从 `results/<task>/config.json` 恢复环境配置，在单 CPU 副本上运行任务的传统基线控制器，录制位姿后渲染 mp4。此工具用于定性检查控制器行为、辅助检查环境物理，以及为报告生成轨迹演示视频；它本身不构成物理正确性的数值验证。

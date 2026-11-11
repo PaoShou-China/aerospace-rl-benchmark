@@ -56,10 +56,13 @@ EmpiricalNormalization owns scaling):
   [33:34] target speed [m/s]
 """
 
+import math
+
 import torch
 from tensordict import TensorDict
 from environments.common.plant import TensorPlant
 from environments.common.dynamics import COMPUTE_DTYPE, inverse_rotate
+from environments.common.atmosphere import isa
 from algorithms.baselines.baselines import MissileAPNBaseline
 from environments.common.residual import ResidualActionMixin
 from environments.common.base_env import BaseEnv
@@ -131,7 +134,65 @@ KILL_RADIUS = 15.0  # proximity-fuse kill radius [m]; FIXED.
 R_SPAWN = 2500.0  # initial range [m] (fixed medium operating point)
 CONE = 37.5  # target-heading cone half-width [deg]
 A_LAT = 7.5  # target lateral accel [g]
+TARGET_MAX_LOAD_G = 15.0  # structural/load limit on the kinematic target
 F_WEAVE = 0.75  # weave angular rate [Hz]
+SEEKER_HALF_ANGLE = math.radians(60.0)  # body-fixed seeker field of view
+SEEKER_MAX_RANGE = 20000.0  # m; beyond this the seeker loses lock
+# Radome aberration slope: the apparent line of sight is refracted by the
+# radome, rotating with the missile angle of attack.  A typical radome slope
+# is 0.01-0.05 rad of boresight error per rad of AoA; the resulting LOS-rate
+# error is the classical radome-slope parasitic loop.  0.02 keeps the closed
+# loop of the APN baseline stable (43.8 % -> 40.6 % measured on seed 7).
+RADOME_SLOPE = 0.02
+# Seeker tracking-filter time constant [s]: the measured relative-state block
+# lags the true geometry by a first-order filter.  20 ms is a fast tracking
+# loop; 80 ms destabilised the 60 Hz APN loop (43.8 % -> 14 %).
+SEEKER_FILTER_TAU = 0.02
+
+
+def radome_biased_los(r_body, los_rate_body, velocity_body, slope=RADOME_SLOPE):
+    """Apparent relative position and LOS rate after radome refraction.
+
+    The radome bends the incoming wavefront by an angle proportional to the
+    missile angle of attack (pitch) and sideslip (yaw), which rotates the
+    measured line of sight and its rate in the body frame.  The small-angle
+    rotation is about body ``y`` (pitch, angle ``slope * alpha``) followed by
+    body ``z`` (yaw, angle ``-slope * beta``).
+
+    Args:
+        r_body: ``(n, 3)`` true target relative position in body frame.
+        los_rate_body: ``(n, 3)`` true LOS rate in body frame.
+        velocity_body: ``(n, 3)`` missile body-frame velocity.
+        slope: radome slope [rad per rad].
+
+    Returns:
+        ``(r_meas, los_rate_meas)`` in the body frame.
+    """
+    aoa = torch.atan2(-velocity_body[:, 2], velocity_body[:, 0].clamp_min(1e-3))
+    beta = torch.atan2(velocity_body[:, 1], velocity_body[:, 0].clamp_min(1e-3))
+    # Positive AoA points the nose above the velocity vector, so the radome
+    # bias rotates the apparent LOS toward the nose (up).
+    da = -slope * aoa
+    db = -slope * beta
+
+    def rotate(u):
+        ca, sa = torch.cos(da), torch.sin(da)
+        u = torch.stack(
+            (u[:, 0] * ca + u[:, 2] * sa, u[:, 1], -u[:, 0] * sa + u[:, 2] * ca), -1
+        )
+        cb, sb = torch.cos(db), torch.sin(db)
+        return torch.stack(
+            (u[:, 0] * cb - u[:, 1] * sb, u[:, 0] * sb + u[:, 1] * cb, u[:, 2]), -1
+        )
+
+    return rotate(r_body), rotate(los_rate_body)
+
+
+def first_order_lag(state, measured, dt, tau):
+    """Backward-Euler step of ``dx/dt = (measured - x)/tau`` (stable for any dt)."""
+    return state + (dt / (tau + dt)) * (measured - state)
+
+
 V_T = 250.0  # target speed [m/s]
 V_M0 = 250.0  # missile launch speed [m/s]
 Z_MID = 4000.0  # engagement altitude [m]
@@ -170,6 +231,23 @@ TGO_SCALE = 0.8  # fire-control t_go factor for the launch-aim lead
 # medium point: shorter lead trims overshoot misses, +0.8pp
 # SR on two disjoint 1024-ep seed populations)
 
+# Kinematic-target energy model (realistic preset).  The legacy target is a
+# pure 3-DOF point that holds V_T forever; a real aircraft bleeds speed in a
+# sustained high-g manoeuvre and cannot exceed its thrust limit while
+# recovering.  These values describe a 9 t fighter-class aircraft at the
+# 4 km engagement altitude.
+TARGET_MASS = 9000.0  # kg
+TARGET_WING_AREA = 28.0  # m^2
+TARGET_CD0 = 0.02
+TARGET_ASPECT = 3.5
+TARGET_OSWALD = 0.85
+TARGET_MAX_THRUST = 90.0e3  # N, sea-level static thrust
+TARGET_THRUST_EXPONENT = 0.7  # installed thrust lapse T ~ rho^0.7
+TARGET_SPEED_MIN = 90.0  # m/s; below this the manoeuvre is not sustainable
+TARGET_SPEED_MAX = 400.0  # m/s
+TARGET_SPEED_TAU = 2.0  # s, pilot speed-hold time constant
+G0 = 9.81
+
 
 class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
     """6-DOF tail-controlled missile intercept task against a kinematic target.
@@ -191,7 +269,28 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
     """
     conventional_controller = MissileAPNBaseline
     OMEGA_MAX = OMEGA_MAX
-    PERTURBABLE_PARAMS = {"thrust": 1.0, "mass": 1.0}
+    PERTURBABLE_PARAMS = {
+        "thrust": 1.0,
+        "mass": 1.0,
+        "aero": 1.0,
+        "cl_alpha": 1.0,
+        "cd0": 1.0,
+        "stall": 1.0,
+        "oswald": 1.0,
+        "actuator": 1.0,
+        "actuator_deadband": 1.0,
+        "actuator_backlash": 1.0,
+        "actuator_asymmetry": 1.0,
+        "actuator_delay": 1.0,
+        "sensor": 1.0,
+        "cg": 1.0,
+        "cg_y": 1.0,
+        "cg_z": 1.0,
+        "inertia": 1.0,
+        "inertia_x": 1.0,
+        "inertia_y": 1.0,
+        "inertia_z": 1.0,
+    }
     # Literature: interceptor-class solid rocket motors (e.g. THAAD booster
     # studies) have tightly characterized propulsion.  Rocket Monte Carlo
     # dispersion analyses use thrust +/-3% (3 sigma) and Isp +/-1%.  Missile
@@ -212,6 +311,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         param_mismatch=None,
         domain_randomize=None,
         warmup_iterations=None,
+        aero="legacy",
     ):
         """Initialize the MissileIntercept environment.
 
@@ -236,10 +336,33 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         }
         self.clip_actions = 1.0
         self.plant = TensorPlant(
-            "missile", num_envs, backend, seed, vel_clamp=(1200.0, 40.0),
+            "missile",
+            num_envs,
+            backend,
+            seed,
+            vel_clamp=(1200.0, 40.0),
             warmup_iterations=warmup_iterations,
+            aero=aero,
         )
         self.device = self.plant.device
+        self._sensor = None
+        if self.plant.realistic:
+            from environments.common.sensors import SensorModel
+
+            self._sensor = SensorModel(
+                num_envs,
+                self.device,
+                seed,
+                gyro_sigma=0.002,
+                attitude_sigma=0.002,
+                velocity_sigma=0.2,
+                position_sigma=5.0,
+                bias_step=5e-5,
+                seeker_position_sigma=2.0,
+                seeker_velocity_sigma=1.0,
+                seeker_los_sigma=0.002,
+                dt=1.0 / 60.0,
+            )
         self.agent_hz = 60
         self.inner_steps = int(self.plant.control_hz // self.agent_hz)
         self.max_steps = 900  # 15 s
@@ -284,6 +407,20 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         self.zem_prev = zeros(num_envs)  # zero-effort miss at the previous boundary
         self.target_pos = zeros(num_envs, 3)
         self.target_vel = zeros(num_envs, 3)
+        self.seeker_lock = torch.ones(num_envs, device=self.device, dtype=torch.bool)
+        # First-order seeker tracking filter state (realistic only): the
+        # measured block (relative position/velocity, LOS rate, closing speed,
+        # target speed) lags the true geometry.
+        self._seeker_track = (
+            torch.zeros((num_envs, 11), device=self.device, dtype=COMPUTE_DTYPE)
+            if self.plant.realistic
+            else None
+        )
+        # The tracking filter starts from the first measurement of an episode.
+        self._seeker_ready = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        # Field-of-view / lock-loss modelling is part of the realistic preset;
+        # the legacy benchmark keeps the always-valid seeker observation.
+        self.seeker_fov = bool(self.plant.realistic)
         # kinematic target parameters (reset_idx-owned)
         self.t_p0 = zeros(num_envs, 3)  # target position at t=0
         self.t_head = zeros(num_envs, 3)  # unit heading (straight/weave)
@@ -297,6 +434,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         self.t_center = zeros(num_envs, 3)  # barrel circle center
         self.t_omega_b = zeros(num_envs)  # barrel angular rate (signed) [rad/s]
         self.t_radius = zeros(num_envs)  # barrel radius [m]
+        # Realistic target energy state: current speed [m/s].  Legacy keeps the
+        # fixed-V_T closed-form path for bit-for-bit benchmark parity.
+        self.energy_model = bool(self.plant.realistic)
+        self.t_speed = torch.full((num_envs,), V_T, device=d, dtype=COMPUTE_DTYPE)
         keys = (
             ("progress", "zem", "kill", "miss")
             if reward_variant == "zem"
@@ -314,12 +455,38 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         self._seed = seed
         self.extras = dict()
         self.cfg = dict(self.task_cfg)
+        self.cfg["aero"] = aero
+        self.cfg["realism_version"] = self.plant.realism_version
         self._init_wind(num_envs, seed, steady_wind, dryden, severity)
         self.controller_design = {}
         apply_static_perturbation(self, param_mismatch)
         self._dr_counter = 0
-        self._domain_randomize = resolve_domain_randomize(
-            domain_randomize, self.DEFAULT_DOMAIN_RANDOMIZE
+        default_dr = self.DEFAULT_DOMAIN_RANDOMIZE
+        if self.plant.realistic:
+            default_dr = dict(default_dr)
+            default_dr.update(
+                {
+                    "sensor": (0.8, 1.2),
+                    "cg": (0.95, 1.05),
+                    "cg_y": (0.95, 1.05),
+                    "cg_z": (0.95, 1.05),
+                    "inertia": (0.9, 1.1),
+                    "inertia_x": (0.9, 1.1),
+                    "inertia_y": (0.9, 1.1),
+                    "inertia_z": (0.9, 1.1),
+                    "cl_alpha": (0.92, 1.08),
+                    "cd0": (0.85, 1.15),
+                    "stall": (0.90, 1.10),
+                    "oswald": (0.95, 1.05),
+                    "actuator_deadband": (0.50, 2.0),
+                    "actuator_backlash": (0.50, 2.0),
+                    "actuator_asymmetry": (0.70, 1.30),
+                    "actuator_delay": (0.0, 2.0),
+                }
+            )
+        self._domain_randomize = resolve_domain_randomize(domain_randomize, default_dr)
+        self.cfg["domain_randomize"] = (
+            dict(self._domain_randomize) if self._domain_randomize else None
         )
         self.residual = residual
         self._init_residual()
@@ -339,6 +506,11 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
                 dryden=dryden,
                 severity=severity,
                 dt=1.0 / self.agent_hz,
+                airspeed=500.0 if self.plant.realistic else 15.0,
+                reference_altitude=4000.0 if self.plant.realistic else None,
+                model="dryden" if self.plant.realistic else "first_order",
+                shear_exponent=0.14 if self.plant.realistic else 0.0,
+                time_varying=self.plant.realistic,
             )
             self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
             self.cfg["wind"] = dict(
@@ -375,6 +547,63 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         p = torch.where(m0[:, None], p_straight, torch.where(m1[:, None], p_weave, p_barrel))
         v = torch.where(m0[:, None], v_straight, torch.where(m1[:, None], v_weave, v_barrel))
         return p, v
+
+    def _target_direction(self):
+        """Unit velocity direction of the current manoeuvre (energy model)."""
+        t = self.sim_time
+        ph = self.t_omega * t + self.t_phase
+        weave = V_T * self.t_head + self.t_perp * (
+            (self.t_a / self.t_omega) * torch.cos(ph)
+        )[:, None]
+        weave = weave / weave.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        th = self.t_omega_b * t + self.t_phase
+        barrel = torch.stack(
+            (-torch.sin(th), torch.cos(th), torch.zeros_like(th)), -1
+        )
+        m0 = self.t_type == 0
+        m1 = self.t_type == 1
+        return torch.where(m0[:, None], self.t_head, torch.where(m1[:, None], weave, barrel))
+
+    def _target_load_factor(self, speed):
+        """Manoeuvre load factor n = |lift| / (m g)."""
+        t = self.sim_time
+        a_lat = (self.t_a * torch.cos(self.t_omega * t + self.t_phase)).abs()
+        n_weave = (1.0 + (a_lat / G0).square()).sqrt()
+        n_barrel = (
+            1.0 + (speed.square() / (self.t_radius * G0).clamp_min(1.0)).square()
+        ).sqrt()
+        return torch.where(
+            self.t_type == 0,
+            torch.ones_like(speed),
+            torch.where(self.t_type == 1, n_weave, n_barrel),
+        )
+
+    def _target_speed_step(self, speed, active):
+        """Advance the target's speed with a point-mass thrust/drag balance.
+
+        Drag is the parabolic polar ``q S CD0 + (n m g)^2 / (q S pi AR e)``,
+        the installed thrust lapses with air density, and the pilot commands
+        the drag plus a proportional speed-hold term clipped by the available
+        thrust.  A sustained high-g manoeuvre therefore bleeds speed and the
+        target cannot recover faster than its thrust margin allows.
+        """
+        rho = isa(self.target_pos[:, 2])[0]
+        q_s = (0.5 * rho * speed.square() * TARGET_WING_AREA).clamp_min(1.0)
+        load = self._target_load_factor(speed)
+        induced = (load * TARGET_MASS * G0).square() / (
+            q_s * math.pi * TARGET_ASPECT * TARGET_OSWALD
+        )
+        drag = q_s * TARGET_CD0 + induced
+        available = TARGET_MAX_THRUST * (
+            (rho / 1.225).clamp_min(0.05) ** TARGET_THRUST_EXPONENT
+        )
+        command = drag + TARGET_MASS * (V_T - speed) / TARGET_SPEED_TAU
+        thrust = command.clamp_min(0.0).minimum(available)
+        dv = (thrust - drag) / TARGET_MASS
+        new_speed = (speed + dv * self.plant.physics_dt).clamp(
+            TARGET_SPEED_MIN, TARGET_SPEED_MAX
+        )
+        return torch.where(active, new_speed, speed)
 
     def step(self, actions):
         """Advance one policy step through inner control steps.
@@ -426,7 +655,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         command = self._scale_actions(actions)
         self.action.copy_(command)
         if self._wind is not None:
-            self.plant.wind.copy_(self._wind.step())
+            _p0, _, _v0, _ = self.plant.state()
+            self.plant.wind.copy_(
+                self._wind.step(altitude=_p0[:, 2], airspeed=_v0.norm(dim=-1))
+            )
         self.reward.fill_(0.0)
         self.count += 1
 
@@ -440,7 +672,14 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         miss_ev = torch.zeros_like(active)
         for _ in range(self.plant.physics_per_control):
             sub = ~(self.terminated | self.truncated)
-            tp, tv = self._target_state()
+            if self.energy_model:
+                # Budget the speed state before moving the target, then
+                # integrate its position along the current manoeuvre direction.
+                tv = self._target_direction() * self.t_speed[:, None]
+                tp = self.target_pos + tv * self.plant.physics_dt
+                self.t_speed.copy_(self._target_speed_step(self.t_speed, sub))
+            else:
+                tp, tv = self._target_state()
             self.target_pos.copy_(torch.where(sub[:, None], tp, self.target_pos))
             self.target_vel.copy_(torch.where(sub[:, None], tv, self.target_vel))
             tq = _aim_quat(
@@ -477,16 +716,41 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         lam_w = torch.linalg.cross(r_w, v_rel) / r2[:, None]
         lam_b = inverse_rotate(q, lam_w)
         vc = -(r_w * v_rel).sum(-1) / r2.clamp_min(1e-6).sqrt()
+        r_b = inverse_rotate(q, r_w)
+        v_rel_b = inverse_rotate(q, v_rel)
+        if self._seeker_track is not None:
+            # Radome refraction biases the apparent LOS with angle of attack.
+            r_b, lam_b = radome_biased_los(r_b, lam_b, vb, RADOME_SLOPE)
+        rng = r_w.norm(dim=-1).clamp_min(1e-6)
+        boresight = torch.acos((r_b[:, 0] / rng).clamp(-1.0, 1.0))
+        lock = (rng < SEEKER_MAX_RANGE) & (boresight < SEEKER_HALF_ANGLE)
+        if not self.seeker_fov:
+            lock = torch.ones_like(lock)
+        self.seeker_lock.copy_(torch.where(active, lock, self.seeker_lock))
         rel = torch.cat(
             (
-                inverse_rotate(q, r_w),
-                inverse_rotate(q, v_rel),
+                r_b,
+                v_rel_b,
                 lam_b,
                 vc[:, None],
                 self.target_vel.norm(dim=-1)[:, None],
             ),
             -1,
         )
+        if self._seeker_track is not None:
+            tracked = first_order_lag(
+                self._seeker_track, rel, 1.0 / self.plant.control_hz, SEEKER_FILTER_TAU
+            )
+            # A fresh filter starts at the measurement instead of decaying from
+            # zero (a zero initial state would halve the apparent range for
+            # several time constants).
+            tracked = torch.where((~self._seeker_ready)[:, None], rel, tracked)
+            self._seeker_ready |= active
+            self._seeker_track.copy_(
+                torch.where(active[:, None], tracked, self._seeker_track)
+            )
+            rel = tracked
+        rel = rel * self.seeker_lock[:, None].to(COMPUTE_DTYPE)
         observation = torch.cat(
             (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary(), rel), -1
         )
@@ -598,6 +862,22 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
                 self._observation.shape, device=self.device, dtype=torch.float32
             )
         self.obs_buf.copy_(self._observation)
+        if self._sensor is not None:
+            active = ~(self.terminated | self.truncated)
+            self.obs_buf.copy_(
+                self._sensor.apply(
+                    self.obs_buf,
+                    active,
+                    seeker_slice=(23, 29),
+                    los_slice=(29, 32),
+                )
+            )
+        # A lost seeker lock must survive the sensor pipeline: the noise model
+        # adds independent samples to whatever is in the slice, so re-zero the
+        # whole target block (relative position/velocity, LOS rate, closing
+        # speed and target speed) for unlocked replicas.  A masked multiply
+        # instead of an index write keeps this graph-capture friendly.
+        self.obs_buf[:, 23:34].mul_(self.seeker_lock[:, None].to(self.obs_buf.dtype))
 
     def _apply_perturbation(self, name, scale):
         """Scale a live plant parameter; called by the DR helper."""
@@ -605,6 +885,44 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             self.plant.perturb_thrust(scale)
         elif name == "mass":
             self.plant.perturb_mass(scale)
+        elif name == "aero":
+            self.plant.perturb_aero(scale)
+        elif name == "actuator":
+            self.plant.perturb_actuator(scale)
+        elif name == "cl_alpha":
+            self.plant.perturb_cl_alpha(scale)
+        elif name == "cd0":
+            self.plant.perturb_cd0(scale)
+        elif name == "stall":
+            self.plant.perturb_stall(scale)
+        elif name == "oswald":
+            self.plant.perturb_oswald(scale)
+        elif name == "actuator_deadband":
+            self.plant.perturb_actuator_deadband(scale)
+        elif name == "actuator_backlash":
+            self.plant.perturb_actuator_backlash(scale)
+        elif name == "actuator_asymmetry":
+            self.plant.perturb_actuator_asymmetry(scale)
+        elif name == "actuator_delay":
+            self.plant.perturb_actuator_delay(scale)
+        elif name == "sensor":
+            if self._sensor is None:
+                raise KeyError("sensor perturbation requires the realistic preset")
+            self._sensor.set_scale(scale)
+        elif name == "cg":
+            self.plant.perturb_cg(scale, axis=0)
+        elif name == "cg_y":
+            self.plant.perturb_cg(scale, axis=1)
+        elif name == "cg_z":
+            self.plant.perturb_cg(scale, axis=2)
+        elif name == "inertia":
+            self.plant.perturb_inertia(scale)
+        elif name == "inertia_x":
+            self.plant.perturb_inertia(scale, axis=0)
+        elif name == "inertia_y":
+            self.plant.perturb_inertia(scale, axis=1)
+        elif name == "inertia_z":
+            self.plant.perturb_inertia(scale, axis=2)
         else:
             raise KeyError(name)
 
@@ -619,6 +937,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
         # No reset warmup here, so the host never needs to know ``nonempty``.
         self._reset_replicas(envs_idx)
+        if getattr(self, "_dr_scales", None):
+            self.extras["dr_scales"] = {
+                name: value.detach() for name, value in self._dr_scales.items()
+            }
 
     def _reset_replicas(self, mask):
         """Device half of reset_idx (graph-capturable)."""
@@ -638,8 +960,11 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         heading = base + (u[:, 3] * 2.0 - 1.0) * cone
         h = torch.stack((torch.cos(heading), torch.sin(heading), torch.zeros_like(heading)), -1)
         perp = torch.stack((-h[:, 1], h[:, 0], torch.zeros_like(h[:, 0])), -1)
-        # maneuver: lateral accel a, angular rate f, type/phase/sign
-        a = torch.full_like(u[:, 0], A_LAT * 9.81)
+        # maneuver: lateral accel a, angular rate f, type/phase/sign.
+        # A 15 g structural/load limit caps the prescribed maneuver: it shrinks
+        # the weave amplitude (a/omega^2) and opens the barrel radius (V^2/a),
+        # so the target cannot fly an aerodynamically impossible path.
+        a = torch.full_like(u[:, 0], A_LAT * 9.81).clamp_max(TARGET_MAX_LOAD_G * 9.81)
         omega = torch.full_like(u[:, 0], 2.0 * torch.pi * F_WEAVE)
         mtype = (u[:, 4] * 3.0).clamp(0, 2).to(torch.long)
         phase = u[:, 5] * 2.0 * torch.pi
@@ -722,6 +1047,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         tp, tv = self._target_state()
         self.target_pos.copy_(sel(tp, self.target_pos))
         self.target_vel.copy_(sel(tv, self.target_vel))
+        self.t_speed.copy_(sel(torch.full_like(self.t_speed, V_T), self.t_speed))
         dist = (self.target_pos - p_new).norm(dim=-1)
         self.dist.copy_(sel(dist, self.dist))
         self.dist_prev.copy_(sel(dist, self.dist_prev))
@@ -744,12 +1070,17 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         # first active physics step, so a rocket-style zero-command warmup
         # would burn thrust (and shift the spawn state) before the first
         # policy step; an air-borne missile has no contacts to settle.
+        self.seeker_lock.masked_fill_(mask, True)
+        if self._seeker_track is not None:
+            self._seeker_track.masked_fill_(mask[:, None], 0.0)
+            self._seeker_ready.masked_fill_(mask, False)
         self._observe(mask)
+        if self._sensor is not None:
+            self._sensor.reset(mask)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)
         if self._wind is not None:
             self._wind.reset(mask)
-        self._update_observation()
         self._residual_reset(mask)
 
     def _observe(self, mask):
@@ -763,16 +1094,23 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         lam_w = torch.linalg.cross(r_w, v_rel) / r2[:, None]
         lam_b = inverse_rotate(q, lam_w)
         vc = -(r_w * v_rel).sum(-1) / r2.clamp_min(1e-6).sqrt()
+        r_b = inverse_rotate(q, r_w)
+        rng = r_w.norm(dim=-1).clamp_min(1e-6)
+        boresight = torch.acos((r_b[:, 0] / rng).clamp(-1.0, 1.0))
+        lock = (rng < SEEKER_MAX_RANGE) & (boresight < SEEKER_HALF_ANGLE)
+        if not self.seeker_fov:
+            lock = torch.ones_like(lock)
+        self.seeker_lock.copy_(torch.where(mask, lock, self.seeker_lock))
         rel = torch.cat(
             (
-                inverse_rotate(q, r_w),
+                r_b,
                 inverse_rotate(q, v_rel),
                 lam_b,
                 vc[:, None],
                 self.target_vel.norm(dim=-1)[:, None],
             ),
             -1,
-        )
+        ) * self.seeker_lock[:, None].to(COMPUTE_DTYPE)
         observation = torch.cat(
             (wb, q[:, 1:], q[:, :1], vb, p, self.action, self.plant.auxiliary(), rel), -1
         )

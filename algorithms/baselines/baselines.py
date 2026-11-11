@@ -1161,6 +1161,15 @@ class FixedwingAutopilotBaseline(Baseline):
         self.k_energy = float(lon["k_energy"])
         self.k_energy_i = float(lon["k_energy_i"])
         self.integral_max = float(lon["integral_max"])
+        # The realistic preset's fixed-pitch advance-ratio loss removes thrust
+        # at cruise, so the legacy ceiling (trim 0.35 + energy 0.2 + integral
+        # 0.2 = 0.75) can no longer hold the task's 20 m/s reference or climb
+        # to the high waypoints.  Give the integral headroom only on that
+        # plant: raising it unconditionally measured 79.7 % vs the published
+        # legacy 91 % (out-of-bounds driven), while the realistic task needs
+        # full throttle in sustained climbs (0.35 + 0.2 + 0.45 = 1.0).
+        if getattr(getattr(env, "plant", None), "realistic", False):
+            self.integral_max = 0.45
         self.throttle_trim = float(lon["throttle_trim"])
         self.k_balance = float(lon["k_balance"])
         self.k_speed_keep = float(lon["k_speed_keep"])

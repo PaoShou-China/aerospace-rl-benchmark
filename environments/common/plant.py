@@ -12,8 +12,203 @@ from pathlib import Path
 import math
 import torch
 import yaml
+from .atmosphere import P0, RHO0, drag_factor, isa
 from .dynamics import COMPUTE_DTYPE, inverse_rotate
 from .aerodynamics import LiftingSurfaceBatch
+
+# Bump this whenever any realistic-preset model or constant changes.  It is
+# written into every run config so results remain attributable even though
+# the preset itself is not a frozen asset.
+REALISM_VERSION = "1.8"
+
+# Project-authored realistic-mode settings.  The upstream PyFlyt YAML assets
+# are SHA-256 frozen, so new aerodynamic coefficients live here instead of in
+# those files.  Surface order matches the ``names`` lists in TensorPlant.
+_REALISTIC_OSWALD = {
+    "fixedwing": (0.85, 0.85, 0.90, 0.90, 0.85),  # ailerons, h-tail, v-tail, wing
+    "quadplane": (0.85, 0.85, 0.90, 0.90, 0.85),
+    "missile": (0.85, 0.85, 0.85, 0.85),  # low-aspect-ratio tail fins
+    "rocket": (1.0, 1.0, 1.0, 1.0),  # grid fins: lifting-line e not applicable
+}
+# Servo rate limits [deg/s] for the realistic preset.  Typical small-UAV
+# servos run 200-400 deg/s; missile fin actuators are faster, grid-fin
+# actuators on a landing booster are slower.  The main wing has zero
+# deflection authority, so its entry is irrelevant.
+_REALISTIC_RATE_LIMIT_DEG_S = {
+    "fixedwing": (300.0, 300.0, 250.0, 250.0, 0.0),
+    "quadplane": (300.0, 300.0, 250.0, 250.0, 0.0),
+    "missile": (800.0, 800.0, 800.0, 800.0),
+    "rocket": (200.0, 200.0, 200.0, 200.0),
+}
+_REALISTIC_DEADBAND = 0.01  # 1% of full command
+# Multirotor low-speed drag (rotor hub/induced drag is linear in velocity,
+# unlike the quadratic fuselage term) [N per m/s].
+_REALISTIC_LINEAR_DRAG = {"quadx": 0.005, "quadplane": 0.08}
+# Rotor inertia [kg m^2] for the gyroscopic body moment.
+_REALISTIC_ROTOR_INERTIA = {"quadx": 2e-7, "quadplane": 5e-5}
+# Nominal full-throttle rotor speed for the 0.15 m quadplane props [rad/s];
+# the shared YAML thrust constant is a Crazyflie value and would imply an
+# unphysical ~10^5 rad/s.
+_QUADPLANE_ROTOR_MAX_RAD_S = 650.0
+# Propeller radius [m] for the ground-effect thrust factor.
+_REALISTIC_ROTOR_RADIUS = {"quadx": 0.03, "quadplane": 0.15}
+# Fixed-pitch propeller geometry (realistic mode only), (diameter [m], pitch
+# [m], max rpm).  Blade-element theory gives a thrust coefficient that falls
+# with advance ratio and reaches zero near the zero-thrust advance ratio
+# ``J0 = pitch / D``; a quadratic fit ``C_T(J) = C_T0 (1 - (J/J0)^2)`` matches
+# measured prop charts (UIUC/APC data) through the cruise range far better
+# than the linear J -> 0 expansion, so the zero-thrust airspeed at full
+# throttle is ``pitch * n_max``.  Sizes follow the static thrust each
+# vehicle's motor model produces (10x10 in tractor prop for the 18 N fixed
+# wing, 12x7 in lift rotors and a 13x10 in pusher for the quadplane's 14.7 N
+# and 58.9 N motors, 2.4 in props for the 27 g quadx).
+_REALISTIC_PROP = {
+    "quadx": (0.06, 0.04, 25000.0),
+    "fixedwing": (0.25, 0.25, 10000.0),
+    "quadplane": (0.30, 0.18, 6200.0),  # 6200 rpm == the 650 rad/s rotor cap
+}
+_REALISTIC_PUSHER_PROP = {"quadplane": (0.33, 0.25, 7000.0)}
+# Battery packs (realistic mode only): (series cells, capacity [Ah], whole
+# pack resistance [ohm], avionics load [W]).  The resistance includes the
+# cells, wiring and connector; the figure of merit below converts shaft power
+# (momentum theory) into electrical power.
+_REALISTIC_BATTERY = {
+    "quadx": (1, 0.35, 0.08, 0.3),
+    "fixedwing": (3, 5.0, 0.02, 5.0),
+    "quadplane": (4, 8.0, 0.012, 8.0),
+}
+_BATTERY_V_FULL = 4.2  # V per cell at 100 % state of charge
+_BATTERY_V_EMPTY = 3.5  # V per cell at 0 % state of charge
+_BATTERY_FIGURE_OF_MERIT = 0.65  # shaft / electrical power at the design point
+# Spanwise aerodynamic stations per lifting surface (realistic mode only).
+# Six stations resolve the quadplane rotor slipstream distribution and the
+# spanwise lift loss in a roll; the legacy path keeps the single-point model.
+_REALISTIC_STRIPS = {"fixedwing": 6, "quadplane": 6, "missile": 5, "rocket": 5}
+# Linearised torsional divergence speed [m/s] for the lumped elastic wing DOF
+# (realistic fixed-wing/quadplane only).  100 m/s leaves a 5x margin over the
+# 20 m/s task cruise while still making the twist respond to dynamic pressure.
+_REALISTIC_DIVERGENCE_SPEED = {"fixedwing": 100.0, "quadplane": 100.0}
+# Off-standard-day atmosphere (realistic only): a +15 K hot day with 1 %
+# specific humidity, a representative low-altitude UAV operating condition.
+_REALISTIC_TEMPERATURE_OFFSET = 15.0  # K
+_REALISTIC_SPECIFIC_HUMIDITY = 0.010  # kg/kg
+# Fixed-wing fuselage / landing-gear equivalent flat-plate area [m^2] per
+# body axis (realistic mode only; Cd*A ~ 0.01 m^2 for a 2.35 kg UAV).
+_FIXEDWING_BODY_CDA = (0.010, 0.010, 0.010)
+# Characteristic vehicle length [m] used to scale the CG domain-randomization
+# offset.  Link positions are not resolved by Genesis at construction time for
+# every asset (all quadx links report the spawn point), so a per-vehicle value
+# is more robust than a bounding-box measurement.
+_CG_LENGTH = {
+    "quadx": 0.12,
+    "quadplane": 1.6,
+    "fixedwing": 1.2,
+    "missile": 3.0,
+    "rocket": 40.0,
+}
+
+
+def ground_effect_factor(radius, altitude):
+    """Cheeseman-Bennett image-system thrust factor for a rotor near ground."""
+    z = altitude.clamp_min(0.02)
+    return (1.0 / (1.0 - (radius / (4.0 * z)).square())).clamp_max(1.15)
+
+
+def slipstream_dynamic_pressure(prop_offsets, surface_offsets, thrust, radius):
+    """Actuator-disk slipstream dynamic pressure at each lifting surface [Pa].
+
+    Replaces the former lumped "coverage fraction of T/(4A)" approximation
+    with the actual rotor and surface geometry:
+
+    * axial development along momentum theory,
+      ``q(x) = (T/A) * 0.25 * (1 + x/sqrt(x^2+R^2))^2`` (``T/(4A)`` at the
+      disk, ``T/A`` in the fully developed far wake);
+    * Gaussian radial decay outside the slipstream core with a spreading
+      width ``0.5 R + 0.1 x``;
+    * no contribution from a rotor whose surface sits upstream of the disk
+      (``x <= 0``), because a propeller only accelerates the flow behind it.
+
+    Args:
+        prop_offsets: ``(n, n_rotors, 3)`` body-frame rotor centres.
+        surface_offsets: ``(n, n_surfaces, 3)`` body-frame surface centres.
+        thrust: ``(n, n_rotors)`` rotor thrust [N] along body +z, so the
+            slipstream develops along body -z.
+        radius: scalar or ``(n_rotors,)`` rotor radius [m].
+
+    Returns:
+        ``(n, n_surfaces)`` added dynamic pressure [Pa].
+    """
+    r = torch.as_tensor(radius, device=thrust.device, dtype=thrust.dtype).reshape(-1)
+    if r.numel() == 1:
+        r = r.expand(thrust.shape[1])
+    rr = r[None, :, None]  # (1, n_rotors, 1)
+    d = surface_offsets[:, None, :, :] - prop_offsets[:, :, None, :]  # (n,nr,ns,3)
+    x = -d[..., 2]  # downstream distance along the rotor's -z downwash axis
+    radial = d[..., :2].norm(dim=-1)
+    downstream = x.clamp_min(0.0)
+    axial = 0.25 * (1.0 + downstream / torch.sqrt(downstream.square() + rr.square())).square()
+    width = 0.5 * rr + 0.1 * downstream
+    outside = (radial - rr).clamp_min(0.0)
+    attenuation = torch.exp(-0.5 * (outside / width.clamp_min(1e-3)).square())
+    disk_q = thrust / (math.pi * r.square())[None, :]  # (n, nr)
+    contribution = disk_q[:, :, None] * axial * attenuation * (x >= 0.0).to(thrust.dtype)
+    return contribution.sum(1)
+
+
+def prop_advance_factor(axial_speed, pitch_speed, throttle):
+    """Thrust fraction of a fixed-pitch propeller in axial flow.
+
+    Blade-element theory gives a thrust coefficient that falls with the
+    advance ratio ``J = V_axial / (n D)`` and reaches zero near
+    ``J0 = pitch / D``.  Over the attached-flow range the measured curve is
+    well represented by the quadratic fit ``C_T(J) = C_T0 (1 - (J/J0)^2)``
+    (UIUC/APC prop charts; the linear form is only the ``J -> 0`` expansion
+    and over-predicts the loss at cruise advance ratios).  The plant's static
+    map is ``T = C_T rho n^2 D^4`` with ``n ~ n_max * throttle``, so
+
+        ``T / T_static = 1 - (V_axial / (pitch * n_max * throttle))^2``.
+
+    ``pitch * n_max`` is the full-throttle pitch speed (zero-thrust airspeed).
+    Only the forward (positive) axial component is used: a descending rotor or
+    a tailwind along the thrust axis would raise the blade angle of attack,
+    but the plant clips the factor at its static value instead of modelling
+    the modest thrust gain (and the vortex-ring regime beyond it).
+
+    Args:
+        axial_speed: airspeed component along the thrust axis [m/s].
+        pitch_speed: full-throttle zero-thrust airspeed [m/s], scalar or
+            broadcastable against ``axial_speed``.
+        throttle: commanded throttle in ``[0, 1]``; clamped to a 2 % floor so
+            the quotient stays finite at idle, where the static thrust is
+            already negligible.
+
+    Returns:
+        Broadcast tensor of thrust multipliers in ``[0, 1]``.
+    """
+    v = torch.as_tensor(axial_speed)
+    ps = torch.as_tensor(pitch_speed, device=v.device, dtype=v.dtype).clamp_min(1e-3)
+    t = torch.as_tensor(throttle, device=v.device, dtype=v.dtype).clamp_min(0.02)
+    return (1.0 - (v.clamp_min(0.0) / (ps * t)).square()).clamp(0.0, 1.0)
+
+
+def battery_open_circuit_voltage(charge, cells):
+    """Pack open-circuit voltage from state of charge [V].
+
+    Linear Li-ion fit: 4.2 V/cell at full charge, 3.5 V/cell at empty.  Real
+    packs are flatter over the middle 80 % of the discharge curve, but the
+    linear fit is the standard first-order model and keeps the terminal
+    voltage monotone in charge.
+    """
+    q = torch.as_tensor(charge).clamp(0.0, 1.0)
+    cell = _BATTERY_V_EMPTY + (_BATTERY_V_FULL - _BATTERY_V_EMPTY) * q
+    return cell * float(cells)
+
+
+def rotor_gyro_torque(h_sum, body_rate):
+    """Gyroscopic body moment ``-omega x H`` for rotors with net axial H."""
+    h_vec = torch.zeros_like(body_rate)
+    h_vec[:, 2] = h_sum
+    return torch.linalg.cross(h_vec, body_rate)
 
 
 def rotate(q, v):
@@ -175,6 +370,7 @@ class TensorPlant:
         rocket_variation="nominal",
         rocket_benchmark="v2",
         warmup_iterations=None,
+        aero="legacy",
     ):
         if vehicle not in ("quadx", "fixedwing", "rocket", "missile", "quadplane"):
             raise ValueError(vehicle)
@@ -182,6 +378,16 @@ class TensorPlant:
             raise ValueError("n must be positive")
         if rocket_benchmark not in ("v1", "v2"):
             raise ValueError(rocket_benchmark)
+        if aero not in ("legacy", "realistic"):
+            raise ValueError(f"unknown aero mode {aero!r}")
+        # Legacy = sea-level density + incompressible lifting surfaces,
+        # bit-for-bit with the published benchmark.  Realistic adds ISA
+        # density/sound speed, Oswald induced drag, compressibility, actuator
+        # dynamics, sensor noise/latency, propulsion corrections and
+        # fuselage/body parasite drag where applicable.
+        self.aero = aero
+        self.realistic = aero == "realistic"
+        self.realism_version = REALISM_VERSION if self.realistic else "legacy"
         # TensorRandom is also used by tensor-only spacecraft tasks. Load the
         # native engine only when a rigid plant actually needs it.
         global gs
@@ -212,8 +418,15 @@ class TensorPlant:
         from .original_backend import engine_configuration
         from .original_batch import ConfiguredBulletClient
 
+        # Realistic mode resolves contact forces for every rigid vehicle, so a
+        # soft touchdown/crash gets support, friction and restitution instead
+        # of detection-only behaviour.  Legacy keeps constraints disabled for
+        # the published bit-for-bit benchmark.
+        self.contact_solver = bool(self.realistic)
         with engine_configuration(backend):
-            self._geometry = ConfiguredBulletClient()
+            self._geometry = ConfiguredBulletClient(
+                disable_constraint=not self.contact_solver
+            )
         c = self._geometry
         c._num_envs = n
         c.resetSimulation()
@@ -277,6 +490,22 @@ class TensorPlant:
         self.device = gs.device
         self.dtype = COMPUTE_DTYPE
         d = self.device
+        # Per-replica atmospheric state (ISA in realistic mode; sea-level
+        # constants otherwise).  Refreshed from altitude every physics substep.
+        self.air_density = torch.full((n,), RHO0, device=d, dtype=COMPUTE_DTYPE)
+        self.sound_speed = torch.full((n,), 340.294, device=d, dtype=COMPUTE_DTYPE)
+        self.air_pressure = torch.full((n,), P0, device=d, dtype=COMPUTE_DTYPE)
+        # Quadplane propeller slipstream dynamic-pressure boost [Pa] per
+        # lifting-surface station (one per spanwise strip in realistic mode).
+        self._wash_boost = (
+            torch.zeros(
+                (n, 5 * (_REALISTIC_STRIPS["quadplane"] if self.realistic else 1)),
+                device=d,
+                dtype=COMPUTE_DTYPE,
+            )
+            if vehicle == "quadplane"
+            else None
+        )
         # Rates are READ BACK from what was actually constructed, never
         # re-hardcoded: physics_dt is the scene's real integration step
         # (original_backend.PHYSICS_HZ is its single definition), the control
@@ -423,6 +652,26 @@ class TensorPlant:
                 self.forward_max_thrust = float(fm["thrust_to_weight"]) * 9.81
                 self.forward_tau = float(fm.get("tau", 0.01))
                 self.body_drag_id = self.links["base_link"]
+                body = self.params.get("body_params")
+                if body is None:
+                    # Legacy hard-coded estimate for a ~2.35 kg airframe.
+                    drag_cda = [0.3 * 0.2] * 3
+                else:
+                    drag_cda = [
+                        body["drag_coef_xyz"][i] * body["drag_area_xyz"][i] for i in range(3)
+                    ]
+                self.body_drag_constant = torch.tensor(
+                    [0.5 * RHO0 * c for c in drag_cda], device=d, dtype=COMPUTE_DTYPE
+                )
+        if vehicle == "fixedwing":
+            # Fuselage/landing-gear parasite drag, applied only in realistic
+            # mode (the frozen upstream YAML has no body-drag block).
+            self.body_drag_id = self.links["base_link"]
+            self.body_drag_constant = torch.tensor(
+                [0.5 * RHO0 * c for c in _FIXEDWING_BODY_CDA],
+                device=d,
+                dtype=COMPUTE_DTYPE,
+            )
         # Lifting surface init (fixedwing, quadplane, missile, rocket) — skipped
         # for quadx which has no aerodynamic surfaces.
         if vehicle in ("fixedwing", "quadplane", "missile", "rocket"):
@@ -457,7 +706,19 @@ class TensorPlant:
                 [self.links[name] for name in names], device=d, dtype=torch.long
             )
             self.surfaces = LiftingSurfaceBatch(
-                [self.params[k] for k in keys], lifts, forwards, n, d, self.physics_dt
+                [self.params[k] for k in keys],
+                lifts,
+                forwards,
+                n,
+                d,
+                self.physics_dt,
+                realistic=self.realistic,
+                oswald=_REALISTIC_OSWALD[vehicle],
+                rate_limit_deg_s=_REALISTIC_RATE_LIMIT_DEG_S[vehicle],
+                deadband=_REALISTIC_DEADBAND,
+                strips=_REALISTIC_STRIPS[vehicle] if self.realistic else 1,
+                aeroelastic=self.realistic and vehicle in ("fixedwing", "quadplane"),
+                divergence_speed=_REALISTIC_DIVERGENCE_SPEED.get(vehicle, 100.0),
             )
             if vehicle in ("fixedwing", "quadplane"):
                 self.fixed_index = torch.tensor([0, 0, 1, 1, 2], device=d, dtype=torch.long)
@@ -536,9 +797,50 @@ class TensorPlant:
         # Per-replica thrust scale multiplier applied to every thrust
         # computation in step().  1.0 keeps the nominal plant.
         self._thrust_scale = torch.ones(n, device=d, dtype=COMPUTE_DTYPE)
-        # Nominal body-link mass captured so perturb_mass() can rescale it
-        # without needing to read it back from the Genesis solver every time.
-        self._body_mass_nominal = None
+        # --- realistic electric propulsion (advance ratio + battery) ---
+        # Fixed-pitch propeller pitch speed and disk area per rotor, plus the
+        # pack state.  None/empty on the legacy path and on the chemically
+        # powered vehicles, which keeps every expression below untouched.
+        self._prop_pitch_speed = None
+        self._prop_area = None
+        self._battery_cells = None
+        self._battery_capacity_c = None
+        self._battery_resistance = 0.0
+        self._battery_avionics = 0.0
+        self.battery_charge = None
+        self.battery_voltage = None
+        self.battery_current = None
+        self.battery_energy = None
+        self._elec_thrust = None
+        if self.realistic and vehicle in _REALISTIC_PROP:
+            diameter, pitch, rpm = _REALISTIC_PROP[vehicle]
+            rotors = 4 if vehicle in ("quadx", "quadplane") else 1
+            pitch_speeds = [pitch * rpm / 60.0] * rotors
+            areas = [math.pi * (0.5 * diameter) ** 2] * rotors
+            if vehicle == "quadplane":
+                pdiam, ppitch, prpm = _REALISTIC_PUSHER_PROP["quadplane"]
+                pitch_speeds.append(ppitch * prpm / 60.0)
+                areas.append(math.pi * (0.5 * pdiam) ** 2)
+            cells, capacity_ah, resistance, avionics = _REALISTIC_BATTERY[vehicle]
+            self._prop_pitch_speed = torch.tensor(
+                pitch_speeds, device=d, dtype=COMPUTE_DTYPE
+            )
+            self._prop_area = torch.tensor(areas, device=d, dtype=COMPUTE_DTYPE)
+            self._battery_cells = cells
+            self._battery_capacity_c = capacity_ah * 3600.0
+            self._battery_resistance = resistance
+            self._battery_avionics = avionics
+            self.battery_charge = torch.ones(n, device=d, dtype=torch.float64)
+            self.battery_voltage = torch.full(
+                (n,), cells * _BATTERY_V_FULL, device=d, dtype=COMPUTE_DTYPE
+            )
+            self.battery_current = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+            self.battery_energy = torch.zeros(n, device=d, dtype=COMPUTE_DTYPE)
+            self._elec_thrust = torch.zeros(
+                (n, len(pitch_speeds)), device=d, dtype=COMPUTE_DTYPE
+            )
+        # Body-link id used by per-vehicle special cases (missile pitch CP,
+        # rocket drag, geometry capture).
         self._body_link_id = None
         if vehicle == "quadx":
             self._body_link_id = self.links["base_link"]
@@ -550,7 +852,91 @@ class TensorPlant:
             self._body_link_id = self.links["base_link"]
         elif vehicle == "rocket":
             self._body_link_id = self.links["base_link"]
+        # Missile boost propellant: 30% of the 150 kg airframe is grain.  The
+        # realistic preset burns it over ``burn_time`` and updates the base
+        # link mass, so the boost acceleration rises as the missile lightens.
+        self._missile_total_mass = None
+        self._missile_dry_mass = None
+        self._missile_inertia_nominal = None
+        self._missile_prop_fraction = 0.30
+        self.missile_fuel = None
+        if vehicle == "missile" and self.realistic:
+            total = self.drone.get_links_mass(
+                links_idx_local=[self._body_link_id]
+            ).to(COMPUTE_DTYPE)
+            self._missile_total_mass = total.reshape(n, 1)
+            self._missile_dry_mass = self._missile_total_mass * (1.0 - self._missile_prop_fraction)
+            self._missile_inertia_nominal = self.drone.get_links_inertia(
+                links_idx_local=[self._body_link_id]
+            ).to(COMPUTE_DTYPE).reshape(n, 1, 3, 3)
+            self.missile_fuel = torch.ones(n, device=d, dtype=COMPUTE_DTYPE)
         self._state_cache = None
+        # Nominal rigid-body mass properties, captured once for the mass/CG/
+        # inertia domain-randomization hooks (scale 1.0 = the URDF asset).
+        self._mass_nominal = self.drone.get_links_mass().to(COMPUTE_DTYPE).clone()
+        self._mass_scale = torch.ones((n, 1), device=d, dtype=COMPUTE_DTYPE)
+        self._com_nominal = self.drone.get_links_COM().to(COMPUTE_DTYPE).clone()
+        self._inertia_nominal = self.drone.get_links_inertia().to(COMPUTE_DTYPE).clone()
+        self._inertia_scale = torch.ones(
+            (n, self.drone.n_links, 1, 1), device=d, dtype=COMPUTE_DTYPE
+        )
+        self._inertia_mass_scale = torch.ones(
+            (n, self.drone.n_links, 1, 1), device=d, dtype=COMPUTE_DTYPE
+        )
+        self._inertia_axis_scale = torch.ones(
+            (n, self.drone.n_links, 3), device=d, dtype=COMPUTE_DTYPE
+        )
+        # Propellant links keep their own physical mass/inertia model; a mass
+        # scaling of the vehicle must not double-scale them.
+        self._propellant_ids = []
+        if vehicle == "rocket":
+            self._propellant_ids = (
+                list(self.fuel_ids) if getattr(self, "f9_real", False) else [self.fuel_id]
+            )
+        # CG randomisation is a rigid body-frame displacement, not a scale of
+        # the (mostly zero) link COM: every link's local COM is offset by the
+        # same body vector, so the composite CG moves by exactly that amount.
+        # The full-scale (scale = 2) offset is 10% of the vehicle's
+        # characteristic length; the default 0.9-1.1 range gives ~1% of that
+        # length per axis.
+        self._cg_shift_ref = torch.full(
+            (n,), 0.1 * _CG_LENGTH[vehicle], device=d, dtype=COMPUTE_DTYPE
+        )
+        self._cg_scale = torch.ones((n, 3), device=d, dtype=COMPUTE_DTYPE)
+        qlinks = self.drone.get_links_quat().to(COMPUTE_DTYPE)
+        self._cg_axes_local = [
+            inverse_rotate(
+                qlinks,
+                torch.zeros((n, self.drone.n_links, 3), device=d, dtype=COMPUTE_DTYPE)
+                + torch.eye(3, device=d, dtype=COMPUTE_DTYPE)[axis],
+            )
+            for axis in range(3)
+        ]  # body +x/+y/+z expressed in every link-local frame
+        # Body-frame rotor/surface geometry for the slipstream and per-rotor
+        # ground-effect models.  The true body-frame point is the link frame
+        # origin plus its (possibly non-zero) COM offset: Genesis resolves the
+        # quadx prop offsets only through the inertial COM, while the
+        # quadplane/missile carry them in the link frames.
+        self._prop_offsets = None
+        self._surface_offsets = None
+        # Body-frame centre of every spanwise station (n_surfaces, strips, 3):
+        # the surface centre plus its local station offsets.  Used to evaluate
+        # the rotor slipstream at each strip instead of one lumped value.
+        self._strip_offsets = None
+        if self._body_link_id is not None:
+            qlinks = self.drone.get_links_quat().to(COMPUTE_DTYPE)
+            points = self.drone.get_links_pos().to(COMPUTE_DTYPE) + rotate(
+                qlinks, self.drone.get_links_COM().to(COMPUTE_DTYPE)
+            )
+            base = points[:, self._body_link_id : self._body_link_id + 1]
+            if hasattr(self, "prop_ids"):
+                self._prop_offsets = (points[:, self.prop_ids] - base).mean(0)
+            if hasattr(self, "surface_ids"):
+                self._surface_offsets = (points[:, self.surface_ids] - base).mean(0)
+                if getattr(self, "surfaces", None) is not None and self.surfaces.strips > 1:
+                    self._strip_offsets = (
+                        self._surface_offsets[:, None, :] + self.surfaces.strip_offsets()
+                    )
 
     def state(self):
         """Return world-frame ``(position, quat, world_vel, world_ang)`` as float64.
@@ -614,6 +1000,27 @@ class TensorPlant:
                 return float(self.max_thrust)
             if self.vehicle == "rocket":
                 return float(self.params["booster_params"]["max_thrust"])
+        if name in (
+            "aero",
+            "actuator",
+            "actuator_deadband",
+            "actuator_backlash",
+            "actuator_asymmetry",
+            "actuator_delay",
+            "sensor",
+            "cg",
+            "cg_y",
+            "cg_z",
+            "inertia",
+            "inertia_x",
+            "inertia_y",
+            "inertia_z",
+            "cl_alpha",
+            "cd0",
+            "stall",
+            "oswald",
+        ):
+            return 1.0
         raise KeyError(f"{self.vehicle}: no nominal for perturbable param {name!r}")
 
     def perturb_thrust(self, scale):
@@ -624,36 +1031,150 @@ class TensorPlant:
             scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n)
         self._thrust_scale.copy_(scale)
 
+    def perturb_aero(self, scale):
+        """Scale every lifting-surface lift slope and zero-lift drag."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_aero_scale(scale)
+
+    def perturb_cl_alpha(self, scale):
+        """Scale the lift-curve slope only."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_cl_alpha_scale(scale)
+
+    def perturb_cd0(self, scale):
+        """Scale the zero-lift / parasite drag only."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_cd0_scale(scale)
+
+    def perturb_stall(self, scale):
+        """Scale the positive/negative stall margins only."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_stall_scale(scale)
+
+    def perturb_oswald(self, scale):
+        """Scale the Oswald span efficiency only."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_oswald_scale(scale)
+
+    def perturb_actuator(self, scale):
+        """Scale every servo time constant and rate limit (larger = slower)."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_actuator_scale(scale)
+
+    def perturb_actuator_deadband(self, scale):
+        """Scale the servo deadband fraction."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_actuator_deadband(scale)
+
+    def perturb_actuator_backlash(self, scale):
+        """Scale the mechanical backlash fraction."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_actuator_backlash(scale)
+
+    def perturb_actuator_asymmetry(self, scale):
+        """Scale the retraction rate relative to the extension rate."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_actuator_asymmetry(scale)
+
+    def perturb_actuator_delay(self, steps):
+        """Set the command transport delay in physics steps (0-2)."""
+        if hasattr(self, "surfaces"):
+            self.surfaces.set_actuator_delay(steps)
+
     def perturb_mass(self, scale):
-        """Scale the body-link mass by ``scale`` (float or (num_envs,) tensor)."""
-        if self.vehicle == "rocket" and self.rocket_benchmark == "v1":
-            if not hasattr(self, "_f9_dry_ids"):
-                self._f9_dry_ids = [i for i in range(self.drone.n_links) if i not in self.fuel_ids]
-                self._f9_dry_mass_nominal = self.drone.get_links_mass(
-                    links_idx_local=self._f9_dry_ids
-                ).to(COMPUTE_DTYPE)
-            if isinstance(scale, (int, float)):
-                scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
-            else:
-                scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n, 1)
-            self.drone.set_links_mass(
-                (self._f9_dry_mass_nominal * scale).to(gs.tc_float), links_idx_local=self._f9_dry_ids
-            )
-            return
-        if self._body_link_id is None:
-            return
-        if self._body_mass_nominal is None:
-            # capture on first call (Genesis has loaded the URDF masses by now)
-            m = self.drone.get_links_mass(links_idx_local=[self._body_link_id]).to(COMPUTE_DTYPE)
-            self._body_mass_nominal = m  # (num_envs, 1)
+        """Scale the structural mass and inertia of the whole vehicle.
+
+        Every non-propellant link is scaled by the same factor (the old
+        body-link-only path changed the total mass by ~1% on the multi-link
+        UAVs, not the requested 10%).  Inertia follows the same factor under a
+        uniform-density assumption.  Fuel/propellant links keep their own
+        physical depletion model and are excluded from both scalings.
+        """
         if isinstance(scale, (int, float)):
-            scale = torch.full((self.n, 1), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
+            scale = torch.full((self.n,), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
         else:
-            scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n, 1)
-        self.drone.set_links_mass(
-            (self._body_mass_nominal * scale).to(gs.tc_float),
-            links_idx_local=[self._body_link_id],
-        )
+            scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n)
+        self._mass_scale.copy_(scale[:, None].clamp_min(1e-3))
+        self._inertia_mass_scale.copy_(self._mass_scale[:, :, None, None])
+        if self._propellant_ids:
+            ids = torch.as_tensor(self._propellant_ids, device=self.device, dtype=torch.long)
+            self._inertia_mass_scale[:, ids] = 1.0
+        self._apply_mass()
+        self._apply_link_inertia()
+
+    def _apply_mass(self):
+        """Write the scaled link masses, keeping propellant links physical."""
+        if self._mass_nominal is None:
+            return
+        mass = self._mass_nominal * self._mass_scale
+        if self.vehicle == "missile" and self.realistic and self.missile_fuel is not None:
+            mass[:, self._body_link_id] = (
+                self._missile_dry_mass
+                + (self._missile_total_mass - self._missile_dry_mass) * self.missile_fuel[:, None]
+            ).squeeze(-1) * self._mass_scale[:, 0]
+        if self.vehicle == "rocket":
+            if getattr(self, "f9_real", False):
+                fuel_mass, _, _ = f9_tank_properties(self.fuel, self.params)
+                mass[:, self.fuel_ids] = fuel_mass
+            else:
+                b = self.params["booster_params"]
+                mass[:, self.fuel_id] = (self.fuel * b["total_fuel"]).clamp_min(1e-8)
+        self.drone.set_links_mass(mass.to(gs.tc_float))
+
+    def perturb_cg(self, scale, axis=0):
+        """Shift the centre of mass along one body axis (``scale`` 1 = nominal).
+
+        The offset is ``(scale - 1) * 0.1 * characteristic-length``: every
+        link's local COM receives the same body-frame vector, so the composite
+        CG moves by exactly that amount instead of scaling the (usually zero)
+        link COM.  The controller's design model keeps the nominal CG, which
+        is the unmodelled offset a policy should learn to reject.  Fuel-tank
+        COM on rocket v1 is overwritten by the propellant model every step,
+        so the propellant CG keeps governing those links.
+        """
+        if self._com_nominal is None:
+            return
+        if isinstance(scale, (int, float)):
+            scale = torch.full((self.n,), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
+        else:
+            scale = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n)
+        self._cg_scale[:, axis].copy_(scale)
+        delta = (self._cg_scale - 1.0) * self._cg_shift_ref[:, None]  # (n, 3)
+        com = self._com_nominal.clone()
+        for a in range(3):
+            com = com + delta[:, a, None, None] * self._cg_axes_local[a]
+        self.drone.set_links_COM(com.to(gs.tc_float))
+
+    def perturb_inertia(self, scale, axis=None):
+        """Scale every link's inertia by ``scale`` (``axis`` = one diagonal)."""
+        if self._inertia_nominal is None:
+            return
+        if isinstance(scale, (int, float)):
+            value = torch.full((self.n,), float(scale), device=self.device, dtype=COMPUTE_DTYPE)
+        else:
+            value = scale.to(self.device).to(COMPUTE_DTYPE).reshape(self.n)
+        if axis is None:
+            self._inertia_scale.copy_(value[:, None, None, None].clamp_min(1e-3))
+        else:
+            self._inertia_axis_scale[:, :, axis].copy_(value[:, None].clamp_min(1e-3))
+        self._apply_link_inertia()
+
+    def _inertia_scales(self, ids, include_mass=True):
+        """Broadcastable scale multiplier for the link inertias in ``ids``."""
+        scale = self._inertia_scale[:, ids]
+        if include_mass:
+            scale = scale * self._inertia_mass_scale[:, ids]
+        return scale * self._inertia_axis_scale[:, ids][..., :, None]
+
+    def _apply_link_inertia(self):
+        """Write the nominal link inertias times the active per-link scales."""
+        if self._inertia_nominal is None:
+            return
+        ids = [i for i in range(self.drone.n_links) if i not in self._propellant_ids]
+        if not ids:
+            return
+        inertia = self._inertia_nominal[:, ids] * self._inertia_scales(ids)
+        self.drone.set_links_inertia(inertia.to(gs.tc_float), links_idx_local=ids)
 
     def _air_velocity(self, ids, q):
         v = self.drone.get_links_vel(links_idx_local=ids, ref=gs.link_ref_frame.link_COM).to(
@@ -716,8 +1237,9 @@ class TensorPlant:
         non-finite values.
 
         Primary fix (``environments/common/original_backend``):
-        ``disable_constraint=True`` skips contact-force resolution (flight
-        tasks only need collision *detection*).
+        ``disable_constraint=True`` (legacy only) skips contact-force
+        resolution; realistic tasks enable the constraint solver so contacts
+        exchange impulses instead of only setting a flag.
 
         Defensive fallback here: clear stale ``_errno`` bitmasks, sanitize any
         non-finite states back to the safe spawn pose, and retry once.  We do
@@ -761,6 +1283,55 @@ class TensorPlant:
                 raise
             self.scene.step(update_visualizer=False, refresh_visualizer=False)
 
+    def _battery_thrust_factor(self):
+        """Thrust multiplier ``(V/V_nom)^2`` from the pack's loaded voltage.
+
+        A brushed/brushless motor at a fixed PWM duty has a no-load speed
+        proportional to the terminal voltage, and propeller thrust scales with
+        the square of speed, so the available thrust scales with the square
+        of the pack voltage.  The terminal voltage is the open-circuit voltage
+        at the current state of charge minus the ohmic sag of the previous
+        substep's current (explicit, stable at the 240 Hz physics rate).
+
+        Returns:
+            ``(n, 1)`` tensor normalised to the full-charge open-circuit
+            voltage, so a fresh pack under no load gives exactly 1.0.
+        """
+        v_oc = battery_open_circuit_voltage(self.battery_charge, self._battery_cells).to(
+            COMPUTE_DTYPE
+        )
+        v = (v_oc - self.battery_current * self._battery_resistance).clamp_min(
+            0.9 * self._battery_cells * _BATTERY_V_EMPTY
+        )
+        self.battery_voltage.copy_(v)
+        return (v / (self._battery_cells * _BATTERY_V_FULL)).square()[:, None]
+
+    def _update_battery(self, mask):
+        """Coulomb-count and energy-count the current thrust load.
+
+        Ideal induced power from momentum theory, ``P_shaft = sum T^(3/2) /
+        sqrt(2 rho A)``, divided by a figure of merit gives the electrical
+        draw; the avionics load is added directly.  The pack loses charge at
+        ``I dt`` (Coulomb counting) and accumulates ``P dt`` of drawn energy.
+        State advances only on active replicas.
+        """
+        thrust = self._elec_thrust.clamp_min(0.0)
+        induced = thrust.pow(1.5) / torch.sqrt(
+            2.0 * self.air_density[:, None] * self._prop_area
+        )
+        electrical = induced.sum(-1) / _BATTERY_FIGURE_OF_MERIT + self._battery_avionics
+        current = electrical / self.battery_voltage.clamp_min(1.0)
+        # The charge state is float64: at 240 Hz a float32 accumulator loses
+        # ~0.02 % over a single 0.5 s full-throttle burst to cancellation.
+        charge = (
+            self.battery_charge
+            - (current * self.physics_dt / self._battery_capacity_c).to(torch.float64)
+        ).clamp(0.0, 1.0)
+        self.battery_current.copy_(torch.where(mask, current, self.battery_current))
+        self.battery_charge.copy_(torch.where(mask, charge, self.battery_charge))
+        energy = self.battery_energy + electrical * self.physics_dt
+        self.battery_energy.copy_(torch.where(mask, energy, self.battery_energy))
+
     def physics_step(self, command, mask, target_state=None, *, restore=True):
         """Run one Genesis physics sub-step on active replicas (see ``_physics_step``)."""
         # The step counter decides the contact-sampling cadence; keeping it out
@@ -788,6 +1359,36 @@ class TensorPlant:
         # (v, w) axis; halves the inverse_rotate kernel count per substep.
         vwb = inverse_rotate(q[:, None, :], torch.stack((v, w), dim=1))
         vb, wb = vwb[:, 0], vwb[:, 1]
+        if self.realistic:
+            rho, pressure, _, sound_speed = isa(
+                p[:, 2], _REALISTIC_TEMPERATURE_OFFSET, _REALISTIC_SPECIFIC_HUMIDITY
+            )
+            self.air_density.copy_(rho)
+            self.air_pressure.copy_(pressure)
+            self.sound_speed.copy_(sound_speed)
+            rho_scale = rho / RHO0
+            # Momentum-theory propeller thrust scale with air density.
+            prop_scale = rho_scale.pow(2.0 / 3.0)
+        else:
+            rho_scale = None
+            prop_scale = None
+        # Air-relative body velocity and the pack's voltage thrust multiplier
+        # for the electric vehicles (realistic only; None keeps every legacy
+        # thrust expression untouched).
+        if self._battery_cells is not None:
+            vb_air = vb - (inverse_rotate(q, self.wind) if self.wind is not None else 0.0)
+            battery_scale = self._battery_thrust_factor()
+        else:
+            vb_air = None
+            battery_scale = None
+        # World height of every spanwise station for the wing-in-ground-effect
+        # correction (realistic only; None keeps the legacy path untouched).
+        strip_height = None
+        if self.realistic and self._strip_offsets is not None:
+            offsets = self._strip_offsets.reshape(1, -1, 3).expand(self.n, -1, -1)
+            strip_height = p[:, 2:3] + rotate(
+                q[:, None, :].expand(-1, offsets.shape[1], -1), offsets
+            )[..., 2]
         self._wrench.zero_()
         # Local views of the shared wrench buffer (the ``force``/``torque`` attributes
         # alias the same storage); in-place writes below fill ``_wrench``.
@@ -821,18 +1422,51 @@ class TensorPlant:
             m = self.params["motor_params"]
             thrust = self.throttle.abs() * self.throttle * m["total_thrust"] / 4
             thrust = thrust * self._thrust_scale[:, None]
+            if prop_scale is not None:
+                thrust = thrust * prop_scale[:, None]
+            if self.realistic:
+                # Per-rotor ground effect from the actual rotor height: the
+                # body-frame offsets are rotated into the world, so a pitched
+                # or banked vehicle sees each rotor's own clearance.
+                rotor_z = p[:, 2:3] + rotate(
+                    q[:, None, :].expand(-1, self._prop_offsets.shape[0], -1),
+                    self._prop_offsets[None].expand(self.n, -1, -1),
+                )[..., 2]
+                ge = ground_effect_factor(_REALISTIC_ROTOR_RADIUS["quadx"], rotor_z)
+                thrust = thrust * ge
+            if battery_scale is not None:
+                # Fixed-pitch advance-ratio loss on the vertical inflow plus
+                # the pack's terminal-voltage thrust factor.
+                thrust = thrust * prop_advance_factor(
+                    vb_air[:, 2:3], self._prop_pitch_speed, self.throttle
+                )
+                thrust = thrust * battery_scale
+                self._elec_thrust[:, :4].copy_(thrust)
             force[:, self.prop_ids, 2] = thrust
             torque[:, self.prop_ids, 2] = (
                 thrust * (m["torque_coef"] / m["thrust_coef"]) * self.spin
             )
             drag = self.params["drag_params"]
             vb_air = vb - (inverse_rotate(q, self.wind) if self.wind is not None else 0.0)
-            force[:, self.body_drag_id] = (
-                -0.5 * 1.225 * drag["drag_coef_xyz"] * drag["drag_area_xyz"] * vb_air.abs() * vb_air
+            drag_force = (
+                -0.5 * RHO0 * drag["drag_coef_xyz"] * drag["drag_area_xyz"] * vb_air.abs() * vb_air
             )
+            gyro = None
+            if rho_scale is not None:
+                drag_force = drag_force * rho_scale[:, None]
+                drag_force = drag_force - (
+                    _REALISTIC_LINEAR_DRAG["quadx"] * rho_scale[:, None] * vb_air
+                )
+                # Gyroscopic body moment from the four spinning rotors.
+                omega_rotor = (thrust / float(m["thrust_coef"])).clamp_min(0.0).sqrt()
+                h_sum = (_REALISTIC_ROTOR_INERTIA["quadx"] * omega_rotor * self.spin).sum(-1)
+                gyro = rotor_gyro_torque(h_sum, wb)
+            force[:, self.body_drag_id] = drag_force
             torque[:, 0] = (
                 -drag["drag_coef_pqr"] * wb.abs() * wb * (~self.last_contact)[:, None]
             )
+            if gyro is not None:
+                torque[:, self.body_drag_id] += gyro
         elif self.vehicle == "quadplane":
             # 4 identical quad motors + body drag.
             # Thrust = max_thrust * throttle² (Newton); torque = thrust * (km/kf) * spin.
@@ -840,17 +1474,57 @@ class TensorPlant:
                 self.motor_max_thrust[None, :] * self.throttle[:, :4].abs() * self.throttle[:, :4]
             )
             thrust = thrust * self._thrust_scale[:, None]
+            if prop_scale is not None:
+                thrust = thrust * prop_scale[:, None]
+            if self.realistic:
+                rotor_z = p[:, 2:3] + rotate(
+                    q[:, None, :].expand(-1, self._prop_offsets.shape[0], -1),
+                    self._prop_offsets[None].expand(self.n, -1, -1),
+                )[..., 2]
+                ge = ground_effect_factor(_REALISTIC_ROTOR_RADIUS["quadplane"], rotor_z)
+                thrust = thrust * ge
+            if battery_scale is not None:
+                thrust = thrust * prop_advance_factor(
+                    vb_air[:, 2:3], self._prop_pitch_speed[:4], self.throttle[:, :4]
+                )
+                thrust = thrust * battery_scale
+                self._elec_thrust[:, :4].copy_(thrust)
             force[:, self.prop_ids, 2] = thrust
+            if self.realistic:
+                # Geometric propeller slipstream: each rotor contributes the
+                # momentum-theory dynamic pressure at every spanwise station
+                # (one per strip in realistic mode), with axial development
+                # and radial spreading, instead of a single lumped coverage
+                # fraction on the surface centre.
+                stations = self._strip_offsets.reshape(-1, 3)
+                self._wash_boost.copy_(
+                    slipstream_dynamic_pressure(
+                        self._prop_offsets[None].expand(self.n, -1, -1),
+                        stations[None].expand(self.n, -1, -1),
+                        thrust,
+                        0.15,
+                    )
+                )
             # torque_coef/thrust_coef is the motor torque-to-thrust ratio; use
             # quad_motor_params as the shared ratio (both YAML sets give 7.94e-12 / 3.16e-10 ≈ 0.025).  # noqa: E501
             m_quad = self.params["quad_motor_params"]
             kt_ratio = float(m_quad["torque_const"]) / float(m_quad["thrust_const"])
             torque[:, self.prop_ids, 2] = thrust * kt_ratio * self.spin
-            # Body drag on base_link (no explicit drag params in quadplane.yaml,
-            # so use a reasonable coefficient for a ~2.35 kg airframe).
+            # Body drag on base_link (quadplane.yaml body_params, or the
+            # legacy Cd*A estimate for a ~2.35 kg airframe).
             vb_air = vb - (inverse_rotate(q, self.wind) if self.wind is not None else 0.0)
-            # drag force: Cd*A for a ~0.2 m² frontal area, Cd ~ 0.3
-            force[:, self.body_drag_id] = -0.5 * 1.225 * 0.3 * 0.2 * vb_air.abs() * vb_air
+            drag_force = -self.body_drag_constant[None, :] * vb_air.abs() * vb_air
+            if rho_scale is not None:
+                drag_force = drag_force * rho_scale[:, None]
+                drag_force = drag_force - (
+                    _REALISTIC_LINEAR_DRAG["quadplane"] * rho_scale[:, None] * vb_air
+                )
+                omega_rotor = self.throttle[:, :4].clamp(0.0, 1.0) * _QUADPLANE_ROTOR_MAX_RAD_S
+                h_sum = (
+                    _REALISTIC_ROTOR_INERTIA["quadplane"] * omega_rotor * self.spin
+                ).sum(-1)
+                torque[:, self.body_drag_id] += rotor_gyro_torque(h_sum, wb)
+            force[:, self.body_drag_id] = drag_force
         # NOTE: the surfaces/engines block below must also run for the
         # quadplane (aerodynamic surfaces + forward pusher). It previously
         # lived under a bare `else:` chained onto the quadx/quadplane
@@ -889,7 +1563,21 @@ class TensorPlant:
                     (a[:, 1] + a[:, 2], a[:, 1] - a[:, 2], a[:, 0] - a[:, 2], a[:, 0] + a[:, 2]), -1
                 ).clamp(-1, 1)
             previous = self.surfaces.actuation.clone()
-            f, t = self.surfaces.step(cmd, self._air_velocity(self.surface_ids, q))
+            f, t = self.surfaces.step(
+                cmd,
+                self._air_velocity(self.surface_ids, q),
+                density=self.air_density if self.realistic else None,
+                sound_speed=self.sound_speed if self.realistic else None,
+                q_boost=(
+                    self._wash_boost
+                    if self.realistic and self.vehicle == "quadplane"
+                    else None
+                ),
+                # Rigid-body rotation enters the spanwise station velocities,
+                # which is what gives the realistic model roll/pitch damping.
+                body_rate=wb if self.realistic and self.surfaces.strips > 1 else None,
+                ground_height=strip_height,
+            )
             self.surfaces.actuation.copy_(
                 torch.where(mask[:, None], self.surfaces.actuation, previous)
             )
@@ -914,10 +1602,26 @@ class TensorPlant:
                 m = self.params["motor_params"]
                 thrust = self.throttle[:, 0].abs() * self.throttle[:, 0] * m["total_thrust"]
                 thrust = thrust * self._thrust_scale
+                if prop_scale is not None:
+                    thrust = thrust * prop_scale
+                if battery_scale is not None:
+                    thrust = thrust * prop_advance_factor(
+                        vb_air[:, 0:1], self._prop_pitch_speed, self.throttle[:, 0:1]
+                    )[:, 0]
+                    thrust = thrust * battery_scale[:, 0]
+                    self._elec_thrust[:, 0].copy_(thrust)
                 force[:, self.links["motor_link"], 0] = thrust
                 torque[:, self.links["motor_link"], 0] = (
                     thrust * m["torque_coef"] / m["thrust_coef"]
                 )
+                if self.realistic and self.body_drag_constant is not None:
+                    # Fuselage / gear parasite drag (realistic mode only).
+                    vb_air = vb - (
+                        inverse_rotate(q, self.wind) if self.wind is not None else 0.0
+                    )
+                    force[:, self.body_drag_id] = (
+                        -self.body_drag_constant[None, :] * vb_air.abs() * vb_air
+                    ) * rho_scale[:, None]
             elif self.vehicle == "quadplane":
                 # Forward motor thrust along body +x (nose direction).
                 # The motor_link frame is rotated -90 deg about Z relative to
@@ -926,6 +1630,14 @@ class TensorPlant:
                 # reaction into component 1 (link-local y), not 0.
                 thrust = self.forward_max_thrust * self.throttle[:, 4].abs() * self.throttle[:, 4]
                 thrust = thrust * self._thrust_scale
+                if prop_scale is not None:
+                    thrust = thrust * prop_scale
+                if battery_scale is not None:
+                    thrust = thrust * prop_advance_factor(
+                        vb_air[:, 0:1], self._prop_pitch_speed[4:], self.throttle[:, 4:5]
+                    )[:, 0]
+                    thrust = thrust * battery_scale[:, 0]
+                    self._elec_thrust[:, 4].copy_(thrust)
                 force[:, self.forward_motor_id, 1] = thrust
                 # Forward motor spin torque (same ratio as front_motor_params),
                 # about the thrust axis (body +x == link-local y).
@@ -943,10 +1655,22 @@ class TensorPlant:
                 # sample per physics step regardless of burn state (RNG count
                 # invariant).
                 vel = self._air_velocity([self.drag_id], q)[:, 0]
-                force[:, self.drag_id, 0] -= (
-                    self.body_drag_constant * vel[:, 0].abs() * vel[:, 0]
-                )
-                k = self.cn_k * vel.norm(dim=-1)
+                speed = vel.norm(dim=-1)
+                axial_drag = self.body_drag_constant * vel[:, 0].abs() * vel[:, 0]
+                k = self.cn_k * speed
+                cmq = self.cmq_coef * speed
+                if self.realistic:
+                    # ISA density plus wave drag on the axial body.  The
+                    # slender-body normal force keeps its calibrated
+                    # ``cn_alpha`` (a project-authored aggregate that already
+                    # reflects the fin/body combination) and scales with
+                    # density only; the fins themselves get the
+                    # compressibility factor in LiftingSurfaceBatch.
+                    mach = speed / self.sound_speed.clamp_min(1.0)
+                    axial_drag = axial_drag * rho_scale * drag_factor(mach)
+                    k = k * rho_scale
+                    cmq = cmq * rho_scale
+                force[:, self.drag_id, 0] -= axial_drag
                 # Transverse flow at the CP includes the rotational contribution
                 # (v_cp = v_cg + omega x r, r = (cp_x,0,0)), which turns the
                 # slender-body force into BOTH the weathercock restoring moment
@@ -957,7 +1681,6 @@ class TensorPlant:
                 fy = -k * (vel[:, 1] + self.cp_x * wb[:, 2])
                 fz = -k * (vel[:, 2] - self.cp_x * wb[:, 1])
                 # Cmq-style synthetic pitch/yaw damping (see missile.yaml).
-                cmq = self.cmq_coef * vel.norm(dim=-1)
                 force[:, self.drag_id, 1] += fy
                 force[:, self.drag_id, 2] += fz
                 torque[:, self.drag_id, 1] += (-self.cp_x) * fz - cmq * wb[:, 1]
@@ -965,23 +1688,57 @@ class TensorPlant:
                 self.ignited.copy_(torch.where(mask, self.ignited | mask, self.ignited))
                 noise = self.rng.normal(mask, 0.0)
                 burning = self.ignited & (self.burn_clock < self.burn_time)
+                if self.realistic and self.missile_fuel is not None:
+                    burning = burning & (self.missile_fuel > 0.0)
                 thrust = (
                     self.max_thrust
                     * (1.0 + self.boost_noise_ratio * noise)
                     * burning.to(COMPUTE_DTYPE)
                 )
+                if self.realistic:
+                    # Nozzle thrust grows as ambient pressure falls.
+                    thrust = thrust * (1.0 + 0.10 * (1.0 - self.air_pressure / P0))
                 thrust = thrust * self._thrust_scale
                 force[:, self.drag_id, 0] += thrust
                 self.burn_clock.copy_(
                     torch.where(mask, self.burn_clock + self.physics_dt, self.burn_clock)
                 )
+                if self.realistic and self.missile_fuel is not None:
+                    fuel = (
+                        self.missile_fuel
+                        - self.physics_dt / self.burn_time * burning.to(COMPUTE_DTYPE)
+                    ).clamp(0.0, 1.0)
+                    self.missile_fuel.copy_(torch.where(mask, fuel, self.missile_fuel))
+                    mass = (
+                        self._missile_dry_mass
+                        + (self._missile_total_mass - self._missile_dry_mass)
+                        * fuel[:, None]
+                    ) * self._mass_scale
+                    self.drone.set_links_mass(
+                        mass.to(gs.tc_float), links_idx_local=[self._body_link_id]
+                    )
+                    # Uniform mass scaling keeps the inertia tensor consistent
+                    # with the burned propellant (COM shift is not modelled).
+                    # The mass ratio already carries the mass scale, so only
+                    # the explicit inertia scales are applied here.
+                    inertia = self._missile_inertia_nominal * (
+                        mass / self._missile_total_mass
+                    )[:, :, None, None] * self._inertia_scales(
+                        [self._body_link_id], include_mass=False
+                    )
+                    self.drone.set_links_inertia(
+                        inertia.to(gs.tc_float), links_idx_local=[self._body_link_id]
+                    )
             else:
                 b = self.params["booster_params"]
                 # Upstream body drag acts on body_ids=[0] == base_link
                 # (core/drones/rocket.py L92-116), not the fueltank.
                 vel = self._air_velocity([self.drag_id], q)[:, 0]
-                force[:, self.drag_id] -= self.body_drag_constant * vel.abs() * vel
-                if self.f9_real:
+                body_drag = self.body_drag_constant * vel.abs() * vel
+                if self.realistic:
+                    body_drag = body_drag * rho_scale[:, None]
+                force[:, self.drag_id] -= body_drag
+                if self.f9_real and not self.contact_solver:
                     contact = self.params["contact_params"]
                     supported = self.pad_contact.to(COMPUTE_DTYPE)
                     torque[:, self.drag_id] -= (
@@ -1029,6 +1786,10 @@ class TensorPlant:
                 thrust = self.throttle[:, 0] * b["max_thrust"]
                 if variation is not None:
                     thrust = thrust * variation.thrust
+                if self.realistic:
+                    # Merlin-class nozzle thrust rises ~8% from sea level to
+                    # vacuum; use the local ISA pressure for the correction.
+                    thrust = thrust * (1.0 + 0.08 * (1.0 - self.air_pressure / P0))
                 thrust = thrust * self._thrust_scale
                 force[:, self.links["booster_link"]] += direction * thrust[:, None]
                 if self.f9_real:
@@ -1042,7 +1803,10 @@ class TensorPlant:
                     )
                     self.drone.set_links_mass(mass.to(gs.tc_float), links_idx_local=self.fuel_ids)
                     self.drone.set_links_inertia(
-                        inertia.to(gs.tc_float), links_idx_local=self.fuel_ids
+                        (inertia * self._inertia_scales(self.fuel_ids, include_mass=False)).to(
+                            gs.tc_float
+                        ),
+                        links_idx_local=self.fuel_ids,
                     )
                     self.drone.set_links_COM(com.to(gs.tc_float), links_idx_local=self.fuel_ids)
                 else:
@@ -1056,8 +1820,15 @@ class TensorPlant:
                         mass[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
                     )
                     self.drone.set_links_inertia(
-                        inertia[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
+                        (inertia[:, None] * self._inertia_scales([self.fuel_id], include_mass=False)).to(
+                            gs.tc_float
+                        ),
+                        links_idx_local=[self.fuel_id],
                     )
+        if self._elec_thrust is not None:
+            # Advance the pack after every electric thrust source has been
+            # resolved, so one substep's current covers the whole vehicle.
+            self._update_battery(mask)
         force *= mask[:, None, None]
         torque *= mask[:, None, None]
         qlinks = self.drone.get_links_quat().to(COMPUTE_DTYPE)
@@ -1140,7 +1911,10 @@ class TensorPlant:
             return torch.cat((self.surfaces.actuation, self.throttle), -1)
         if self.vehicle == "missile":
             burn_left = (self.burn_time - self.burn_clock).clamp_min(0.0) / self.burn_time
-            burning = (self.ignited & (self.burn_clock < self.burn_time)).to(COMPUTE_DTYPE)
+            lit = self.ignited & (self.burn_clock < self.burn_time)
+            if self.missile_fuel is not None:
+                lit = lit & (self.missile_fuel > 0.0)
+            burning = lit.to(COMPUTE_DTYPE)
             return torch.cat(
                 (
                     self.surfaces.actuation,
@@ -1167,6 +1941,11 @@ class TensorPlant:
         self.pad_contact.masked_fill_(mask, False)
         self.last_contact.masked_fill_(mask, False)
         self.throttle.masked_fill_(mask[:, None], 0)
+        if self.battery_charge is not None:
+            self.battery_charge.masked_fill_(mask, 1.0)
+            self.battery_current.masked_fill_(mask, 0.0)
+            self.battery_energy.masked_fill_(mask, 0.0)
+            self.battery_voltage.masked_fill_(mask, self._battery_cells * _BATTERY_V_FULL)
         if self.vehicle == "quadx":
             self.pid.reset(mask)
             self.pwm.masked_fill_(mask[:, None], 0)
@@ -1174,15 +1953,31 @@ class TensorPlant:
             # Quadplane is both: quad motor path (pid + pwm) AND fixedwing path (surfaces).
             self.pid.reset(mask)
             self.pwm.masked_fill_(mask[:, None], 0)
-            self.surfaces.actuation.masked_fill_(mask[:, None], 0)
+            self.surfaces.reset(mask)
         elif self.vehicle == "missile":
             self.pid.reset(mask)
-            self.surfaces.actuation.masked_fill_(mask[:, None], 0)
+            self.surfaces.reset(mask)
             self.ignited.masked_fill_(mask, False)
             self.burn_clock.masked_fill_(mask, 0)
             self.fin_cmd.masked_fill_(mask[:, None], 0)
+            if self.missile_fuel is not None:
+                self.missile_fuel.masked_fill_(mask, 1.0)
+                mass = self._missile_total_mass * self._mass_scale
+                self.drone.set_links_mass(
+                    mass.to(gs.tc_float), links_idx_local=[self._body_link_id]
+                )
+                self.drone.set_links_inertia(
+                    (
+                        self._missile_inertia_nominal
+                        * self._mass_scale[:, :, None, None]
+                        * self._inertia_scales(
+                            [self._body_link_id], include_mass=False
+                        )
+                    ).to(gs.tc_float),
+                    links_idx_local=[self._body_link_id],
+                )
         else:
-            self.surfaces.actuation.masked_fill_(mask[:, None], 0)
+            self.surfaces.reset(mask)
             if self.vehicle == "rocket":
                 self.fuel.masked_fill_(mask, self.initial_fuel)
                 self.ignited.masked_fill_(mask, False)
