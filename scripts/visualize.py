@@ -607,14 +607,18 @@ def _trail(scene, radius, color):
     return [_marker(scene, radius, color, (0, 0, -1e5)) for _ in range(TRAIL_MARKERS)]
 
 
-def _update_trail(markers, path, clearance=0.0):
+def _update_trail(markers, path, clearance=0.0, span=1.0):
     """Replay historical positions without covering the current entity.
 
     `clearance` (scene metres) drops the newest history points inside the
     current body's displayed envelope: on the 16x rocket the last beads would
     otherwise sit on the airframe, and the space chasers are 5 / 14 m long.
+    `span` keeps only the newest fraction of the history, so a long vertical
+    descent does not turn into a light column across the whole sky.
     """
     history = path[:-1]
+    if span < 1.0 and history:
+        history = history[max(0, int(len(history) * (1.0 - span))):]
     if clearance > 0.0 and history and len(path) > 1:
         cur = np.asarray(path[-1], float)
         keep = np.linalg.norm(np.asarray(history, float) - cur, axis=1) > clearance
@@ -2157,6 +2161,14 @@ def _ground_texture(a, depth, sky_mask, task, cache):
             target = target * (1.0 - mix[..., None]) + straw * mix[..., None]
             # micro light/shade from the clump layer: grass is never uniform
             target = target * (0.93 + 0.14 * n4 + 0.08 * n5 * w5)[..., None]
+            # close-range blades: stretched noise gives the meadow a
+            # directional nap instead of a smooth felt surface
+            lam_b = scale * 0.10
+            wb = np.clip(1.0 - pix / (0.30 * lam_b), 0.0, 1.0)
+            blades = _noise2(
+                x / (lam_b * 0.30) + 7.0, y / (lam_b * 1.7) - 3.0, 43
+            )
+            target = target * (1.0 + (blades - 0.5) * 0.24 * wb)[..., None]
             # broad cloud-light variation rolling across the meadow
             target = target * (0.88 + 0.24 * field)[..., None]
             # grazing incidence stretches every patch into a long horizontal
@@ -2166,6 +2178,10 @@ def _ground_texture(a, depth, sky_mask, task, cache):
             flat = 0.35 + 0.65 * flat
             base = dark * 0.5 + light * 0.5
             target = base + (target - base) * flat[..., None]
+            # a very low-frequency field mosaic survives the flattening, so the
+            # distant ground still reads as farmland/meadow rather than a plain
+            mosaic = _noise2(x / (scale * 3.0) + 11.0, y / (scale * 3.0) - 5.0, 71)
+            target = target * (0.94 + 0.12 * mosaic)[..., None]
 
     # follow the rasteriser's light level, but compress the range: a dusk shot
     # must not turn the meadow into a black hole
@@ -2272,7 +2288,10 @@ def _plume_overlay(a, cam, plume):
     ).astype(np.float32)
     fade = np.clip((u_max - u) / 0.06, 0.0, 1.0)
     fade *= np.clip(u / 0.02, 0.0, 1.0)  # soft throat, no square cap at the bell
-    gain = (core * 0.95 + halo * 0.55) * fade
+    # a distant plume is only a few pixels tall: lift the glow so it still
+    # reads as a light source in the wide shot
+    boost = float(np.clip(120.0 / max(L, 1.0), 1.0, 2.0))
+    gain = (core * 0.95 + halo * 0.55) * fade * boost
     gain *= m
     sub = a[y0:y1, x0:x1]
     a[y0:y1, x0:x1] = np.clip(sub + col * gain[..., None], 0.0, 1.0)
@@ -2326,11 +2345,15 @@ def _post(rgb, depth, task):
     if abs(cache.get("sky_hy", -1.0) - hy) > 0.004 or "sky" not in cache:
         plate = _backdrop(task, h, w, hy)
         if plate is not None:
-            sky = plate
             # Fog blends into the plate's own colour at the horizon row, not a
             # global average, so the seam follows cloud/limb gradients.
             row = int(np.clip(hy * h, 0, h - 1))
             bg = plate[row][None, :, :].copy()
+            # dissolve the bottom of the plate into that horizon colour: the
+            # fogged ground meets it there, and a bare cut reads as a hard
+            # horizontal line across the frame
+            seam = np.clip((hy - yy) / 0.025, 0.0, 1.0)[..., None]
+            sky = plate * seam + bg * (1.0 - seam)
         elif outdoor:
             # polar dusk: near-black zenith, teal mid, muted slate horizon
             top = np.array((0.006, 0.014, 0.026), np.float32)
@@ -3687,7 +3710,7 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
     p0 = first["pos"]
     if task == "quadx":
         # PyFlyt-style visualization (mirrors PyFlyt 0.29 quadx_envs): grass
-        # ground, the cf2x URDF (enlarged 6x so the ~9 cm airframe is
+        # ground, the cf2x URDF (enlarged 9x so the ~9 cm airframe is
         # readable at dome scale), an opaque solid green sphere at the active
         # waypoint (PyFlyt's waypoint_handler scaling, enlarged to stay visible),
         # and a fixed global camera. The close-up inset keeps the true camera
@@ -3712,7 +3735,7 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
             res=close_res, fov=_hfov_match(45, close_res), far=5000
         )
     elif task == "quadx_track":
-        # Reuse the PyFlyt cf2x model (enlarged 8x for readability). Only the
+        # Reuse the PyFlyt cf2x model (enlarged 14x for readability). Only the
         # target, true LOS and the environment's geometric occluders are added.
         _ground(scene, color=GRASS_GROUND)
         _grid(scene, 24.0, 2.0, color=GRASS_GRID)
@@ -3814,7 +3837,7 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         _box(scene, (0.35, 56.0, 0.04), (0.35, 0.75, 0.88, 1.0), (0.0, 0.0, 0.15))
         for z in range(15, 460, 15):
             ents.setdefault("ladder", []).append(
-                _box(scene, (7.5, 2.2, 0.5), (0.45, 0.86, 1.0, 1.0), (-120.0, 0.0, float(z)))
+                _box(scene, (4.6, 1.5, 0.35), (0.30, 0.58, 0.70, 1.0), (-120.0, 0.0, float(z)))
             )
         # 5.4 m airframe at ~450 m altitude would be a few pixels: enlarged 16x.
         # The display scale is anchored at the airframe's lowest point (computed
@@ -3862,7 +3885,7 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
                     "ph": j / 10.0,
                 }
             )
-        ents["trail"] = _trail(scene, 1.2, (0.25, 0.55, 0.95, 0.75))
+        ents["trail"] = _trail(scene, 0.7, (0.22, 0.42, 0.70, 0.38))
         # descent corridor: pad in the lower third, apex near the top
         cam = scene.add_camera(
             res=MAIN_RES, pos=(520, -520, 300), lookat=(0, 0, 200),
@@ -4404,7 +4427,10 @@ def render(task, frames, extras, out_path, fps, closeup=False):
                 for m in trail:
                     m.set_pos(tuple(HIDDEN))
             else:
-                _update_trail(trail, path, clearance=clearance)
+                _update_trail(
+                    trail, path, clearance=clearance,
+                    span=0.28 if task == "rocket" else 1.0,
+                )
         p = np.asarray(f["pos"], dtype=float)
         if task == "quadx":
             ents["goal"].set_pos(tuple(map(float, f["goal"])))

@@ -465,8 +465,8 @@ class RocketEGuidanceBaseline(Baseline):
     KD_T = 6000.0
     KD_Z = 3.0
 
-    def __init__(self, env):
-        super().__init__(env)
+    def __init__(self, env, design=None):
+        super().__init__(env, design)
         d = self.device
         f64 = COMPUTE_DTYPE
         self.ez = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=f64)

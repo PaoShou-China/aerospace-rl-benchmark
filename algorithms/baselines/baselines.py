@@ -2211,8 +2211,11 @@ class RocketPDLandingBaseline(Baseline):
             self.V_MAX = 30.0
             self.BRAKE_FRAC = 0.5
             self.M_ON = 100.0
-            self.H_TERM = 0.0
-            self.V_BAND = 0.3
+            self.H_TERM = 1.0
+            self.V_BAND = 0.1
+            self.V_TERM_OFF = 0.05
+            self.V_TERM_ON = 0.15
+            self.V_CUT = 0.03
             self.KP_ATT = 4.0e6
             self.KD_ATT = 4.0e6
             self.KD_YAW = 2000.0
