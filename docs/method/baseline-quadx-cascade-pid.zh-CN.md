@@ -107,17 +107,19 @@ a=\Big(\frac{\omega^{\mathrm{cmd}}}{\pi},\ \frac{2T}{T_{\max}}-1\Big)\ \mathrm{c
 
 ## 5. 实测表现
 
-以下均为本仓库 GPU 后端、静风（无 `results/quadx/config.json`，即默认 env kwargs）、`scripts/baseline_eval.py` 无偏记账：每副本一个完整首回合，不丢弃飞行中回合。仅发布的 quadx 记录为 `baseline.json`（32 副本/seed 7）、`baseline_cascaded_pid.json`（512 副本/seed 7）与 `results/quadx/baselines/` 下数据集 B（256 副本/seed 7）；检出中无 1024 副本产物。
+以下均为本仓库 GPU 后端、静风（无 `results/quadx/config.json`，即默认 env kwargs）、`scripts/baseline_eval.py` 无偏记账：每副本一个完整首回合，不丢弃飞行中回合。仅发布的 quadx 记录为 `baseline.json`（128 副本/seed 7/82.8%）、`baseline_cascaded_pid.json`（512 副本/seed 7）与 `results/quadx/baselines/` 下数据集 B（256 副本/seed 7）；检出中无 1024 副本产物。下表的 32 副本 SE(3) 行是历史对比集，不是当前 shipped `baseline.json`。
 
 ### 5.1 已发布对比记录
 
 | 臂 | 副本 | 成功 | 坠毁 / 出界 / 超时 | 窗口 | 平均回报 |
 |---|---|---|---|---|---|
-| SE(3) 几何（`baseline.json`，seed 7） | 32 | 90.6%（29/32） | 0 / 0 / 3 | 800 步 | 66.09 |
+| SE(3) 几何（`baseline.json`，历史 32 副本 run，seed 7） | 32 | 90.6%（29/32） | 0 / 0 / 3 | 800 步 | 66.09 |
 | 级联 PID（`baseline_cascaded_pid.json`，seed 7） | 512 | **11.9%**（61/512） | 8.8% / 1.0% / 77.8% | 800 步 | 14.14 |
 | 级联 PID（`baselines/cascaded_pid_seed7.json`，数据集 B） | 256 | **99.2%** | 0 / 0 / 0.8% | 800 步 | 72.74 |
 | SE(3) 几何（`baselines/se3_geometric_seed7.json`，数据集 B） | 256 | 100.0% | 0 / 0 / 0 | 648 步 | 72.86 |
 | SMC（`baselines/smc_seed7.json`，数据集 B） | 256 | 100.0% | 0 / 0 / 0 | 557 步 | 72.86 |
+
+当前随仓库发布的 `baseline.json` 是 128 副本 / seed 7 / 82.8%；上表 32 副本行是为与旧级联数据同集对比保留的历史记录，不要再把它当作 shipped baseline.json 的元数据。
 
 512 副本的 `baseline_cascaded_pid.json` 是**陈旧产物**（77.8% 超时、4 航路点中均达 0.75），早于控制器/plant 修复；同一控制器在当前代码上于 256 副本/seed 7 达 99.2%。不要把 11.9% 当作当前测量。更早的"官方 1024 env"值（99.12%、均值 3.99/4、9 次超时）无法从检出复现，已撤回；§5.3 与 §6 保留选增益时记录的调参扫描数字，但对应 `results/quadx/cascade_pid_tests.json` 未发布。
 

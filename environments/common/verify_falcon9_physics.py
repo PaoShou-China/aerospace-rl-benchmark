@@ -606,6 +606,11 @@ try:
 
     # --- 14b. TVC: body pitch rate matches τ/I_tr (pure couple about the CoM) ---
     _reset_still()
+    # reset() refills the tanks, so the pre-reset mass properties are stale;
+    # recompute them for the analytic τ/I comparison.
+    M_a, com_a, I_tr_a, I_ax_a, _, _ = mass_props_batch(
+        env.engine.m_lox, env.engine.m_rp1, p
+    )
     gmax = p.engine.ENG_GIMBAL_MAX
     env.engine.eng_on = torch.ones(1, dtype=torch.bool, device=env.device)
     env.engine.ignition_timer = torch.full((1,), 5.0, device=env.device)
@@ -626,7 +631,9 @@ try:
         gimbal_to_direction,
     )  # noqa: E402
 
-    _, p_amb, _, _ = atmosphere_eval(torch.tensor([10000.0]), p)
+    # Use the actual post-reset altitude: reset() restores its own scenario,
+    # not the 10 km construction position.
+    _, p_amb, _, _ = atmosphere_eval(env.vehicle.get_pos()[:, 2], p)
     thrust_t = env.engine.throttle_act[0] * (p.engine.ENG_T_VAC - p.engine.ENG_AE * p_amb[0])
     tdir_t = gimbal_to_direction(env.engine.g0_act, env.engine.g1_act)[0]
     F_t = thrust_t * tdir_t

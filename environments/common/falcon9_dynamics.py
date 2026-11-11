@@ -103,8 +103,10 @@ def atmosphere_eval(h_world: Tensor, p: Falcon9Params = P) -> Tuple[Tensor, Tens
     dz = Hp - Hb
     Lm = Lb / 1000.0  # K/m
 
-    # Temperature in layer
-    T = Tb + Lm * dz
+    # Temperature in layer.  ``dz`` is geopotential altitude in km and ``Lb``
+    # is the lapse rate in K/km, so they multiply directly; using ``Lm * dz``
+    # (K/m x km) made the tropospheric lapse 1000x too weak.
+    T = Tb + Lb * dz
     # Pressure
     p_out = torch.zeros_like(h)
     exp_mask = Lm.abs() < 1e-9
@@ -179,13 +181,17 @@ def mass_props_batch(
     )
     I_ax = Iax_dry + Iax_l + Iax_r
 
-    # Analytic dI/dm for each tank (derived in constants.h comment)
+    # Analytic dI/dm for each tank.  For I = m(3r^2 + h^2)/12 with
+    # h = m/(rho A): dI/dm = (3r^2+h^2)/12 + m h/(6 rho A).  The previous
+    # implementation used m h/(2 rho A), 3x too large.  The CoM shift cancels
+    # across the three parallel-axis terms (sum m_i (z_i-com) = 0), so the
+    # derivative keeps the tank's own dz/dm only.
     half_LOX_area = 2.0 * Pr.LOX_RHO * Pr.TANK_AREA
     half_RP1_area = 2.0 * Pr.RP1_RHO * Pr.TANK_AREA
-    dz_l = 1.0 / half_LOX_area  # dz/dm  (height rate of change per kg removed)
+    dz_l = 1.0 / half_LOX_area  # dz_l/dm = 0.5 dh/dm
     dz_r = 1.0 / half_RP1_area
-    dItl_l = (3.0 * rt2 + h_l * h_l) / 12.0 + m_lox * h_l / half_LOX_area
-    dItl_r = (3.0 * rt2 + h_r * h_r) / 12.0 + m_rp1 * h_r / half_RP1_area
+    dItl_l = (3.0 * rt2 + h_l * h_l) / 12.0 + m_lox * h_l / (3.0 * half_LOX_area)
+    dItl_r = (3.0 * rt2 + h_r * h_r) / 12.0 + m_rp1 * h_r / (3.0 * half_RP1_area)
     dItr_dml = dItl_l + (z_l - com) ** 2 + 2.0 * m_lox * (z_l - com) * dz_l
     dItr_dmr = dItl_r + (z_r - com) ** 2 + 2.0 * m_rp1 * (z_r - com) * dz_r
     dIax_dml = 0.5 * rt2
@@ -369,6 +375,19 @@ def _xcp_frac_torch(M: Tensor, alpha: Tensor, p: Falcon9Params = P) -> Tensor:
     xcp = p.aero.XCP_BASE + p.aero.XCP_TRANSONIC_BUMP * torch.exp(-(((M - 1.05) / 0.3) ** 2))
     amod = 0.015 * (alpha.abs() / math.radians(15.0)).clamp(0.0, 1.0)
     return xcp - amod
+
+
+def plume_shield(thrust: Tensor, qbar: Tensor, p: Falcon9Params = P) -> Tensor:
+    """Plume-shielding factor: 1 in free air, 0.05 in a dense exhaust jet.
+
+    CT = T / (qbar * A_ref), ramped from full aero at CT < 0.5 to 5 % at
+    CT > 3.0.  Centralised so the Genesis path and the RK4 fallback use the
+    same law.
+    """
+    qbar_safe = qbar.clamp_min(1.0)
+    ct = thrust / (qbar_safe * p.vehicle.VEH_AREF)
+    shield_t = ((ct - 0.5) / 2.5).clamp(0.0, 1.0)
+    return 1.0 + shield_t * (0.05 - 1.0)
 
 
 def aero_body_torch(
@@ -569,14 +588,21 @@ def rcs_torque_from_cmd(
     RCS handles roll only.
     """
     R = p.rcs
-    # Per-axis saturation
-    tau = tau_cmd_body.clone()
-    tau.abs_().clamp_max_(R.RCS_MAX_TORQUE)
+    # Per-axis saturation.  Clamp the signed value; `abs_().clamp_max_()`
+    # silently discarded the command sign and made every negative RCS command
+    # produce a positive torque.
+    tau = tau_cmd_body.clamp(-R.RCS_MAX_TORQUE, R.RCS_MAX_TORQUE)
     # Deadband (PWM-averaged model)
     db = R.RCS_DEADBAND
     tau = torch.where(tau.abs() < db, torch.zeros_like(tau), tau)
-    # If no engine (zero or gimbal inactive), RCS provides ALL pitch/yaw/roll
-    # Otherwise only roll
+    # With the engine lit the gimbal supplies pitch/yaw; the RCS is used for
+    # roll only.  With the engine off the RCS supplies all three axes.
+    engine_on = torch.as_tensor(eng_on, device=tau.device).reshape(-1).to(torch.bool)
+    tau = torch.where(
+        engine_on[:, None],
+        torch.stack((tau[:, 0], torch.zeros_like(tau[:, 1]), torch.zeros_like(tau[:, 2])), -1),
+        tau,
+    )
     mass_flow = torch.zeros_like(tau[..., 0])
     # mdot per axis = |tau| / (arm * ISP * g0)
     mass_flow = (tau.abs() / (R.RCS_ARM * R.RCS_ISP * p.world.g0)).sum(dim=-1)
@@ -689,11 +715,7 @@ def assemble_forces_torques(
     T_thrust_body = torch.linalg.cross(arm_thrust_body, F_thrust_body)
 
     # --- SRP (plume) shielding (dynamics.c:161-165) ---
-    # CT = thrust / (qbar * VEH_AREF); ramp from full aero (CT<0.5) to 5% (CT>3.0).
-    qbar_safe = qbar.clamp_min(1.0)
-    CT = thrust_per / (qbar_safe * p.vehicle.VEH_AREF)
-    shield_t = ((CT - 0.5) / 2.5).clamp(0.0, 1.0)
-    srp_shield = 1.0 + shield_t * (0.05 - 1.0)
+    srp_shield = plume_shield(thrust_per, qbar, p)
 
     # --- BODY AERO ---
     F_aero_body, T_aero_body, Cdamp_prefactor = aero_body_torch(
@@ -811,7 +833,8 @@ def state_deriv(
 
     # Aero
     F_aero_body, T_aero_body, Cdamp_prefactor = aero_body_torch(
-        v_rel_body, qbar, M_mach, speed, com_body, p
+        v_rel_body, qbar, M_mach, speed, com_body, p,
+        srp_shield=plume_shield(thrust_per, qbar, p),
     )
 
     # Fins
@@ -1011,7 +1034,10 @@ def rk4_step(
         qbar = 0.5 * rho * speed**2
         M_mach = speed / a_sound.clamp_min(1.0)
         M, com_body, I_tr, I_ax, Idot_tr_coeff, Idot_ax_coeff = mass_props_batch(xlox, xrp1, p)
-        F_aero, T_aero, Cdamp_pref = aero_body_torch(v_rel_body, qbar, M_mach, speed, com_body, p)
+        F_aero, T_aero, Cdamp_pref = aero_body_torch(
+            v_rel_body, qbar, M_mach, speed, com_body, p,
+            srp_shield=plume_shield(thrust_per, qbar, p),
+        )
         F_fins = torch.zeros(N, 3, device=xp.device, dtype=xp.dtype)
         T_fins = torch.zeros(N, 3, device=xp.device, dtype=xp.dtype)
         fmask = fins_deployed & (qbar > 1.0)

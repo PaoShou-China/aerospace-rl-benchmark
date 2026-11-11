@@ -146,12 +146,14 @@ Cumulative clipped-command fractions (total thrust, per-rotor, rate) are accumul
 |---|---|---|
 | Protocol dataset A (128 replicas × seeds 7/13/21/101, one first episode per replica) | `results/baseline_protocol/seed*/quadx/baseline.json` | seeds 100.0 / 100.0 / 99.2 / 100.0%; mean 99.7±0.5% over 384 episodes |
 | Protocol dataset B (256 replicas, seed 7) | `results/quadx/baselines/se3_geometric_seed7.json` | 100% success, mean episode return 72.86 |
-| `scripts/baseline_eval.py quadx` with this checkout's shipped record (32 envs, seed 7, 800-step window) | `results/quadx/baseline.json` | 29/32 first episodes successful (success rate 0.906), mean episode return 66.09, `complete = true` |
+| Current shipped record (128 envs, seed 7, 800-step window) | `results/quadx/baseline.json` | 106/128 first episodes successful (82.8%), `complete = true` |
+| Historical 32-env record (seed 7, 800-step window) | historical `baseline.json` | 29/32 first episodes successful (success rate 0.906), mean episode return 66.09 |
 
-The shipped `results/quadx/baseline.json` is a 32-replica smoke-scale record, not
-a 1024-replica run; the 99.7% figure is the four-seed protocol dataset A.
-Older 1024-env numbers (e.g. 1024/1024, return 70.91, 523 steps) are not
-reproducible from the current checkout and are withdrawn.
+The current shipped `results/quadx/baseline.json` is the 128-env / 82.8%
+record; the 32-env row is the historical smoke-scale record. The 99.7% figure
+is the four-seed protocol dataset A (128 envs × seeds 7/13/21/101), not the
+single shipped record. Older 1024-env numbers (e.g. 1024/1024, return 70.91,
+523 steps) are not reproducible from the current checkout and are withdrawn.
 
 The functional test suite `environments/multirotor/test_quadx_se3.py` certifies (failures raise): exact
 wrench→rotor allocation without simulation (T0); $\ge 0.90$ benchmark waypoint success across batch sizes

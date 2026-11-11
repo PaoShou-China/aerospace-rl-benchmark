@@ -909,6 +909,12 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             low, high = self.plant.params["propellant_params"]["initial_range"]
             sampled_fuel = (low + (high - low) * u[:, 12]) / self.plant.params["propellant_params"]["total_fuel"]
             self.plant.fuel.copy_(torch.where(mask, sampled_fuel, self.plant.fuel))
+        # Apply the reset fuel load to the tank links before the first warmup
+        # substep; otherwise that substep integrates the fully-fuelled URDF
+        # tank mass and inertia.  Keep the legacy published path bit-for-bit:
+        # it retains its historical one-substep startup transient.
+        if self.plant.realistic:
+            self.plant.sync_propellant_mass()
         self.obs_pad.masked_fill_(mask, 0)
         if nonempty:
             self.plant.warmup(mask, nonempty=True)

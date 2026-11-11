@@ -467,6 +467,25 @@ class RocketEGuidanceBaseline(Baseline):
 
     def __init__(self, env, design=None):
         super().__init__(env, design)
+        if getattr(env, "f9_real", False):
+            # v1 is the real-scale Falcon 9 asset: its fuel link is in kg and
+            # its thrust/gimbal/fin constants differ from the 1:10 v2 model.
+            self.M_DRY = 25600.0
+            self.FUEL_FULL = 410900.0
+            self.T_MAX = 845000.0
+            self.MIN_RATIO = 0.57
+            self.FIN_K = 45.0
+            self.FIN_YAW_K = 30.0
+            self.AERO_K = 400.0
+            self.REST_Z = 0.65
+            self.V_TOUCH = 1.0
+            self.S_GATE = 60.0
+            self.H_VIRT = 0.0
+            self.S_PULSE = 0.0
+            self.H_PULSE = 0.0
+            self.KP_T = 4.0e6
+            self.KD_T = 4.0e6
+            self.KD_Z = 2000.0
         d = self.device
         f64 = COMPUTE_DTYPE
         self.ez = torch.tensor((0.0, 0.0, 1.0), device=d, dtype=f64)

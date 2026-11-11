@@ -88,8 +88,16 @@ def _aim_quat(aim, roll):
         _X_HAT[key] = torch.tensor([1.0, 0.0, 0.0], device=aim.device, dtype=aim.dtype)
     x_hat = _X_HAT[key].expand_as(aim)
     axis = torch.linalg.cross(x_hat, aim)
-    ang = torch.atan2(axis.norm(dim=-1), aim[..., 0].clamp(-1, 1))
-    axis = axis / axis.norm(dim=-1).clamp_min(1e-9)[:, None]
+    axis_norm = axis.norm(dim=-1)
+    ang = torch.atan2(axis_norm, aim[..., 0].clamp(-1, 1))
+    # A 180-deg aim (target exactly behind the missile) has an undefined
+    # rotation axis; without a fallback the normalised axis is zero and the
+    # quaternion collapses to (0,0,0,0).  Pick body +y, which maps +x to -x.
+    fallback = torch.zeros_like(axis)
+    fallback[:, 1] = 1.0
+    axis = torch.where(
+        (axis_norm < 1e-8)[:, None], fallback, axis / axis_norm.clamp_min(1e-9)[:, None]
+    )
     half = 0.5 * ang
     qa = torch.cat((half.cos()[:, None], axis * half.sin()[:, None]), -1)  # wxyz
     hr = 0.5 * roll
@@ -567,7 +575,11 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
     def _target_load_factor(self, speed):
         """Manoeuvre load factor n = |lift| / (m g)."""
         t = self.sim_time
-        a_lat = (self.t_a * torch.cos(self.t_omega * t + self.t_phase)).abs()
+        # The weave path is s(t) = (a/omega^2) sin(omega t + phase), so the
+        # lateral ACCELERATION is -a sin(...); use its magnitude for the lift
+        # demand.  Using cos(...) here mixed the velocity phase into the load
+        # factor and inverted the instant of maximum induced drag.
+        a_lat = (self.t_a * torch.sin(self.t_omega * t + self.t_phase)).abs()
         n_weave = (1.0 + (a_lat / G0).square()).sqrt()
         n_barrel = (
             1.0 + (speed.square() / (self.t_radius * G0).clamp_min(1.0)).square()
@@ -738,6 +750,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             -1,
         )
         if self._seeker_track is not None:
+            # The tracking filter only advances while the seeker has lock.  A
+            # real seeker cannot keep filtering the true target through a
+            # lock loss and then re-acquire with a fresh estimate.
+            tracking = active & self.seeker_lock
             tracked = first_order_lag(
                 self._seeker_track, rel, 1.0 / self.plant.control_hz, SEEKER_FILTER_TAU
             )
@@ -745,9 +761,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             # zero (a zero initial state would halve the apparent range for
             # several time constants).
             tracked = torch.where((~self._seeker_ready)[:, None], rel, tracked)
-            self._seeker_ready |= active
+            tracked = torch.where(tracking[:, None], tracked, self._seeker_track)
+            self._seeker_ready |= tracking
             self._seeker_track.copy_(
-                torch.where(active[:, None], tracked, self._seeker_track)
+                torch.where(tracking[:, None], tracked, self._seeker_track)
             )
             rel = tracked
         rel = rel * self.seeker_lock[:, None].to(COMPUTE_DTYPE)
@@ -1045,9 +1062,15 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         # initial observation.
         self.sim_time.copy_(sel(torch.zeros_like(self.sim_time), self.sim_time))
         tp, tv = self._target_state()
+        self.t_speed.copy_(sel(torch.full_like(self.t_speed, V_T), self.t_speed))
+        if self.energy_model:
+            # The first active step advances the target with the energy-model
+            # direction at t_speed, not with the legacy closed-form velocity
+            # (whose weave magnitude exceeds V_T).  Start the buffer on that
+            # same velocity so the first step has no unphysical jump.
+            tv = self._target_direction() * self.t_speed[:, None]
         self.target_pos.copy_(sel(tp, self.target_pos))
         self.target_vel.copy_(sel(tv, self.target_vel))
-        self.t_speed.copy_(sel(torch.full_like(self.t_speed, V_T), self.t_speed))
         dist = (self.target_pos - p_new).norm(dim=-1)
         self.dist.copy_(sel(dist, self.dist))
         self.dist_prev.copy_(sel(dist, self.dist_prev))

@@ -98,7 +98,7 @@
   }
   .lang button + button{border-left:1px solid rgba(238,244,248,.18)}
   .lang button[aria-pressed="true"]{background:#ffffff;color:#003f7d}
-  .menu{display:none;appearance:none;background:transparent;border:1px solid rgba(238,244,248,.24);border-radius:5px;color:var(--ink);padding:6px 9px;cursor:pointer}
+  .menu{display:none;appearance:none;background:transparent;border:1px solid rgba(238,244,248,.24);border-radius:5px;color:#eef4f8;padding:6px 9px;cursor:pointer}
   .menu svg{width:16px;height:16px}
   @media (max-width:920px){
     .nav{
@@ -224,6 +224,9 @@
     border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid #fff;
   }
   .media video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain;z-index:3}
+  .lightbox{position:fixed;inset:0;z-index:90;background:rgba(2,7,12,.94);display:flex;align-items:center;justify-content:center;padding:24px}
+  .lightbox video{max-width:96vw;max-height:88vh;width:auto;height:auto;border-radius:8px;background:#000;box-shadow:0 24px 80px rgba(0,0,0,.55)}
+  .lightbox .lb-close{position:absolute;top:20px;right:24px;appearance:none;border:1px solid rgba(238,244,248,.35);background:rgba(8,20,32,.85);color:#eef4f8;border-radius:5px;padding:8px 12px;font:inherit;font-size:12px;cursor:pointer}
   .task-body{padding:27px 28px 28px;display:flex;flex-direction:column;flex:1;min-width:0}
   .cat{font-size:11.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px}
   html[lang="zh-CN"] .cat{letter-spacing:.04em}
@@ -380,7 +383,7 @@
           <a class="btn" href="#start" data-i18n="hero.cta1">Get started</a>
           <a class="btn ghost" href="https://github.com/PaoShou-China/aerospace-rl-benchmark" target="_blank" rel="noopener" data-i18n="hero.cta2">GitHub repository</a>
         </div>
-        <p class="hero-meta" data-i18n="hero.meta">10 tasks · 6 atmospheric · 4 spacecraft · no Gym dependency</p>
+        <p class="hero-meta" data-i18n="hero.meta">10 tasks · 6 atmospheric · 4 spacecraft · no Gym wrapper</p>
       </div>
       <figure class="hero-art">
         <img src="docs/assets/aerospacerl-cover.webp" width="1983" height="793" alt="Brand illustration: AerospaceRL with a booster, UAV, quadrotor and satellite above Earth." data-i18n-alt="hero.artAlt" fetchpriority="high">
@@ -555,10 +558,10 @@
         </article>
       </div>
 
-      <p class="note" data-i18n="tasks.note">Replays were rendered offline with the repository's visualization tools. The footage shows each task's dynamics and framing; it is not tied to any baseline score listed below.</p>
+      <p class="note" data-i18n="tasks.note">Replays are highlight clips from the classical baseline, rendered offline with the repository's visualization tools. The footage shows each task's dynamics and framing, not an aggregate benchmark score. Double-click a playing replay for a full-screen HUD view.</p>
 
       <h3 class="group-title"><span data-i18n="tasks.groupClose">Close-up replays</span><span class="count">03</span></h3>
-      <p class="sec-intro" data-i18n="tasks.closeIntro">The second camera from three replays, exported on its own. Same environments, different framing.</p>
+      <p class="sec-intro" data-i18n="tasks.closeIntro">The second camera from three replays, exported on its own. Same environments, different framing; each clip carries its display scale in the lower-left.</p>
       <div class="closeups">
         <figure class="closeup">
           <div class="media">
@@ -605,7 +608,7 @@
       <div class="sec-head">
         <p class="kicker">02 / <span data-i18n="nav.design">Design</span></p>
         <h2 data-i18n="design.title">A kernel, not a wrapper</h2>
-        <p class="sec-intro" data-i18n="design.intro">Physics, contacts, rewards, resets and RNG are masked tensor kernels on a single device. Inactive replicas are frozen, consume no random numbers, and never enter a per-replica Python loop.</p>
+        <p class="sec-intro" data-i18n="design.intro">Rewards, resets and RNG are masked tensor kernels on a single device; the six atmospheric tasks use the Genesis rigid-body backend. Inactive replicas are frozen, consume no random numbers, and never enter a per-replica Python loop.</p>
       </div>
       <div class="principles">
         <article class="principle">
@@ -655,7 +658,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>QuadX-Waypoints</td><td class="ctrl" data-i18n="ctrl.quadx">SE(3) geometric control + integral trim</td><td class="num">90.6%</td><td class="cond" data-i18n="cond.quadx">32 replicas, seed 7 · cascade PID arm 99.2%</td></tr>
+            <tr><td>QuadX-Waypoints</td><td class="ctrl" data-i18n="ctrl.quadx">SE(3) geometric control + integral trim</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx">128 replicas, seed 7 · protocol mean 99.7% · cascade PID arm 99.2% (256 replicas)</td></tr>
             <tr><td>QuadX-Track</td><td class="ctrl" data-i18n="ctrl.quadx_track">CV Kalman filter + fixed-offset SE(3)</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx_track">128 replicas, seed 21 · visible-time fraction 90.2%</td></tr>
             <tr><td>Fixedwing-Waypoints</td><td class="ctrl" data-i18n="ctrl.fixedwing">L1 lateral + TECS longitudinal autopilot</td><td class="num">97.0%</td><td class="cond" data-i18n="cond.fixedwing">128 replicas, seed 13 · window ends before the 120 s limit</td></tr>
             <tr><td>Quadplane-VTOL</td><td class="ctrl" data-i18n="ctrl.quadplane">SE(3) + forward pusher</td><td class="num">89.1%</td><td class="cond" data-i18n="cond.quadplane">128 replicas, seed 13</td></tr>
@@ -760,7 +763,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       <a href="https://github.com/PaoShou-China/aerospace-rl-benchmark">github.com/PaoShou-China/aerospace-rl-benchmark</a>
       · <a href="https://paoshou-china.github.io/aerospace-rl-benchmark/">paoshou-china.github.io/aerospace-rl-benchmark</a>
     </div>
-    <div class="mono" data-i18n="footer.note">Replays rendered offline from repository checkpoints · brand illustration is not a capture</div>
+    <div class="mono" data-i18n="footer.note">Replays rendered offline from the classical baseline · brand illustration is not a capture</div>
   </div>
 </footer>
 
@@ -787,15 +790,15 @@ python scripts/baseline_eval.py quadx</code></pre>
       "hero.title2": "One tensor interface.",
       "hero.lede": "A lightweight reinforcement-learning benchmark built on batched device tensors: six atmospheric vehicles and four spacecraft missions, each paired with a classical GNC baseline that speaks the same action language.",
       "hero.cta1": "Get started", "hero.cta2": "GitHub repository",
-      "hero.meta": "10 tasks · 6 atmospheric · 4 spacecraft · no Gym dependency",
+      "hero.meta": "10 tasks · 6 atmospheric · 4 spacecraft · no Gym wrapper",
       "hero.artAlt": "Brand illustration: AerospaceRL with a booster, UAV, quadrotor and satellite above Earth.",
       "hero.artCap": "Brand illustration — not a simulation capture.",
       "tasks.title": "Ten environments, one contract",
       "tasks.intro": "Every environment exposes the same step / reset / buffer contract and the same batched tensor API. The replay clips are exported from the repository's visualization scripts and show task dynamics, not benchmark scores.",
       "tasks.groupAtmo": "Atmospheric flight", "tasks.groupSpace": "Spacecraft",
       "tasks.groupClose": "Close-up replays",
-      "tasks.closeIntro": "The second camera from three replays, exported on its own. Same environments, different framing.",
-      "tasks.note": "Replays were rendered offline with the repository's visualization tools. The footage shows each task's dynamics and framing; it is not tied to any baseline score listed below.",
+      "tasks.closeIntro": "The second camera from three replays, exported on its own. Same environments, different framing; each clip carries its display scale in the lower-left.",
+      "tasks.note": "Replays are highlight clips from the classical baseline, rendered offline with the repository's visualization tools. The footage shows each task's dynamics and framing, not an aggregate benchmark score. Double-click a playing replay for a full-screen HUD view.",
       "task.quadx.cat": "Atmospheric · multirotor",
       "task.quadx.desc": "Crazyflie-scale quadrotor capturing four waypoints inside a 5 m dome.",
       "task.quadx.spec": "<span>obs 37</span> <span>act 4</span> <span>40 Hz</span> <span>800 steps / 20 s</span>",
@@ -840,7 +843,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "close.rocket.title": "Rocket · terminal descent",
       "close.rocket.desc": "Ignition, braking, touchdown and the two-second settle window.",
       "design.title": "A kernel, not a wrapper",
-      "design.intro": "Physics, contacts, rewards, resets and RNG are masked tensor kernels on a single device. Inactive replicas are frozen, consume no random numbers, and never enter a per-replica Python loop.",
+      "design.intro": "Rewards, resets and RNG are masked tensor kernels on a single device; the six atmospheric tasks use the Genesis rigid-body backend. Inactive replicas are frozen, consume no random numbers, and never enter a per-replica Python loop.",
       "design.p1t": "Batched tensor core",
       "design.p1d": "No engine round-trip per replica and no Gym wrapper. Each <code>step()</code> performs exactly one host sync, used only for episode-boundary bookkeeping.",
       "design.p2t": "Baselines in the same action space",
@@ -863,7 +866,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "ctrl.transfer": "Gauss one-step greedy tangential guidance",
       "ctrl.docking": "CWH discrete LQR + shield / fuel derating",
       "ctrl.rendezvous": "Two-impulse CWH ZEM/PN, recursive re-solve",
-      "cond.quadx": "32 replicas, seed 7 · cascade PID arm 99.2%",
+      "cond.quadx": "128 replicas, seed 7 · protocol mean 99.7% · cascade PID arm 99.2% (256 replicas)",
       "cond.quadx_track": "128 replicas, seed 21 · visible-time fraction 90.2%",
       "cond.fixedwing": "128 replicas, seed 13 · window ends before the 120 s limit",
       "cond.quadplane": "128 replicas, seed 13",
@@ -888,7 +891,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "docs.tasks": "task table", "docs.baselines": "baseline results",
       "ack.famouLabel": "Special thanks", "ack.famouName": "Baidu Famou", "ack.famouThanks": "With special thanks to Baidu Famou.", "ack.famouLink": "Official website ↗",
       "ack.title": "Thanks", "ack.teachers": "Teachers", "ack.students": "Fellow students", "ack.projects": "Related projects",
-      "footer.note": "Replays rendered offline from repository checkpoints · brand illustration is not a capture",
+      "footer.note": "Replays rendered offline from the classical baseline · brand illustration is not a capture",
       "video.play": "Play replay: {task}",
       "menu.open": "Open navigation", "menu.close": "Close navigation",
       "lang.label": "Language",
@@ -905,15 +908,15 @@ python scripts/baseline_eval.py quadx</code></pre>
       "hero.title2": "同一张量接口。",
       "hero.lede": "面向航空航天控制的轻量强化学习基准：6 个大气飞行任务与 4 个航天器任务，全部运行在同一设备上的批量张量内核；每个任务都配有同动作约定的经典 GNC 基线。",
       "hero.cta1": "快速开始", "hero.cta2": "GitHub 仓库",
-      "hero.meta": "10 个任务 · 6 个大气 · 4 个航天 · 不依赖 Gym",
+      "hero.meta": "10 个任务 · 6 个大气 · 4 个航天 · 无 Gym 封装",
       "hero.artAlt": "品牌插画：AerospaceRL 标识与地球上方的火箭、固定翼、四旋翼和卫星。",
       "hero.artCap": "品牌插画，不是仿真截图。",
       "tasks.title": "十个环境，一套契约",
       "tasks.intro": "所有环境共享同一套 step / reset / 缓冲区契约与批量张量接口。回放片段由仓库内的可视化脚本导出，用于展示任务动力学，不代表基准得分。",
       "tasks.groupAtmo": "大气飞行", "tasks.groupSpace": "航天器",
       "tasks.groupClose": "特写回放",
-      "tasks.closeIntro": "三个任务回放的第二机位单独导出。环境相同，只是取景不同。",
-      "tasks.note": "回放由仓库内的可视化工具离线渲染，展示各任务的动力学与取景方式，不与下方任何基线成功率绑定。",
+      "tasks.closeIntro": "三个任务回放的第二机位单独导出。环境相同，只是取景不同；每段画面左下角标注显示倍率。",
+      "tasks.note": "回放是经典基线的高光片段，由仓库内的可视化工具离线渲染；展示各任务的动力学与取景方式，不代表任何聚合基准分数。双击正在播放的回放可全屏查看 HUD。",
       "task.quadx.cat": "大气 · 多旋翼",
       "task.quadx.desc": "Crazyflie 级四旋翼在 5 m 穹顶内依次捕获 4 个航点。",
       "task.quadx.spec": "<span>观测 37</span> <span>动作 4</span> <span>40 Hz</span> <span>800 步 / 20 s</span>",
@@ -958,7 +961,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "close.rocket.title": "Rocket · 着陆末段",
       "close.rocket.desc": "点火、制动、触垫与 2 秒停稳窗口。",
       "design.title": "做成内核，而不是包装",
-      "design.intro": "物理、接触、奖励、重置与随机数都是同一设备上的掩码张量内核。失活副本被冻结，不消耗随机数，也不会进入逐副本的 Python 循环。",
+      "design.intro": "奖励、重置与随机数是同一设备上的掩码张量内核；六个大气任务使用 Genesis 刚体后端。失活副本被冻结，不消耗随机数，也不会进入逐副本的 Python 循环。",
       "design.p1t": "批量张量内核",
       "design.p1d": "没有逐副本的引擎往返，也没有 Gym 包装。每次 <code>step()</code> 只做一次主机同步，且仅用于回合边界记账。",
       "design.p2t": "同动作空间的经典基线",
@@ -981,7 +984,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "ctrl.transfer": "Gauss 单步贪心切向制导",
       "ctrl.docking": "CWH 离散 LQR + 安全盾 / 燃料降额",
       "ctrl.rendezvous": "双脉冲 CWH ZEM/PN，递推重解",
-      "cond.quadx": "32 个副本，随机种子 7 · 级联 PID 臂 99.2%",
+      "cond.quadx": "128 个副本，随机种子 7 · 多种子协议均值 99.7% · 级联 PID 臂 99.2%（256 个副本）",
       "cond.quadx_track": "128 个副本，随机种子 21 · 可见时间占比 90.2%",
       "cond.fixedwing": "128 个副本，随机种子 13 · 窗口在 120 s 上限前结束",
       "cond.quadplane": "128 个副本，随机种子 13",
@@ -1006,7 +1009,7 @@ python scripts/baseline_eval.py quadx</code></pre>
       "docs.tasks": "任务表", "docs.baselines": "基线结果",
       "ack.famouLabel": "特别致谢", "ack.famouName": "百度伐谋", "ack.famouThanks": "特别感谢百度伐谋。", "ack.famouLink": "访问官方网站 ↗",
       "ack.title": "致谢", "ack.teachers": "导师", "ack.students": "同学", "ack.projects": "相关项目",
-      "footer.note": "回放由仓库检查点离线渲染 · 品牌插画不是仿真截图",
+      "footer.note": "回放由经典基线离线渲染 · 品牌插画不是仿真截图",
       "video.play": "播放回放：{task}",
       "menu.open": "展开导航", "menu.close": "收起导航",
       "lang.label": "语言",
@@ -1133,6 +1136,33 @@ python scripts/baseline_eval.py quadx</code></pre>
       players.forEach(other => { if (other !== video && !other.paused) other.pause(); });
     });
     players.add(video);
+    video.addEventListener('dblclick', () => {
+      const lb = document.createElement('div');
+      lb.className = 'lightbox';
+      const big = document.createElement('video');
+      big.src = video.currentSrc || video.src;
+      big.controls = true;
+      big.loop = true;
+      big.playsInline = true;
+      big.setAttribute('aria-label', video.getAttribute('aria-label') || 'Replay');
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'lb-close';
+      close.textContent = document.documentElement.lang === 'zh-CN' ? '关闭' : 'Close';
+      lb.append(big, close);
+      document.body.append(lb);
+      video.pause();
+      big.addEventListener('loadedmetadata', () => {
+        big.currentTime = video.currentTime;
+        big.play().catch(() => {});
+      });
+      const dismiss = () => { big.pause(); lb.remove(); };
+      close.addEventListener('click', dismiss);
+      lb.addEventListener('click', e => { if (e.target === lb) dismiss(); });
+      document.addEventListener('keydown', function onEsc(e) {
+        if (e.key === 'Escape') { dismiss(); document.removeEventListener('keydown', onEsc); }
+      });
+    });
     const p = video.play();
     if (p && p.catch) p.catch(() => {});
     video.focus({ preventScroll: true });

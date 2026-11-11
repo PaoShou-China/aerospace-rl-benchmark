@@ -258,7 +258,7 @@ BACKDROPS = {
     "quadx": ("quadx.jpg", 0.74, 0.50),
     "quadx_track": ("quadx_track.jpg", 0.80, 0.72),
     "fixedwing": ("fixedwing.jpg", 0.78, 0.55),
-    "quadplane": ("quadplane.jpg", 0.82, 0.45),
+    "quadplane": ("quadx.jpg", 0.80, 0.55),
     "rocket": ("rocket.jpg", 0.78, 0.55),
     "missile": ("missile.jpg", 0.70, 0.55),
     "satellite": ("satellite.jpg", 0.62, 0.50),
@@ -274,7 +274,7 @@ GROUND_DETAIL = {
     "quadx_track": ("grass", 5.0, 0.0),
     "fixedwing": ("grass", 80.0, 0.0),
     "quadplane": ("grass", 80.0, 0.0),
-    "rocket": ("grass", 50.0, 2.4),
+    "rocket": ("grass", 50.0, 30.0),
     "missile": ("grass", 900.0, 0.0),
 }
 
@@ -730,12 +730,12 @@ _MODEL_MATS = {
     "white": ((0.86, 0.88, 0.91, 1.0), 0.55, 0.05),
     "shell": ((0.70, 0.72, 0.76, 1.0), 0.50, 0.10),
     "carbon": ((0.055, 0.060, 0.070, 1.0), 0.55, 0.15),
-    "pcb": ((0.050, 0.075, 0.120, 1.0), 0.50, 0.10),
-    "motor": ((0.180, 0.190, 0.220, 1.0), 0.40, 0.60),
+    "pcb": ((0.035, 0.048, 0.052, 1.0), 0.50, 0.10),
+    "motor": ((0.100, 0.105, 0.115, 1.0), 0.38, 0.75),
     "metal": ((0.70, 0.72, 0.76, 1.0), 0.30, 0.90),
     "propw": ((0.88, 0.89, 0.90, 1.0), 0.45, 0.05),
     "propd": ((0.070, 0.070, 0.080, 1.0), 0.45, 0.10),
-    "battery": ((0.090, 0.130, 0.300, 1.0), 0.45, 0.10),
+    "battery": ((0.050, 0.060, 0.075, 1.0), 0.45, 0.10),
     "label": ((0.82, 0.85, 0.88, 1.0), 0.60, 0.00),
     "led": ((0.95, 0.20, 0.16, 1.0), 0.35, 0.00),
     "ledg": ((0.20, 0.95, 0.35, 1.0), 0.35, 0.00),
@@ -752,8 +752,6 @@ _MODEL_MATS = {
     "glass": ((0.045, 0.060, 0.080, 1.0), 0.15, 0.35),
     "chip": ((0.020, 0.020, 0.025, 1.0), 0.50, 0.10),
     "wire": ((0.16, 0.05, 0.05, 1.0), 0.55, 0.05),
-    # propeller motion blur: a thin translucent disc under the blades
-    "blur": ((0.88, 0.90, 0.93, 0.13), 0.35, 0.0),
 }
 
 
@@ -834,7 +832,7 @@ def _m_loft(sections, n=24):
     return mesh
 
 
-def _m_prop(radius, hub=0.006, blades=2, width=0.30, thick=0.0018, pitch=20.0, phase=0.0):
+def _m_prop(radius, hub=0.0042, blades=2, width=0.30, thick=0.0018, pitch=20.0, phase=0.0):
     """Thin twisted propeller in the local x-y plane (axis z)."""
     parts = [_m_cyl(hub, thick * 2.6, n=12)]
     tanp = math.tan(math.radians(pitch))
@@ -896,13 +894,12 @@ def _axis_quat(axis, angle):
     return np.array((math.cos(h), *(axis * math.sin(h))))
 
 
-def _prop_groups(radius, blade, tip, pitch=20.0, tip_width=0.022, tip_thick=0.0024):
+def _prop_groups(radius, blade, tip, pitch=20.0, tip_width=0.022, tip_thick=0.0024,
+                 width=0.30, thick=0.0018):
     """Independent blade set; display-rate reduction prevents video strobing."""
     return {
-        blade: [_m_prop(radius, pitch=pitch)],
+        blade: [_m_prop(radius, pitch=pitch, width=width, thick=thick)],
         tip: [_m_prop_tips(radius, width=tip_width, thick=tip_thick)],
-        # translucent motion-blur disc: hides the per-frame blade stepping
-        "blur": [_m_cyl(radius * 0.985, 0.0012, (0.0, 0.0, 0.0), n=40)],
     }
 
 
@@ -912,8 +909,7 @@ def _add_motion(ents, rig, pos, scale, kind, index=0, base=(1, 0, 0, 0),
     ents.setdefault("motion", []).append(
         dict(rig=rig, pos=np.asarray(pos, float), scale=float(scale), kind=kind,
              index=int(index), base=np.asarray(base, float), axis=np.asarray(axis, float),
-             limit=float(limit), sign=float(sign), phase=float(phase),
-             disc=rig.by_key.get("blur"))
+             limit=float(limit), sign=float(sign), phase=float(phase))
     )
 
 
@@ -940,11 +936,11 @@ def _update_motion(ents, f, phases):
             # Sweep a fixed angle per RENDERED frame (not per simulated second):
             # the highlight cut resamples whole episodes, so a physical-time rate
             # would advance ~2 rad between composite frames and alias into noise.
-            # The translucent disc in the prop rig covers the stepping, so the
-            # blades can run faster than a quarter turn per frame without the
-            # two-blade strobe reading as a wobble.
+            # Keep the per-frame sweep under ~80 deg: with no motion-blur disc
+            # (the rasteriser draws transparency as dark smoked glass) a bigger
+            # step makes a two-blade prop strobe backwards.
             command = abs(float(throttle[min(part["index"], len(throttle) - 1)]))
-            step = 0.0 if command < 0.02 else 0.90 + 1.30 * min(command, 1.0)
+            step = 0.0 if command < 0.02 else 0.55 + 0.85 * min(command, 1.0)
             phases[i] += part["sign"] * step
             angle = phases[i] + part["phase"]
             local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
@@ -959,9 +955,6 @@ def _update_motion(ents, f, phases):
             local_q = _quat_mul_np(part["base"], _axis_quat(part["axis"], angle))
         part["rig"].set_pos(tuple(origin + _quat_rot(q, part["pos"] * part["scale"])))
         part["rig"].set_quat(tuple(_quat_mul_np(q, local_q)))
-        if kind == "prop" and part.get("disc") is not None and command < 0.05:
-            # parked blades should not sit under a motion-blur disc
-            part["disc"].set_pos(tuple(HIDDEN))
 
 
 def _surf_rows(surfaces):
@@ -1019,7 +1012,7 @@ def _build_quadrotor():
                    _rot((0.0, 0.0, 1.0), ang)),
         )
         add("motor", _m_cyl(0.0044, 0.0115, (tx, ty, 0.0095)))
-        add("metal", _m_cyl(0.0048, 0.0030, (tx, ty, 0.0162)))
+        add("motor", _m_cyl(0.0048, 0.0030, (tx, ty, 0.0162)))
         add("metal", _m_cyl(0.0009, 0.0040, (tx, ty, 0.0195)))
         # phase wires running out along each arm; blades are independent rigs
         add("wire", _m_rod((sx * 0.017, sy * 0.017, 0.0024),
@@ -1060,7 +1053,8 @@ def _add_quadrotor_motion(scene, ents, scale):
         tip = "propd" if blade == "propw" else "propw"
         rig = _model(
             scene, f"cf_prop{i}",
-            _prop_groups(0.0225, blade, tip, 16.0, tip_width=0.009, tip_thick=0.0016),
+            _prop_groups(0.0225, blade, tip, 16.0, tip_width=0.0035,
+                         tip_thick=0.0009, width=0.23, thick=0.0010),
             scale=scale
         )
         _add_motion(
@@ -1382,10 +1376,13 @@ def _build_rocket():
     add("white", _m_cyl(0.190, 3.40, (0.0, 0.0, 0.680), n=32))  # z -1.02 .. 2.38
     add("grey", _m_cyl(0.188, 1.03, (0.0, 0.0, -1.535), n=32))  # sooted lower tank
     add("grey", _m_cyl(0.205, 0.40, (0.0, 0.0, -2.250), n=32))  # octaweb skirt
-    add("black", _m_cyl(0.191, 0.32, (0.0, 0.0, 2.220), n=32))  # interstage
+    # the interstage must stand clearly proud of the tank: at 16x a 1 mm
+    # difference is sub-pixel and the two surfaces z-fight, which reads as the
+    # top of the booster flickering black/white every frame
+    add("black", _m_cyl(0.1965, 0.32, (0.0, 0.0, 2.220), n=32))  # interstage
     add("metal", _m_cyl(0.196, 0.03, (0.0, 0.0, 2.050), n=32))
-    add("white", _m_cyl(0.197, 0.020, (0.0, 0.0, 2.392), n=32))  # interstage rim
-    add("black", _m_cyl(0.192, 0.030, (0.0, 0.0, 1.320), n=32))  # tank band
+    add("white", _m_cyl(0.1995, 0.020, (0.0, 0.0, 2.392), n=32))  # interstage rim
+    add("black", _m_cyl(0.1945, 0.030, (0.0, 0.0, 1.320), n=32))  # tank band
     # raceway + conduit clamps
     add("grey", _m_box((0.028, 0.030, 3.30), (-0.196, 0.0, 0.750)))
     for z in (-0.75, -0.35, 0.05, 0.45, 0.85, 1.25, 1.65):
@@ -1422,7 +1419,7 @@ def _build_rocket():
         streak = _m_box((0.008, 0.055, 0.95), (0.188, 0.0, -1.53))
         streak.apply_transform(_rot((0.0, 0.0, 1.0), a))
         add("black", streak)
-    add("grey", _m_cyl(0.200, 0.050, (0.0, 0.0, -2.330), n=32))  # heat shield ring
+    add("grey", _m_cyl(0.208, 0.050, (0.0, 0.0, -2.330), n=32))  # heat shield ring
     return g
 
 
@@ -1493,6 +1490,25 @@ def _build_missile():
                         (-0.480, 0.070, 0.040, 0.070)):
         add("grey", _m_box((w, 0.010, h), (x, 0.0995, zc)))
     add("dark", _m_box((0.050, 0.030, 0.070), (0.720, -0.090, -0.040)))
+    return g
+
+
+def _build_target_aircraft():
+    """Red low-poly fighter silhouette for the kinematic target marker.
+
+    At 4 km a 60 m sphere reads as a balloon; a 120 m fuselage / 160 m span
+    silhouette is still display-only but immediately reads as an aircraft
+    inside the red target ring.
+    """
+    g = {}
+
+    def add(key, mesh):
+        g.setdefault(key, []).append(mesh)
+
+    add("led", _m_box((120.0, 12.0, 12.0), (0.0, 0.0, 0.0)))
+    add("led", _m_box((40.0, 160.0, 8.0), (10.0, 0.0, 0.0)))
+    add("led", _m_box((28.0, 64.0, 7.0), (-48.0, 0.0, 0.0)))
+    add("led", _m_box((26.0, 7.0, 34.0), (-48.0, 0.0, 18.0)))
     return g
 
 
@@ -2194,10 +2210,47 @@ def _ground_texture(a, depth, sky_mask, task, cache):
             0.0, 1.0, (a.shape[0], a.shape[1], 1)
         ).astype(np.float32)
     target = target + cache["ground_grain"] * 0.006
+
+    # contact shadow: the rasteriser has no shadow map for this path, so a
+    # soft ground-projected ellipse under the airborne body (and fixed
+    # occluders) is what stops the scene from looking pasted onto the meadow.
+    shadows = ([] if _CONTACT_SHADOW is None else [_CONTACT_SHADOW]) + _STATIC_SHADOWS
+    for sh in shadows:
+        sx, sy, rx, ry, ang, strength = sh
+        dx = x - sx
+        dy = y - sy
+        ca, sa = math.cos(ang), math.sin(ang)
+        u = dx * ca + dy * sa
+        v = -dx * sa + dy * ca
+        d2 = (u / max(rx, 0.02)) ** 2 + (v / max(ry, 0.02)) ** 2
+        soft = np.exp(-2.6 * d2) * strength
+        target = target * (1.0 - soft[..., None])
     return np.clip(a * (1.0 - g[..., None]) + target * g[..., None], 0.0, 1.0)
 
 
 _PLUME = None  # (nozzle, axis, length, radius, tick) set by the rocket loop
+_CONTACT_SHADOW = None  # (x, y, rx, ry, yaw, strength) set per rendered frame
+_STATIC_SHADOWS = []  # fixed occluder/pad shadows for the current scene
+# rx / ry are the ground-projected half-lengths along body x / y; the last
+# value gates the shadow off above the given altitude.
+_SHADOW_SPECS = {
+    "quadx": (0.42, 0.42, 0.36, 30.0),
+    "quadx_track": (0.60, 0.60, 0.38, 30.0),
+    "fixedwing": (4.20, 6.50, 0.38, 60.0),
+    "quadplane": (4.50, 7.00, 0.36, 60.0),
+}
+_CLOSE_SCALE = {
+    "quadx": "9x",
+    "quadx_track": "14x",
+    "fixedwing": "10x",
+    "quadplane": "10x",
+    "rocket": "16x",
+    "missile": "200x",
+    "satellite": "1x",
+    "transfer": "1x",
+    "docking": "5x",
+    "rendezvous": "7x",
+}
 
 
 def _plume_overlay(a, cam, plume):
@@ -2298,6 +2351,55 @@ def _plume_overlay(a, cam, plume):
     return a
 
 
+def _space_plate_view(sky, cam, base):
+    """Orientation/zoom parallax for the space backdrops.
+
+    A starfield/Earth limb is at infinity, so camera *translation* must not
+    move it; a close-up camera that changes look direction or fov should.
+    Apply that offset/zoom to the cached plate before compositing.
+    """
+    if cam is None or base is None:
+        return sky
+    cpos, look, _up, fov, _res = cam
+    bpos, blook, _bup, bfov, _bres = base
+    f = np.asarray(look, np.float32) - np.asarray(cpos, np.float32)
+    bf = np.asarray(blook, np.float32) - np.asarray(bpos, np.float32)
+    if np.linalg.norm(f) < 1e-6 or np.linalg.norm(bf) < 1e-6:
+        return sky
+    f /= np.linalg.norm(f)
+    bf /= np.linalg.norm(bf)
+    yaw = math.atan2(float(f[1]), float(f[0]))
+    byaw = math.atan2(float(bf[1]), float(bf[0]))
+    dyaw = (yaw - byaw + math.pi) % (2.0 * math.pi) - math.pi
+    pitch = math.asin(float(np.clip(f[2], -1.0, 1.0)))
+    bpitch = math.asin(float(np.clip(bf[2], -1.0, 1.0)))
+    dpitch = pitch - bpitch
+    h, w = sky.shape[:2]
+    fov_h = 2.0 * math.atan(math.tan(math.radians(fov) / 2.0) * w / h)
+    bfov_h = 2.0 * math.atan(math.tan(math.radians(bfov) / 2.0) * w / h)
+    dx = -dyaw / max(bfov_h, 1e-3) * w
+    dy = dpitch / max(math.radians(bfov), 1e-3) * h
+    zoom = math.tan(math.radians(bfov) / 2.0) / max(
+        math.tan(math.radians(fov) / 2.0), 1e-6
+    )
+    if abs(zoom - 1.0) < 0.005 and abs(dx) < 1.0 and abs(dy) < 1.0:
+        return sky
+    from PIL import Image  # noqa: E402
+
+    im = Image.fromarray((np.clip(sky, 0.0, 1.0) * 255.0).astype(np.uint8))
+    nw = max(w, int(round(w * zoom)))
+    nh = max(h, int(round(h * zoom)))
+    im = im.resize((nw, nh), Image.BILINEAR)
+    arr = np.asarray(im, np.float32) / 255.0
+    x0 = max(0, (nw - w) // 2)
+    y0 = max(0, (nh - h) // 2)
+    arr = arr[y0:y0 + h, x0:x0 + w]
+    if arr.shape[:2] != (h, w):
+        return sky
+    arr = np.roll(arr, (int(round(dy)), int(round(dx))), axis=(0, 1))
+    return arr
+
+
 def _post(rgb, depth, task):
     """Depth-aware sky, atmosphere, bloom, vignette and film grade.
 
@@ -2333,6 +2435,16 @@ def _post(rgb, depth, task):
             )
             bgc = np.median(corners, axis=0)
             sky_mask &= np.abs(raw01 - bgc).max(-1) < 0.06
+            # Depth plus flat-background colour is not enough: near the horizon
+            # the shaded ground can match the background and the photographic
+            # plate then paints the sunset (or a bright cloud column) straight
+            # onto the meadow.  Upward-facing finite-depth pixels are ground,
+            # never sky.
+            nj = _LAST_NORMAL
+            if nj is not None and nj.shape[:2] == (h, w):
+                nj = nj.astype(np.float32) / 127.5 - 1.0
+                nj /= np.maximum(np.linalg.norm(nj, axis=-1, keepdims=True), 1e-6)
+                sky_mask &= ~((nj[..., 2] > 0.55) & (depth < far * 0.9995))
         d = np.nan_to_num(depth, nan=far, posinf=far)
         rows = np.where(sky_mask, np.arange(h, dtype=np.float32)[:, None], -1.0)
         hy = float(rows.max(0).mean()) / max(1, h) if sky_mask.any() else 0.32
@@ -2346,9 +2458,16 @@ def _post(rgb, depth, task):
         plate = _backdrop(task, h, w, hy)
         if plate is not None:
             # Fog blends into the plate's own colour at the horizon row, not a
-            # global average, so the seam follows cloud/limb gradients.
+            # global average, so the seam follows cloud/limb gradients.  Blur
+            # that row horizontally first: a narrow sunset pillar in the plate
+            # otherwise survives as a vertical searchlight smeared down the
+            # grassland (the fog colour is constant in y, so any bright column
+            # in the row becomes a column on the ground).
             row = int(np.clip(hy * h, 0, h - 1))
-            bg = plate[row][None, :, :].copy()
+            row_img = Image.fromarray(
+                (np.clip(plate[row], 0.0, 1.0)[None] * 255.0).astype(np.uint8)
+            ).filter(ImageFilter.GaussianBlur(28))
+            bg = np.asarray(row_img, np.float32)[0] / 255.0
             # dissolve the bottom of the plate into that horizon colour: the
             # fogged ground meets it there, and a bare cut reads as a hard
             # horizontal line across the frame
@@ -2388,6 +2507,8 @@ def _post(rgb, depth, task):
         cache["plate"] = plate is not None
 
     sky = cache["sky"]
+    if not outdoor and _SPACE_BASE_CAM is not None:
+        sky = _space_plate_view(sky, _LAST_CAM, _SPACE_BASE_CAM)
     m = Image.fromarray((sky_mask * 255).astype(np.uint8))
     m = m.filter(ImageFilter.GaussianBlur(2))
     alpha = np.asarray(m, np.float32)[..., None] / 255.0
@@ -2445,11 +2566,12 @@ def _post(rgb, depth, task):
             v = -rays
             ndv = np.clip(np.abs(np.sum(n * v, -1)), 0.0, 1.0)
             rim = ((1.0 - ndv) ** 2.4) * valid
-            a += rim[..., None] * np.array((0.10, 0.22, 0.36), np.float32)
+            space_boost = 1.0 if outdoor else 1.7
+            a += rim[..., None] * np.array((0.10, 0.22, 0.36), np.float32) * space_boost
             hv = L + v
             hv /= np.maximum(np.linalg.norm(hv, axis=-1, keepdims=True), 1e-6)
             spec = (np.clip(np.sum(n * hv, -1), 0.0, 1.0) ** 30.0) * valid
-            a += spec[..., None] * np.array((0.10, 0.09, 0.075), np.float32)
+            a += spec[..., None] * np.array((0.10, 0.09, 0.075), np.float32) * space_boost
         a = np.clip(a, 0.0, 1.0)
 
     a = _ground_texture(a, d, sky_mask, task, cache)
@@ -2535,6 +2657,7 @@ _CLOSEUP_ONLY = False
 _LAST_DEPTH = None
 _LAST_NORMAL = None
 _LAST_CAM = None
+_SPACE_BASE_CAM = None  # main-camera pose for the space-plate parallax
 _CLOSE_DEPTH = None
 _CLOSE_NORMAL = None
 _CLOSE_CAM = None
@@ -2732,19 +2855,53 @@ def _close_render(cam):
 
 def _post_close(rgb, task):
     """Run the close-up through the same grade/background/ground pass."""
-    global _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM
+    global _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM, _SPACE_BASE_CAM
+    if _CLOSEUP_ONLY and _SPACE_BASE_CAM is None and _CLOSE_CAM is not None:
+        _SPACE_BASE_CAM = _CLOSE_CAM
     saved = (_LAST_DEPTH, _LAST_NORMAL, _LAST_CAM)
     _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM = _CLOSE_DEPTH, _CLOSE_NORMAL, _CLOSE_CAM
     try:
-        return _post(rgb, _CLOSE_DEPTH, task)
+        out = _post(rgb, _CLOSE_DEPTH, task)
     finally:
         _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM = saved
+    if task in ("docking", "rendezvous"):
+        # night-side close-ups were almost silhouettes; lift the shadows
+        # without touching the main-frame exposure
+        a = out.astype(np.float32) / 255.0
+        a = 1.0 - np.power(np.clip(1.0 - a, 0.0, 1.0), 0.78)
+        out = (np.clip(a, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return out
 
 
 def _frame(main_rgb, close_rgb, state, label=None, depth=None):
     """Cinematic full-bleed frame: graded render, glass HUD, close-up inset."""
+    global _SPACE_BASE_CAM
+    if (not _CLOSEUP_ONLY and _SPACE_BASE_CAM is None
+            and state.get("task_key") in ("satellite", "transfer", "docking", "rendezvous")
+            and _LAST_CAM is not None):
+        _SPACE_BASE_CAM = _LAST_CAM
     if _CLOSEUP_ONLY and close_rgb is not None:
-        return _post_close(close_rgb, state.get("task_key", ""))
+        from PIL import Image, ImageDraw  # noqa: E402
+
+        key = state.get("task_key", "")
+        rgb = _post_close(close_rgb, key)
+        canvas = Image.fromarray(rgb).convert("RGB")
+        title = state.get("task") or key or "task"
+        scale = _CLOSE_SCALE.get(key, "1x")
+        text = f"CLOSE-UP · {title} · body {scale} (display scale)"
+        d = ImageDraw.Draw(canvas, "RGBA")
+        f = _mono(14)
+        tw = d.textlength(text, font=f)
+        x, y = 22, canvas.height - 34
+        d.rounded_rectangle(
+            (x - 9, y - 7, x + tw + 9, y + 21),
+            radius=6,
+            fill=(4, 12, 20, 196),
+            outline=(90, 140, 180, 120),
+            width=1,
+        )
+        d.text((x, y), text, font=f, fill=(232, 240, 247, 255))
+        return np.asarray(canvas)
     if close_rgb is not None:
         close_rgb = _post_close(close_rgb, state.get("task_key", ""))
     from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
@@ -3690,6 +3847,8 @@ def _gcs_overlay(canvas, task, gcs):
 
 def build_scene(task, extras, first, close_res=CLOSE_RES):
     """Visual-only scene; entities returned in a dict for the replay loop."""
+    global _STATIC_SHADOWS
+    _STATIC_SHADOWS = []
     if not gs._initialized:  # pure-tensor tasks never construct a physics scene
         gs.init(backend=gs.cpu, logging_level="warning")
     # the four space tasks keep the default dark background (stars, orbit
@@ -3719,10 +3878,13 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         _grid(scene, 12.0, 1.0, color=GRASS_GRID)
         ents["body"] = _model(scene, "crazyflie", _build_quadrotor(), scale=9.0)
         _add_quadrotor_motion(scene, ents, 9.0)
-        ents["goal"] = _marker(scene, 0.18, (0.0, 1.0, 0.0, 1.0), extras["target"])
+        ents["goal"] = _marker(scene, 0.08, (0.0, 1.0, 0.0, 1.0), extras["target"])
         gx, gy, gz = (float(v) for v in extras["target"])
-        _ring(scene, 0.55, (0.20, 1.0, 0.55, 0.95), (gx, gy, gz), n=48, tube=0.028)
-        _beam(scene, (gx, gy, 0.0), gz, (0.20, 1.0, 0.55, 0.30), 0.018)
+        # vertical gate ring: a horizontal ring read as a halo around the
+        # sphere and intersected the drone's props at the capture point.
+        _ring(scene, 0.32, (0.20, 1.0, 0.55, 0.95), (gx, gy, gz),
+              n=48, plane="xz", tube=0.020)
+        _beam(scene, (gx, gy, 0.0), gz, (0.20, 1.0, 0.55, 0.30), 0.012)
         cam = scene.add_camera(
             res=MAIN_RES,
             pos=tuple(0.5 * (np.asarray(p0, float) + np.asarray(extras["target"], float))
@@ -3748,8 +3910,14 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         ents["occluders"] = []
         for x, y, radius, height in extras["occluders"]:
             ent = _cyl(
-                scene, radius, height, (0.105, 0.135, 0.155, 1.0), (x, y, height / 2.0)
+                scene, radius, height, (0.22, 0.23, 0.24, 1.0), (x, y, height / 2.0)
             )
+            # concrete cap + base collar break the untextured-can silhouette
+            _cyl(scene, radius * 1.06, 0.06, (0.30, 0.31, 0.32, 1.0),
+                 (x, y, height + 0.03))
+            _cyl(scene, radius * 1.10, 0.10, (0.17, 0.18, 0.19, 1.0),
+                 (x, y, 0.05))
+            _STATIC_SHADOWS.append((x, y, radius * 1.2, radius * 1.2, 0.0, 0.32))
             ents["occluders"].append(ent)
         ents["los"] = [_marker(scene, 0.05, (1.0, 1.0, 1.0, 0.65)) for _ in range(24)]
         ents["trail"] = _trail(scene, 0.06, (0.2, 0.4, 0.9, 0.6))
@@ -3772,9 +3940,10 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         ents["wps"] = [_marker(scene, 1.2, (0.92, 0.18, 0.14, 1.0), t) for t in extras["targets"]]
         for t in extras["targets"]:
             wx, wy, wz = (float(v) for v in t)
-            # slim gate ring: the previous 8 m / 0.55 m tube read as a fat
-            # donut whenever the close-up flew past a waypoint
-            _ring(scene, 3.2, (0.95, 0.24, 0.18, 1.0), (wx, wy, wz), n=64, tube=0.085)
+            # vertical gate ring: a horizontal ring around the sphere read as
+            # a dark Saturn band in the 3/4 view
+            _ring(scene, 2.4, (0.95, 0.24, 0.18, 1.0), (wx, wy, wz),
+                  n=64, plane="xz", tube=0.055)
             _beam(scene, (wx, wy, 0.0), wz, (0.95, 0.24, 0.18, 0.22), 0.05)
             _ring(scene, 3.2, (0.55, 0.10, 0.08, 1.0), (wx, wy, 0.03), n=64, tube=0.05)
         ents["trail"] = _trail(scene, 0.35, (0.2, 0.4, 0.9, 0.6))
@@ -3804,9 +3973,10 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         ents["wps"] = [_marker(scene, 1.2, (0.92, 0.18, 0.14, 1.0), t) for t in extras["targets"]]
         for t in extras["targets"]:
             wx, wy, wz = (float(v) for v in t)
-            # slim gate ring: the previous 8 m / 0.55 m tube read as a fat
-            # donut whenever the close-up flew past a waypoint
-            _ring(scene, 3.2, (0.95, 0.24, 0.18, 1.0), (wx, wy, wz), n=64, tube=0.085)
+            # vertical gate ring: a horizontal ring around the sphere read as
+            # a dark Saturn band in the 3/4 view
+            _ring(scene, 2.4, (0.95, 0.24, 0.18, 1.0), (wx, wy, wz),
+                  n=64, plane="xz", tube=0.055)
             _beam(scene, (wx, wy, 0.0), wz, (0.95, 0.24, 0.18, 0.22), 0.05)
             _ring(scene, 3.2, (0.55, 0.10, 0.08, 1.0), (wx, wy, 0.03), n=64, tube=0.05)
         ents["trail"] = _trail(scene, 0.35, (0.2, 0.4, 0.9, 0.6))
@@ -3822,11 +3992,20 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
             res=close_res, fov=_hfov_match(68, close_res), far=5000
         )
     elif task == "rocket":
-        _ground(scene, color=GRASS_GROUND)
+        # The telephoto hero camera sits ~735 m from the pad.  A 520 m plane
+        # ended before the horizon and a 100 km plane crosses the 5 km far
+        # plane; either way the bright sunset column in the sky plate leaks
+        # below the horizon as a searchlight.  Keep the plane inside the far
+        # clip so every ground pixel wins the sky-mask test.
+        _ground(scene, 4000.0, color=GRASS_GROUND)
         # no ground grid: at this near-ground camera the 25 m lines crowd
         # together towards the horizon into moire scan lines
         _urdf(scene, MODELS / "landing_pad.urdf", pos=(0, 0, 0.1))
         _cyl(scene, 30.0, 0.10, (0.09, 0.18, 0.22, 1.0), (0, 0, 0.06))
+        # concrete-pad markings: a light centre disc + yellow ring so the pad
+        # does not read as grass with a cyan halo
+        _cyl(scene, 2.4, 0.02, (0.78, 0.80, 0.82, 1.0), (0, 0, 0.125))
+        _ring(scene, 4.2, (0.95, 0.82, 0.20, 1.0), (0, 0, 0.125), n=64, tube=0.07)
         for rr, tt in ((6.0, 1.0), (10.0, 0.8), (15.0, 0.65), (22.0, 0.55), (30.0, 0.45)):
             _ring(scene, rr, (0.45, 0.90, 1.0, 1.0), (0, 0, 0.14), n=80, tube=tt)
         # pad cross + dashed altitude ladder: gives the empty descent corridor
@@ -4051,7 +4230,9 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         ents["body"] = _model(scene, "amraam", _build_missile(), scale=200.0)
         _add_missile_motion(scene, ents, 200.0)
         ents["me"] = _marker(scene, 24.0, (1.0, 0.9, 0.25, 1.0), tuple(p0))
-        ents["target"] = _marker(scene, 60.0, (0.9, 0.2, 0.2, 0.9), tuple(first["tgt"]))
+        ents["target"] = _model(
+            scene, "target_aircraft", _build_target_aircraft(), scale=1.0
+        )
         tg = np.asarray(first["tgt"], dtype=float)
         _ring(scene, 150.0, (1.0, 0.25, 0.22, 0.75), tuple(tg), n=72, tube=4.0)
         _beam(scene, (tg[0], tg[1], 0.0), float(tg[2]), (1.0, 0.25, 0.22, 0.16), 6.0)
@@ -4160,11 +4341,12 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
             # success goal ball (r = pos_goal = 10 m, the real criterion)
             ents["goal"] = _marker(scene, extras["pos_goal"], (0.2, 0.85, 0.3, 0.15))
             # LVLH axis bars through the target: x radial (red), y along-track
-            # (green), z cross-track (blue); each spans +/-120 m
+            # (green), z cross-track (blue); shorten/thin them so they read as
+            # frame furniture instead of laser beams across the station
             ents["axes"] = (
-                _box(scene, (240.0, 2.0, 2.0), (0.85, 0.35, 0.35, 0.55), (0, 0, 0)),
-                _box(scene, (2.0, 240.0, 2.0), (0.35, 0.8, 0.35, 0.55), (0, 0, 0)),
-                _box(scene, (2.0, 2.0, 240.0), (0.35, 0.55, 0.9, 0.55), (0, 0, 0)),
+                _box(scene, (100.0, 1.0, 1.0), (0.85, 0.35, 0.35, 0.35), (0, 0, 0)),
+                _box(scene, (1.0, 100.0, 1.0), (0.35, 0.8, 0.35, 0.35), (0, 0, 0)),
+                _box(scene, (1.0, 1.0, 100.0), (0.35, 0.55, 0.9, 0.35), (0, 0, 0)),
             )
             # range rings in the radial/along-track plane (x-y, z = RING_PLANE),
             # all in metres; the outermost is the 2000 m range-fail boundary
@@ -4287,8 +4469,9 @@ def _telemetry(task, frames, dt):
 
 
 def render(task, frames, extras, out_path, fps, closeup=False):
-    global _CLOSEUP_ONLY, _PLUME
+    global _CLOSEUP_ONLY, _PLUME, _CONTACT_SHADOW, _SPACE_BASE_CAM
     _CLOSEUP_ONLY = closeup
+    _SPACE_BASE_CAM = None
     scene, ents, cam = build_scene(
         task, extras, frames[0], close_res=CLOSE_HERO_RES if closeup else CLOSE_RES
     )
@@ -4382,6 +4565,16 @@ def render(task, frames, extras, out_path, fps, closeup=False):
         if f["quat"] is not None:
             ents["body"].set_quat(tuple(map(float, f["quat"])))
         _update_motion(ents, f, spin_phases)
+        spec = _SHADOW_SPECS.get(task)
+        if spec is not None and pos[2] <= spec[3]:
+            yaw = _attitude(task, frames, fi)[2]
+            # offset the blob along the key-light direction so the airframe
+            # does not hide its own shadow
+            sx = pos[0] - 0.70 * pos[2]
+            sy = pos[1] - 0.30 * pos[2]
+            _CONTACT_SHADOW = (sx, sy, spec[0], spec[1], yaw, spec[2])
+        else:
+            _CONTACT_SHADOW = None
         if task == "missile":
             ents["target"].set_pos(tuple(map(float, f["tgt"])))
         if task == "quadx_track":

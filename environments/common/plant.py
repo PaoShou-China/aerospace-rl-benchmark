@@ -990,6 +990,16 @@ class TensorPlant:
         """
         if name == "mass":
             masses = self.drone.get_links_mass().to(COMPUTE_DTYPE)  # (n, links)
+            if self.vehicle == "rocket":
+                # The URDF is authored at full tank capacity; the design
+                # nominal is the spawn load, not a fully fuelled booster.
+                if getattr(self, "f9_real", False):
+                    full = float(self.params["propellant_params"]["total_fuel"])
+                else:
+                    full = float(self.params["booster_params"]["total_fuel"])
+                initial = float(self.initial_fuel) * full
+                masses = masses.sum(dim=1) - full + initial
+                return float(masses.mean())
             return float(masses.sum(dim=1).mean())
         if name == "thrust":
             if self.vehicle in ("quadx", "fixedwing"):
@@ -1101,6 +1111,50 @@ class TensorPlant:
             self._inertia_mass_scale[:, ids] = 1.0
         self._apply_mass()
         self._apply_link_inertia()
+
+    def sync_propellant_mass(self):
+        """Push the current fuel fraction into the tank links.
+
+        Called at the end of each rocket substep and once after a reset fuel
+        override.  Without the reset-side call the first warmup/control
+        substep used the fully-fuelled URDF tank mass and inertia.
+        """
+        if self.vehicle != "rocket" or getattr(self, "fuel", None) is None:
+            return
+        if self.f9_real:
+            mass, principal, com = f9_tank_properties(self.fuel, self.params)
+            inertia = torch.stack(
+                [
+                    self.fuel_bases[k].T @ principal[:, k] @ self.fuel_bases[k]
+                    for k in range(2)
+                ],
+                dim=1,
+            )
+            self.drone.set_links_mass(mass.to(gs.tc_float), links_idx_local=self.fuel_ids)
+            self.drone.set_links_inertia(
+                (inertia * self._inertia_scales(self.fuel_ids, include_mass=False)).to(
+                    gs.tc_float
+                ),
+                links_idx_local=self.fuel_ids,
+            )
+            self.drone.set_links_COM(com.to(gs.tc_float), links_idx_local=self.fuel_ids)
+        else:
+            b = self.params["booster_params"]
+            mass = (self.fuel * b["total_fuel"]).clamp_min(1e-8)
+            inertia = (
+                self.fuel_basis.T
+                @ torch.diag_embed((self.fuel[:, None] * self.fuel_inertia).clamp_min(1e-8))
+                @ self.fuel_basis
+            )
+            self.drone.set_links_mass(
+                mass[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
+            )
+            self.drone.set_links_inertia(
+                (inertia[:, None] * self._inertia_scales([self.fuel_id], include_mass=False)).to(
+                    gs.tc_float
+                ),
+                links_idx_local=[self.fuel_id],
+            )
 
     def _apply_mass(self):
         """Write the scaled link masses, keeping propellant links physical."""
@@ -1562,7 +1616,6 @@ class TensorPlant:
                 cmd = torch.stack(
                     (a[:, 1] + a[:, 2], a[:, 1] - a[:, 2], a[:, 0] - a[:, 2], a[:, 0] + a[:, 2]), -1
                 ).clamp(-1, 1)
-            previous = self.surfaces.actuation.clone()
             f, t = self.surfaces.step(
                 cmd,
                 self._air_velocity(self.surface_ids, q),
@@ -1577,9 +1630,9 @@ class TensorPlant:
                 # which is what gives the realistic model roll/pitch damping.
                 body_rate=wb if self.realistic and self.surfaces.strips > 1 else None,
                 ground_height=strip_height,
-            )
-            self.surfaces.actuation.copy_(
-                torch.where(mask[:, None], self.surfaces.actuation, previous)
+                # Keep every servo/unsteady/stall/aeroelastic state of paused
+                # replicas frozen; a partial reset warmup must not advance them.
+                mask=mask,
             )
             if self.rocket_variation is not None:
                 f = f * self.rocket_variation.fin[:, None, None]
@@ -1792,39 +1845,8 @@ class TensorPlant:
                     thrust = thrust * (1.0 + 0.08 * (1.0 - self.air_pressure / P0))
                 thrust = thrust * self._thrust_scale
                 force[:, self.links["booster_link"]] += direction * thrust[:, None]
-                if self.f9_real:
-                    mass, principal, com = f9_tank_properties(self.fuel, self.params)
-                    inertia = torch.stack(
-                        [
-                            self.fuel_bases[k].T @ principal[:, k] @ self.fuel_bases[k]
-                            for k in range(2)
-                        ],
-                        dim=1,
-                    )
-                    self.drone.set_links_mass(mass.to(gs.tc_float), links_idx_local=self.fuel_ids)
-                    self.drone.set_links_inertia(
-                        (inertia * self._inertia_scales(self.fuel_ids, include_mass=False)).to(
-                            gs.tc_float
-                        ),
-                        links_idx_local=self.fuel_ids,
-                    )
-                    self.drone.set_links_COM(com.to(gs.tc_float), links_idx_local=self.fuel_ids)
-                else:
-                    mass = (self.fuel * b["total_fuel"]).clamp_min(1e-8)
-                    inertia = (
-                        self.fuel_basis.T
-                        @ torch.diag_embed((self.fuel[:, None] * self.fuel_inertia).clamp_min(1e-8))
-                        @ self.fuel_basis
-                    )
-                    self.drone.set_links_mass(
-                        mass[:, None].to(gs.tc_float), links_idx_local=[self.fuel_id]
-                    )
-                    self.drone.set_links_inertia(
-                        (inertia[:, None] * self._inertia_scales([self.fuel_id], include_mass=False)).to(
-                            gs.tc_float
-                        ),
-                        links_idx_local=[self.fuel_id],
-                    )
+                # Tank masses/inertias follow the just-depleted fuel state.
+                self.sync_propellant_mass()
         if self._elec_thrust is not None:
             # Advance the pack after every electric thrust source has been
             # resolved, so one substep's current covers the whole vehicle.

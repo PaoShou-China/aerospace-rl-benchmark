@@ -208,23 +208,10 @@ class LiftingSurfaceBatch:
             self.rate_limit = None
             self.deadband = 0.0
         # Lumped torsional elastic DOF per surface (realistic only).  The
-        # stiffness is chosen so the linearised divergence speed equals
-        # ``divergence_speed``: q_div S c (x_ea - 0.25) cl_alpha = k.
+        # stiffness is calibrated at the end of __init__, once the coefficient
+        # scales exist, from the full linearised elastic-axis moment slope.
         self.aeroelastic = bool(aeroelastic) and self.realistic
-        if self.aeroelastic:
-            span_surface = self.span.view(self.n_surfaces, self.strips)[:, 0]
-            chord_surface = self.chord.view(self.n_surfaces, self.strips)[:, 0]
-            slope_surface = self.slope.view(self.n_surfaces, self.strips)[:, 0]
-            q_div = 0.5 * RHO0 * float(divergence_speed) ** 2
-            net = (_AE_ELASTIC_AXIS - 0.25) * slope_surface
-            self._twist_k = q_div * span_surface * chord_surface * net
-            omega = 2.0 * math.pi * _AE_FREQ_HZ
-            self._twist_i = self._twist_k / omega**2
-            self._twist_c = 2.0 * _AE_DAMPING * self._twist_k / omega
-            self._twist = torch.zeros(
-                (n, self.n_surfaces), device=device, dtype=COMPUTE_DTYPE
-            )
-            self._twist_rate = torch.zeros_like(self._twist)
+        self._divergence_speed = float(divergence_speed)
         self.actuation = torch.zeros(
             (n, self.n_surfaces), device=device, dtype=COMPUTE_DTYPE
         )
@@ -257,6 +244,36 @@ class LiftingSurfaceBatch:
             (n, self.n_surfaces, _ACT_MAX_DELAY + 1), device=device, dtype=COMPUTE_DTYPE
         )
         self._delay_head = torch.zeros((n,), device=device, dtype=torch.long)
+        if self.aeroelastic:
+            # Elastic-axis moment slope at zero lift:
+            #   dM/dalpha = q S c [ (x_ea - 0.25) cl_alpha + cm_alpha ]
+            # The pitching moment itself carries a negative cm_alpha for the
+            # upstream polar, so omitting it overstated the divergence speed.
+            # Calibrate k from the actual model slope so that the linearised
+            # divergence speed is exactly ``divergence_speed``.
+            span_surface = self.span.view(self.n_surfaces, self.strips)[:, 0]
+            chord_surface = self.chord.view(self.n_surfaces, self.strips)[:, 0]
+            slope_surface = self.slope.view(self.n_surfaces, self.strips)[:, 0]
+            eps = 1e-3
+            a0_flat = self.alpha0.view(1, n_strip)
+            cmd0 = torch.zeros((1, n_strip), device=device, dtype=COMPUTE_DTYPE)
+            cm_plus = self.coefficients(a0_flat + eps, cmd0)[2][0]
+            cm_minus = self.coefficients(a0_flat - eps, cmd0)[2][0]
+            cm_alpha = ((cm_plus - cm_minus) / (2.0 * eps)).view(
+                self.n_surfaces, self.strips
+            )[:, 0]
+            net = ((_AE_ELASTIC_AXIS - 0.25) * slope_surface + cm_alpha).clamp_min(1e-6)
+            q_div = 0.5 * RHO0 * self._divergence_speed ** 2
+            # q S c * slope: the area S = span*chord and the moment arm in
+            # chord fractions contributes one more chord factor.
+            self._twist_k = q_div * span_surface * chord_surface.square() * net
+            omega = 2.0 * math.pi * _AE_FREQ_HZ
+            self._twist_i = self._twist_k / omega**2
+            self._twist_c = 2.0 * _AE_DAMPING * self._twist_k / omega
+            self._twist = torch.zeros(
+                (n, self.n_surfaces), device=device, dtype=COMPUTE_DTYPE
+            )
+            self._twist_rate = torch.zeros_like(self._twist)
 
     def strip_offsets(self):
         """Body-frame offset of every spanwise station from its surface centre.
@@ -437,7 +454,7 @@ class LiftingSurfaceBatch:
         a0 = self.alpha0 - dcl / slope
         return slope * (alpha - a0), alpha - a0
 
-    def _dynamic_stall(self, alpha, actuation, mach, speed, cl_qs, cd_qs, cm_qs):
+    def _dynamic_stall(self, alpha, actuation, mach, speed, cl_qs, cd_qs, cm_qs, mask=None):
         """Beddoes-Leishman-style dynamic-stall correction to (cl, cd, cm).
 
         A trailing-edge separation point ``f`` follows the static separation
@@ -493,12 +510,16 @@ class LiftingSurfaceBatch:
         # carries the same drag penalty a separated wake would.
         cd = cd_qs + vortex * torch.sin(alpha_eff)
         cm = cm_qs - _DS_CM * vortex
-        self._fsep.copy_(f_new)
-        self._vortex.copy_(vortex)
+        if mask is None:
+            self._fsep.copy_(f_new)
+            self._vortex.copy_(vortex)
+        else:
+            self._fsep.copy_(torch.where(mask[:, None], f_new, self._fsep))
+            self._vortex.copy_(torch.where(mask[:, None], vortex, self._vortex))
         return cl, cd, cm
 
     def step(self, cmd, velocity, density=None, sound_speed=None, q_boost=None,
-             body_rate=None, ground_height=None):
+             body_rate=None, ground_height=None, mask=None):
         """Run one actuator lag step and return body-frame forces/moments.
 
         Parameters
@@ -525,6 +546,11 @@ class LiftingSurfaceBatch:
         ground_height : (n, k) tensor, optional
             Height of each station above the ground plane [m].  Enables the
             wing-in-ground-effect correction (see :func:`ground_effect_ratio`).
+        mask : (n,) bool tensor, optional
+            Active replicas.  Inactive replicas keep every persistent state
+            (servo lag/backlash/delay, unsteady/dynamic-stall/aeroelastic
+            states) frozen, so a partial reset or warmup cannot advance a
+            neighbouring episode.  ``None`` advances all replicas.
 
         Returns
         -------
@@ -534,6 +560,10 @@ class LiftingSurfaceBatch:
             Body-frame moment per surface.
         """
         velocity = velocity.to(COMPUTE_DTYPE)
+        if mask is None:
+            mask = torch.ones(cmd.shape[0], dtype=torch.bool, device=cmd.device)
+        else:
+            mask = mask.to(device=cmd.device, dtype=torch.bool).reshape(-1)
         if self.strips > 1:
             # Replicate each surface to its spanwise stations and add the
             # rigid-body rotation contribution at each station.
@@ -552,16 +582,19 @@ class LiftingSurfaceBatch:
             # leaves the current lash band.
             backlash = _ACT_BACKLASH * self.backlash_scale
             difference = target - self._backlash_state
-            self._backlash_state.copy_(
+            backlash_new = (
                 self._backlash_state
                 + torch.sign(difference) * (difference.abs() - 0.5 * backlash).clamp_min(0.0)
+            ).clamp(-1.0, 1.0)
+            self._backlash_state.copy_(
+                torch.where(mask[:, None], backlash_new, self._backlash_state)
             )
-            self._backlash_state.clamp_(-1.0, 1.0)
-            target = self._backlash_state
+            target = backlash_new
             # Pure transport delay in the command path (0-2 physics steps).
             head = self._delay_head
             ring = self._delay_ring
-            ring.scatter_(
+            ring_new = ring.clone()
+            ring_new.scatter_(
                 2,
                 head[:, None, None].expand(-1, ring.shape[1], 1),
                 target.unsqueeze(-1),
@@ -569,8 +602,13 @@ class LiftingSurfaceBatch:
             index = (
                 head[:, None, None] - self.delay_steps[:, None, None]
             ).remainder(ring.shape[2]).expand(-1, ring.shape[1], 1)
-            target = ring.gather(2, index).squeeze(-1)
-            self._delay_head.copy_((head + 1).remainder(ring.shape[2]))
+            target = ring_new.gather(2, index).squeeze(-1)
+            self._delay_ring.copy_(
+                torch.where(mask[:, None, None], ring_new, ring)
+            )
+            self._delay_head.copy_(
+                torch.where(mask, (head + 1).remainder(ring.shape[2]), head)
+            )
             tau = (self.tau_surface[None, :] * self.tau_scale).clamp_min(1.05 * self.dt)
             delta = self.actuation + self.dt / tau * (target - self.actuation)
             max_step = self.rate_limit[None, :] * self.rate_scale * self.dt
@@ -579,11 +617,13 @@ class LiftingSurfaceBatch:
             delta = torch.maximum(
                 torch.minimum(delta, self.actuation + max_step), self.actuation - down_step
             )
-            self.actuation.copy_(delta)
+            self.actuation.copy_(torch.where(mask[:, None], delta, self.actuation))
         else:
-            # add_ (not +=): the buffer keeps its identity under graph capture/compilers.
+            # Keep the in-place update form under graph capture/compilers, but
+            # leave inactive replicas' actuation untouched.
             tau = (self.tau_surface[None, :] * self.tau_scale).clamp_min(1.05 * self.dt)
-            self.actuation.add_(self.dt / tau * (cmd - self.actuation))
+            delta = self.actuation + self.dt / tau * (cmd - self.actuation)
+            self.actuation.copy_(torch.where(mask[:, None], delta, self.actuation))
         alpha = torch.atan2(-(velocity * self.lift).sum(-1), (velocity * self.forward).sum(-1))
         if self.aeroelastic:
             # Elastic twist (small-angle) adds to the geometric angle of attack.
@@ -600,7 +640,7 @@ class LiftingSurfaceBatch:
         cl, cd, cm = self.coefficients(alpha, actuation, mach)
         if self.realistic and _DYNAMIC_STALL_ENABLED:
             cl, cd, cm = self._dynamic_stall(
-                alpha, actuation, mach, speed, cl, cd, cm
+                alpha, actuation, mach, speed, cl, cd, cm, mask=mask
             )
         if self.realistic and _UNSTEADY_ENABLED:
             # First-order Wagner-style lift lag: the circulatory coefficients
@@ -612,8 +652,11 @@ class LiftingSurfaceBatch:
             current = torch.stack((cl, cd, cm), -1)
             blended = self._aero_state + (self.dt / tau)[..., None] * (current - self._aero_state)
             fresh = (~self._aero_ready)[:, None, None]
-            self._aero_state.copy_(torch.where(fresh, current, blended))
-            self._aero_ready.fill_(True)
+            blended = torch.where(fresh, current, blended)
+            self._aero_state.copy_(
+                torch.where(mask[:, None, None], blended, self._aero_state)
+            )
+            self._aero_ready.copy_(self._aero_ready | mask)
             cl, cd, cm = self._aero_state.unbind(-1)
         if self.realistic and ground_height is not None:
             # Quasi-steady wing-in-ground-effect correction applied after the
@@ -640,22 +683,30 @@ class LiftingSurfaceBatch:
             qa = qa + q_boost * self.area
         if self.aeroelastic:
             # Aerodynamic moment about the elastic axis: the quarter-chord
-            # moment plus the lift acting 0.35c behind the leading edge.
+            # moment plus the lift acting at (x_ea - 0.25c) aft of the
+            # quarter-chord aerodynamic centre.  ``_AE_ELASTIC_AXIS`` is the
+            # absolute elastic-axis position aft of the leading edge (0.35),
+            # so the lift arm is 0.10c, not 0.35c.
             moment = (
-                qa * self.chord[None, :] * (cm + _AE_ELASTIC_AXIS * cl)
+                qa
+                * self.chord[None, :]
+                * (cm + (_AE_ELASTIC_AXIS - 0.25) * cl)
             ).reshape(qa.shape[0], self.n_surfaces, self.strips).sum(2)
             accel = (
                 moment - self._twist_k * self._twist - self._twist_c * self._twist_rate
             ) / self._twist_i
             # Semi-implicit damping keeps the explicit 240 Hz integration stable.
-            rate = (self._twist_rate + self.dt * accel) / (
+            rate = ((self._twist_rate + self.dt * accel) / (
                 1.0 + self.dt * self._twist_c / self._twist_i
+            )).clamp(-50.0, 50.0)
+            twist = (self._twist + self.dt * rate).clamp(
+                -_AE_TWIST_LIMIT, _AE_TWIST_LIMIT
             )
-            self._twist_rate.copy_(rate.clamp(-50.0, 50.0))
+            self._twist_rate.copy_(
+                torch.where(mask[:, None], rate, self._twist_rate)
+            )
             self._twist.copy_(
-                (self._twist + self.dt * self._twist_rate).clamp(
-                    -_AE_TWIST_LIMIT, _AE_TWIST_LIMIT
-                )
+                torch.where(mask[:, None], twist, self._twist)
             )
         lift, drag = cl * qa, cd * qa
         normal = lift * torch.cos(alpha) + drag * torch.sin(alpha)

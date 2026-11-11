@@ -1749,6 +1749,7 @@ class RocketPDGBaseline(Baseline):
         super().__init__(env, design)
         if getattr(env, "f9_real", False):
             self.M_DRY = 25600.0
+            self.FUEL_FULL = 410900.0  # v1's fuel link is in kg, not v2's 410.9 kg
             self.T_MAX = 845000.0
             self.MIN_RATIO = 0.57
             self.REST_Z = 0.65
@@ -2201,6 +2202,7 @@ class RocketPDLandingBaseline(Baseline):
         super().__init__(env, design=design)
         if getattr(env, "f9_real", False):
             self.M_DRY = 25600.0
+            self.FUEL_FULL = 410900.0  # v1's fuel link is in kg, not v2's 410.9 kg
             self.T_MAX = 845000.0
             self.MIN_RATIO = 0.57
             self.REST_Z = 0.65

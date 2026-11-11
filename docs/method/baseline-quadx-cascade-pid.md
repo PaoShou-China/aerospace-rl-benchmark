@@ -185,7 +185,8 @@ All numbers below are from this repository on the GPU backend, calm air (no
 `results/quadx/config.json`, so the default env kwargs), and the unbiased
 accounting of `scripts/baseline_eval.py`: one completed first episode per
 replica, no in-flight episode dropped. The only shipped quadx records are
-`baseline.json` (32 replicas / seed 7), `baseline_cascaded_pid.json` (512
+`baseline.json` (now 128 replicas / seed 7, 82.8%; the 32-replica SE(3)
+row in §5.1 is the historical comparison run), `baseline_cascaded_pid.json` (512
 replicas / seed 7) and the dataset-B files under `results/quadx/baselines/`
 (256 replicas / seed 7); there is no 1024-replica artifact in the checkout.
 
@@ -193,11 +194,15 @@ replicas / seed 7) and the dataset-B files under `results/quadx/baselines/`
 
 | Arm | Replicas | Success | Crash / OOB / timeout | Window | Mean return |
 |---|---|---|---|---|---|
-| SE(3) geometric (`baseline.json`, seed 7) | 32 | 90.6% (29/32) | 0 / 0 / 3 | 800 steps | 66.09 |
+| SE(3) geometric (`baseline.json`, historical 32-replica run, seed 7) | 32 | 90.6% (29/32) | 0 / 0 / 3 | 800 steps | 66.09 |
 | Cascaded PID (`baseline_cascaded_pid.json`, seed 7) | 512 | **11.9%** (61/512) | 8.8% / 1.0% / 77.8% | 800 steps | 14.14 |
 | Cascaded PID (`baselines/cascaded_pid_seed7.json`, dataset B) | 256 | **99.2%** | 0 / 0 / 0.8% | 800 steps | 72.74 |
 | SE(3) geometric (`baselines/se3_geometric_seed7.json`, dataset B) | 256 | 100.0% | 0 / 0 / 0 | 648 steps | 72.86 |
 | SMC (`baselines/smc_seed7.json`, dataset B) | 256 | 100.0% | 0 / 0 / 0 | 557 steps | 72.86 |
+
+The current shipped `baseline.json` is 128 replicas / seed 7 / 82.8%; the
+32-replica row above is the historical comparison set used for the old cascade
+data, not the metadata of the shipped baseline.
 
 The 512-replica `baseline_cascaded_pid.json` is a **stale artifact** (77.8%
 timeouts, mean 0.75 of 4 waypoints reached) that predates the controller/plant

@@ -105,9 +105,10 @@ a=\Big(\frac{\omega^{\mathrm{cmd}}}{\pi},\ \frac{2T}{T_{\max}}-1\Big)\ \mathrm{c
 |---|---|---|
 | 数据集 A（128 副本 × seeds 7/13/21/101，每副本首回合） | `results/baseline_protocol/seed*/quadx/baseline.json` | 各 seed 100.0 / 100.0 / 99.2 / 100.0%；384 回合均值 99.7±0.5% |
 | 数据集 B（256 副本，seed 7） | `results/quadx/baselines/se3_geometric_seed7.json` | 100% 成功，平均回合回报 72.86 |
-| `baseline_eval.py quadx` 已发布记录（32 副本，seed 7，800 步窗口） | `results/quadx/baseline.json` | 29/32 首回合成功（0.906），平均回报 66.09，`complete=true` |
+| 当前随仓库发布记录（128 副本，seed 7，800 步窗口） | `results/quadx/baseline.json` | 106/128 首回合成功（82.8%），`complete=true` |
+| 历史 32 副本记录（seed 7，800 步窗口） | 历史 `baseline.json` | 29/32 首回合成功（0.906），平均回报 66.09 |
 
-已发布的 `results/quadx/baseline.json` 是 32 副本 smoke 规模记录，不是 1024 副本运行；99.7% 来自四 seed 数据集 A。旧 1024 数值（如 1024/1024、回报 70.91、523 步）无法从当前检出复现，已撤回。
+当前随仓库发布的 `results/quadx/baseline.json` 是 128 副本 / 82.8% 记录；32 副本行是可复现性受限的历史 smoke 记录。99.7% 来自四 seed 数据集 A（128 副本 × seed 7/13/21/101），不是单条 shipped 记录。旧 1024 数值（如 1024/1024、回报 70.91、523 步）无法从当前检出复现，已撤回。
 
 功能测试 `environments/multirotor/test_quadx_se3.py` 认证（失败即抛错）：无仿真下精确 wrench→旋翼分配（T0）；跨批大小 $\ge0.90$ 航路点成功率（T1）；1024 env 域随机生成及注入对抗初始位置/姿态下 $\ge0.85$（T2）；速率窗口、单旋翼与总推力饱和瞬态下的闭环恢复（T3）；部分批重置下修剪积分清零与再收敛（T4）。
 

@@ -5,6 +5,7 @@ Motor order: (+x,-y), (-x,+y), (+x,+y), (-x,-y).
 """
 
 from dataclasses import dataclass
+import xml.etree.ElementTree as ET
 import torch
 from pathlib import Path
 import yaml
@@ -12,6 +13,29 @@ import yaml
 # Single source of truth lives in ``algorithms.dtypes`` so that the baseline
 # package can import it without triggering ``environments/__init__``.
 from algorithms.dtypes import COMPUTE_DTYPE  # noqa: E402
+
+_CF2X_DIR = Path(__file__).parent / "original_pyflyt/models/vehicles/cf2x"
+
+
+def _cf2x_inertials():
+    """Parse the shipped cf2x URDF instead of a removed reference copy."""
+    root = ET.fromstring((_CF2X_DIR / "cf2x.urdf").read_text().split("</robot>")[0] + "</robot>")
+    out = {}
+    for link in root.findall("link"):
+        inertial = link.find("inertial")
+        if inertial is None:
+            continue
+        origin = inertial.find("origin")
+        com = (
+            [float(x) for x in origin.get("xyz", "0 0 0").split()]
+            if origin is not None
+            else [0.0, 0.0, 0.0]
+        )
+        out[link.get("name")] = {
+            "mass": float(inertial.find("mass").get("value")),
+            "local_com": com,
+        }
+    return out
 
 
 @dataclass(frozen=True)
@@ -34,13 +58,11 @@ class QuadParams:
     @classmethod
     def from_reference(cls):
         """Build :class:`QuadParams` from the shipped cf2x reference YAML/URDF."""
-        p = yaml.safe_load((Path(__file__).parent / "assets/reference_cf2x.yaml").read_text())
-        from .consistency import asset_inertials
-
+        p = yaml.safe_load((_CF2X_DIR / "cf2x.yaml").read_text())
         m = p["motor_params"]
         d = p["drag_params"]
         return cls(
-            mass=sum(r["mass"] for r in asset_inertials("quadx").values()),
+            mass=sum(r["mass"] for r in _cf2x_inertials().values()),
             kf=m["thrust_coef"],
             km=m["torque_coef"],
             total_thrust=m["total_thrust"],
@@ -119,11 +141,9 @@ class QuadDynamics:
             raise ValueError("Explicit Euler motor model requires 0 < dt <= tau")
         self.dt = dt
         self.throttle = torch.zeros((n, 4), device=device)
-        from .consistency import asset_inertials
-
-        ref = asset_inertials("quadx")
+        ref = _cf2x_inertials()
         self.arm = torch.tensor(
-            [ref[f"prop{i}_link"]["local_com"].tolist() for i in range(1, 5)], device=device
+            [ref[f"prop{i}_link"]["local_com"] for i in range(1, 5)], device=device
         )
         self.spin = torch.tensor([-1.0, -1.0, 1.0, 1.0], device=device)
 

@@ -707,11 +707,14 @@ class Falcon9Env:
             dim=-1,
         )
 
-        # --- 10. Apply to Genesis: F in world, pure body-frame torque at the CoM ---
-        F_total_world = rotate_body_to_world(quat, ft.F_body)
+        # --- 10. Apply to Genesis: both force and torque in body axes ---
+        # `local=True` asks Genesis to rotate BOTH inputs from the link frame
+        # to the world frame.  Passing the already-world force here rotated it
+        # a second time, so a tilted booster received thrust in the wrong
+        # direction.
         T_total_body = ft.T_body - I_dot_omega
         self.vehicle.apply_links_external_wrench(
-            force=F_total_world,
+            force=ft.F_body,
             torque=T_total_body,
             links_idx_local=0,
             ref=gs.link_ref_frame.link_COM,

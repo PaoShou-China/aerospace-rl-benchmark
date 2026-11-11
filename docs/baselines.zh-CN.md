@@ -9,7 +9,7 @@
 
 | 任务 | 基线 | 参考成功率 |
 |---|---|---|
-| QuadX-Waypoints | SE(3) 几何控制 + 积分配平 | 90.6%（32 副本，seed 7）；多种子协议均值 99.7%（128 副本 × seed 7/13/21；留出 seed 101 = 100%） |
+| QuadX-Waypoints | SE(3) 几何控制 + 积分配平 | 82.8%（128 副本，seed 7，shipped `baseline.json`）；多种子协议均值 99.7%（128 副本 × seed 7/13/21；留出 seed 101 = 100%，独立 `results/baseline_protocol` 工件） |
 | QuadX-Waypoints | 位置 PID → 姿态级联 | 99.2%（256 副本，seed 7，0 碰撞 / 0 出界） |
 | QuadX-Track | CV 卡尔曼滤波 + 固定偏移 SE(3) | 82.8%（128 副本，seed 21）；可见时间 90.2%，间距 0.258 m |
 | Fixedwing-Waypoints | L1 横向 + TECS 纵向自驾 | 97.0%（128 副本，seed 13；窗口在 120 s 时限前结束） |
@@ -139,7 +139,7 @@
 ### A.5 口径边界
 
 1. 没有 1024 副本的基线产物。`results/<task>/baseline.json` 元数据各异
-   （`quadx` 32 副本/seed 7，其余多为 128/seed 13，`quadx_track` seed 21）。
+   （`quadx` 128 副本/seed 7，其余多为 128/seed 13，`quadx_track` seed 21）。
    引用时必须同时注明 `num_envs`、`seed`、`env_steps`。
 2. 数据集 B 只有 seed 7；§A.2 才是跨种子方差来源。
 3. 变体 JSON 窗口不统一（`fixedwing` 1500 步，`missile` 580–900，`rocket` 1200）。

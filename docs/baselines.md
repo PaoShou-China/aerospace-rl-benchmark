@@ -10,7 +10,7 @@ touch internal state buffers.
 
 | Task | Baseline | Reference success |
 |---|---|---|
-| QuadX-Waypoints | SE(3) geometric control + integral trim | 90.6% (32 replicas, seed 7); 99.7% mean over the multi-seed protocol (128 replicas × seeds 7/13/21; held-out seed 101 = 100%) |
+| QuadX-Waypoints | SE(3) geometric control + integral trim | 82.8% (128 replicas, seed 7, shipped `baseline.json`); 99.7% mean over the multi-seed protocol (128 replicas × seeds 7/13/21; held-out seed 101 = 100%, separate `results/baseline_protocol` artifacts) |
 | QuadX-Waypoints | position PID → attitude cascade | 99.2% (256 replicas, seed 7, 0 crash / OOB) |
 | QuadX-Track | CV Kalman filter + fixed-offset SE(3) | 82.8% (128 replicas, seed 21); 90.2% visible time, 0.258 m standoff |
 | Fixedwing-Waypoints | L1 lateral + TECS longitudinal autopilot | 97.0% (128 replicas, seed 13; the window ends before the 120 s limit) |
@@ -149,7 +149,7 @@ controllers within a task only.
 ### A.5 Scope boundaries
 
 1. There are no 1024-replica baseline artifacts. `results/<task>/baseline.json`
-   metadata varies (`quadx` 32 replicas / seed 7, most tasks 128 / seed 13,
+   metadata varies (`quadx` 128 replicas / seed 7, most tasks 128 / seed 13,
    `quadx_track` seed 21). Always cite `num_envs`, `seed`, `env_steps`.
 2. Dataset B has seed 7 only; §A.2 is the cross-seed variance source.
 3. Dataset B windows are not uniform (`fixedwing` 1500 steps, `missile`
