@@ -793,10 +793,10 @@ Genesis 相机的 `fov` 是**垂直视角**，因此画幅比例改变时脚本�
 | Fixedwing-Waypoints | 项目自建 fixedwing 显示模型（放大 10×），4 个航点红色球体，历史轨迹 | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 10x」；红/蓝图例；RESULT 徽章 | 机体 |
 | Quadplane-VTOL | 项目自建 quadplane 显示模型（放大 10×），4 个航点红色球体，历史轨迹（旋翼/固定翼构型由真实姿态呈现，不伪造倾转动画） | 主指标 Altitude；Waypoints「4 red spheres」/ Body「scaled 10x」；红/蓝图例；注脚注明真实 VTOL 姿态、无合成倾转动画 | 机体（真实 VTOL 姿态） |
 | Rocket-Landing | 项目自建 rocket 显示模型（放大 16×，以机腹最低点为锚，落地时立在平台上、不穿模）+ 着陆平台 + 草地，覆盖 0–450 m 下降高度 | 主指标 Altitude；Landing pad「at origin」/ Body「scaled 16x」；草地、蓝色下降轨迹图例；注脚注明固定全局视角与放大锚点 | 火箭（抬高后的完整机体 + 引擎羽流） |
-| Missile-Intercept | 项目自建 missile 显示模型（放大 200×）+ 黄色定位点，运动学目标用红色飞机剪影标记（纯显示），交战轨迹，4 km 高度草原/天空背景；固定全局交战视角 | 主指标 Altitude（km）；Target「red aircraft marker」/ Body「scaled 200x」；黄/红图例；固定全局交战视角注脚 | 导弹 |
+| Missile-Intercept | 项目自建 missile 显示模型（放大 200×）+ 黄色定位点，运动学目标用红色飞机剪影标记（纯显示放大 10×，位姿来自真实记录），交战轨迹与烟迹，4 km 高度草原/天空背景；固定全局交战视角 | 主指标 Altitude（km）；Target「red aircraft」/ Body「scaled 200x」；黄/红图例；注脚「missile 200x · target 10x」 | 导弹 |
 | Satellite Attitude | 卫星总线（灰身 +z/-z 设备舱、+x 传感面、-x 喷管、顶部天线、±y 太阳能板），体轴系三色轴架随动，目标姿态黄色轴架，青色 CMG 框架轴柱，红色目标姿态 ghost；固定斜视角相机（3.4/-3.4/2.15，不随翻滚体旋转） | 主指标 Attitude error（deg）；Gimbal X/Y/Z（rad）键值；红/绿/蓝 = 体轴 X/Y/Z 图例；注脚说明黄/青/ghost 语义 | bus + CMG 轴 |
 | Low-Thrust Transfer | 地球球体 + 航天器盒体（示意尺寸，1 单位 = 1000 km），绿色虚线初始轨道椭圆、青色点线目标圆轨道、红/黄近/远地点标记、橙色真实状态轨迹、2000 km 比例尺；固定 45° 全局视图（相机距离 36 单位） | 主指标 Scale bar「2000 km」；1 unit = 1000 km / Frame = GCRF / Markers 键值；绿/青/橙图例；注脚注明航天器盒体非真实比例 | 航天器 |
-| Docking | 灰色目标站（放大 5×）+ ±y 太阳能板，+x 面对接环（绿边 + 中心标记 + 半透明接近轴柱），橙色追踪器（放大 5×）对接面朝向目标，中心连线虚线，真实速度箭头（10 m/m·s⁻¹），接近轨迹；固定视角对准终端接近段（约 70 m） | 主指标 Range to target；Relative speed / Success「< pos_goal」/ Fail「> range_fail」键值；灰/绿/橙图例 | chaser + station（随距离连续变焦，含太阳翼） |
+| Docking | 灰色目标站（放大 5×）+ ±y 太阳能板，对接环（绿边 + 中心标记 + 半透明接近轴柱）按记录的终端接近方向呈现，橙色追踪器（放大 5×）对接面朝向目标，中心连线虚线，细杆真实速度箭头（10 m/m·s⁻¹），接近轨迹；固定视角对准接近段 | 主指标 Range to target；Relative speed / Success「< pos_goal」/ Fail「> range_fail」键值；灰/绿/橙图例 | chaser + station（随距离连续变焦，含太阳翼） |
 | Rendezvous | 对接场景（双方放大 7×）+ LVLH 家具：径向/沿迹/迹外轴条、距离环（250/500/1000/2000 m）、绿色目标球（r=10 m）、红色禁入球（r=5 m）、量化速度箭头（100 m/m·s⁻¹）；固定 LVLH 全局视角（550 m） | 主指标 Range to target；Relative speed / Goal「10 m ball」/ Keep-out「5 m sphere」键值；绿/红/灰（250/500 m 距离环）图例 | 追踪器（随距离连续变焦至 chaser + station） |
 
 ### 7.2 使用方式

@@ -65,12 +65,17 @@ Per-task scene contents:
               apogee / inclination HUD, and a 2000 km scale bar. The satellite
               is enlarged for visibility; the true scale is the scale bar.
   docking     space-station target (pressurised core, docking node, solar
-              wings, radiators) with a docking port on the +x face (green ring
-              edge, centre marker, translucent approach-axis cylinder); the
+              wings, radiators) whose docking-port face is presented along the
+              episode's recorded terminal approach direction (green ring edge,
+              centre marker, translucent approach-axis cylinder); the
               Crew-Dragon-like chaser keeps its docking face turned toward the
               target with its own port ring + centre marker, a dashed
               centre-to-centre line of sight, a true-state velocity arrow
-              (100 m per m/s) and an approach trail. Overlay burns the live
+              (10 m per m/s, slim shaft) and an approach trail. The env has no
+              target attitude and success is just |p| < pos_goal, so the port
+              side is display furniture and the drawn chaser eases onto that
+              port as the range closes instead of snapping across the station
+              when the recorded path crosses the goal. Overlay burns the live
               range / speed (real state, metres) plus the actual success/fail
               thresholds; a labeled CLOSE-UP inset follows the chaser and
               continuously widens from a chaser close-up to a chaser+station
@@ -90,11 +95,12 @@ Per-task scene contents:
               as the range closes.
   missile     AIM-120-class missile (ogive nose, strakes, X tail fins)
               enlarged 200x + a yellow locator dot riding on it on the km-scale
-              4 km-altitude engagement, red marker for the kinematic target
-              aircraft (posed per frame from the recorded target state),
-              engagement trail, a fixed global engagement camera panned along
-              the engagement line so the missile/target pair never hides
-              behind the inset, and a missile close-up inset
+              4 km-altitude engagement, a red aircraft silhouette (10x
+              display-only) for the kinematic target (posed per frame from the
+              recorded target state), a light smoke trail, a fixed global
+              engagement camera panned along the engagement line so the
+              missile/target pair never hides behind the inset, and a missile
+              close-up inset
 Trails are preallocated small spheres; unused markers are parked far away.
 The render scene shares no physics with the sim: it is built with zero
 gravity and never stepped, entities are driven with set_pos/set_quat only.
@@ -1494,11 +1500,11 @@ def _build_missile():
 
 
 def _build_target_aircraft():
-    """Red low-poly fighter silhouette for the kinematic target marker.
+    """Red low-poly fighter silhouette for the kinematic target.
 
     At 4 km a 60 m sphere reads as a balloon; a 120 m fuselage / 160 m span
-    silhouette is still display-only but immediately reads as an aircraft
-    inside the red target ring.
+    silhouette is still display-only (10x a real fighter) but immediately reads
+    as an aircraft next to the 200x missile.
     """
     g = {}
 
@@ -1733,34 +1739,43 @@ def _build_chaser():
     return g
 
 
-def _ring(scene, radius, color, center=(0, 0, 0), n=72, plane="xy", tube=0.05):
+def _ring(scene, radius, color, center=(0, 0, 0), n=72, plane="xy", tube=0.05,
+          quat=None):
     """Continuous display ring built from exact-length cylinder segments.
 
     The previous version used a ring of spheres, which read as a dotted
     annotation. Real line segments make orbit / range / docking furniture look
     engineered instead of sketched, at the cost of a few dozen static bodies.
+    ``quat`` rotates the whole ring about its centre (e.g. to face a docking
+    port along an arbitrary axis instead of the world x axis).
     """
-    cx, cy, cz = (float(v) for v in center)
+    c = np.asarray(center, dtype=float)
     out = []
     for i in range(n):
         a0 = 2.0 * math.pi * i / n
         a1 = 2.0 * math.pi * (i + 1) / n
         if plane == "yz":
-            p0 = np.array((cx, cy + radius * math.cos(a0), cz + radius * math.sin(a0)))
-            p1 = np.array((cx, cy + radius * math.cos(a1), cz + radius * math.sin(a1)))
+            o0 = np.array((0.0, radius * math.cos(a0), radius * math.sin(a0)))
+            o1 = np.array((0.0, radius * math.cos(a1), radius * math.sin(a1)))
         elif plane == "xz":
-            p0 = np.array((cx + radius * math.cos(a0), cy, cz + radius * math.sin(a0)))
-            p1 = np.array((cx + radius * math.cos(a1), cy, cz + radius * math.sin(a1)))
+            o0 = np.array((radius * math.cos(a0), 0.0, radius * math.sin(a0)))
+            o1 = np.array((radius * math.cos(a1), 0.0, radius * math.sin(a1)))
         else:
-            p0 = np.array((cx + radius * math.cos(a0), cy + radius * math.sin(a0), cz))
-            p1 = np.array((cx + radius * math.cos(a1), cy + radius * math.sin(a1), cz))
+            o0 = np.array((radius * math.cos(a0), radius * math.sin(a0), 0.0))
+            o1 = np.array((radius * math.cos(a1), radius * math.sin(a1), 0.0))
+        if quat is not None:
+            o0 = _quat_rot(quat, o0)
+            o1 = _quat_rot(quat, o1)
+        p0 = c + o0
+        p1 = c + o1
         d = p1 - p0
         L = float(np.linalg.norm(d))
         if L < 1e-9:
             continue
-        out.append(
-            _cyl(scene, tube, L, color, tuple(0.5 * (p0 + p1)), _quat_z_to(d / L))
-        )
+        q = _quat_z_to(d / L)
+        if quat is not None:
+            q = _quat_mul_np(quat, q)
+        out.append(_cyl(scene, tube, L, color, tuple(0.5 * (p0 + p1)), q))
     return out
 
 
@@ -2031,6 +2046,13 @@ def _backdrop(task, h, w, hy):
         return cached[1]
     path = BACKDROP_DIR / name
     if not path.exists():
+        # Loud on purpose: silent fallbacks previously hid a lost plate for a
+        # whole render pass, and the space scenes came out without Earth.
+        print(
+            f"[visualize] WARNING: missing backdrop {path}; "
+            "falling back to the procedural sky",
+            file=sys.stderr,
+        )
         _BACKDROP_CACHE[key] = (band, None)
         return None
     from PIL import Image  # noqa: E402
@@ -2351,55 +2373,6 @@ def _plume_overlay(a, cam, plume):
     return a
 
 
-def _space_plate_view(sky, cam, base):
-    """Orientation/zoom parallax for the space backdrops.
-
-    A starfield/Earth limb is at infinity, so camera *translation* must not
-    move it; a close-up camera that changes look direction or fov should.
-    Apply that offset/zoom to the cached plate before compositing.
-    """
-    if cam is None or base is None:
-        return sky
-    cpos, look, _up, fov, _res = cam
-    bpos, blook, _bup, bfov, _bres = base
-    f = np.asarray(look, np.float32) - np.asarray(cpos, np.float32)
-    bf = np.asarray(blook, np.float32) - np.asarray(bpos, np.float32)
-    if np.linalg.norm(f) < 1e-6 or np.linalg.norm(bf) < 1e-6:
-        return sky
-    f /= np.linalg.norm(f)
-    bf /= np.linalg.norm(bf)
-    yaw = math.atan2(float(f[1]), float(f[0]))
-    byaw = math.atan2(float(bf[1]), float(bf[0]))
-    dyaw = (yaw - byaw + math.pi) % (2.0 * math.pi) - math.pi
-    pitch = math.asin(float(np.clip(f[2], -1.0, 1.0)))
-    bpitch = math.asin(float(np.clip(bf[2], -1.0, 1.0)))
-    dpitch = pitch - bpitch
-    h, w = sky.shape[:2]
-    fov_h = 2.0 * math.atan(math.tan(math.radians(fov) / 2.0) * w / h)
-    bfov_h = 2.0 * math.atan(math.tan(math.radians(bfov) / 2.0) * w / h)
-    dx = -dyaw / max(bfov_h, 1e-3) * w
-    dy = dpitch / max(math.radians(bfov), 1e-3) * h
-    zoom = math.tan(math.radians(bfov) / 2.0) / max(
-        math.tan(math.radians(fov) / 2.0), 1e-6
-    )
-    if abs(zoom - 1.0) < 0.005 and abs(dx) < 1.0 and abs(dy) < 1.0:
-        return sky
-    from PIL import Image  # noqa: E402
-
-    im = Image.fromarray((np.clip(sky, 0.0, 1.0) * 255.0).astype(np.uint8))
-    nw = max(w, int(round(w * zoom)))
-    nh = max(h, int(round(h * zoom)))
-    im = im.resize((nw, nh), Image.BILINEAR)
-    arr = np.asarray(im, np.float32) / 255.0
-    x0 = max(0, (nw - w) // 2)
-    y0 = max(0, (nh - h) // 2)
-    arr = arr[y0:y0 + h, x0:x0 + w]
-    if arr.shape[:2] != (h, w):
-        return sky
-    arr = np.roll(arr, (int(round(dy)), int(round(dx))), axis=(0, 1))
-    return arr
-
-
 def _post(rgb, depth, task):
     """Depth-aware sky, atmosphere, bloom, vignette and film grade.
 
@@ -2507,8 +2480,6 @@ def _post(rgb, depth, task):
         cache["plate"] = plate is not None
 
     sky = cache["sky"]
-    if not outdoor and _SPACE_BASE_CAM is not None:
-        sky = _space_plate_view(sky, _LAST_CAM, _SPACE_BASE_CAM)
     m = Image.fromarray((sky_mask * 255).astype(np.uint8))
     m = m.filter(ImageFilter.GaussianBlur(2))
     alpha = np.asarray(m, np.float32)[..., None] / 255.0
@@ -2657,7 +2628,6 @@ _CLOSEUP_ONLY = False
 _LAST_DEPTH = None
 _LAST_NORMAL = None
 _LAST_CAM = None
-_SPACE_BASE_CAM = None  # main-camera pose for the space-plate parallax
 _CLOSE_DEPTH = None
 _CLOSE_NORMAL = None
 _CLOSE_CAM = None
@@ -2855,9 +2825,7 @@ def _close_render(cam):
 
 def _post_close(rgb, task):
     """Run the close-up through the same grade/background/ground pass."""
-    global _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM, _SPACE_BASE_CAM
-    if _CLOSEUP_ONLY and _SPACE_BASE_CAM is None and _CLOSE_CAM is not None:
-        _SPACE_BASE_CAM = _CLOSE_CAM
+    global _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM
     saved = (_LAST_DEPTH, _LAST_NORMAL, _LAST_CAM)
     _LAST_DEPTH, _LAST_NORMAL, _LAST_CAM = _CLOSE_DEPTH, _CLOSE_NORMAL, _CLOSE_CAM
     try:
@@ -2875,11 +2843,6 @@ def _post_close(rgb, task):
 
 def _frame(main_rgb, close_rgb, state, label=None, depth=None):
     """Cinematic full-bleed frame: graded render, glass HUD, close-up inset."""
-    global _SPACE_BASE_CAM
-    if (not _CLOSEUP_ONLY and _SPACE_BASE_CAM is None
-            and state.get("task_key") in ("satellite", "transfer", "docking", "rendezvous")
-            and _LAST_CAM is not None):
-        _SPACE_BASE_CAM = _LAST_CAM
     if _CLOSEUP_ONLY and close_rgb is not None:
         from PIL import Image, ImageDraw  # noqa: E402
 
@@ -4208,22 +4171,35 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         ents["close_cam"] = scene.add_camera(
             res=close_res, fov=_hfov_match(45, close_res), far=300
         )
-        # 2000 km scale bar (2 scene units), below the frame center
+        # 2000 km scale bar (2 scene units), below the frame center. A real
+        # bar with end ticks and a caption: the previous five spheres were
+        # spaced one unit apart, so the "2000 km" bar actually spanned 4000 km
+        # and, with no label, read as decoration.
         view = -campos / np.linalg.norm(campos)
         right = np.cross(view, (0.0, 0.0, 1.0))
         right /= np.linalg.norm(right)
         up = np.cross(right, view)
         base = -up * 15.0 - right
-        ents["scalebar"] = [
-            _marker(scene, 0.28, (1.0, 1.0, 1.0, 0.95), base + right * i) for i in range(5)
-        ]
+        bar_a = base
+        bar_b = base + right * 2.0
+        ents["scalebar"] = _polyline(
+            scene, [bar_a, bar_b], 0.075, (1.0, 1.0, 1.0, 0.90)
+        )
+        for end in (bar_a, bar_b):
+            ents["scalebar"] += _polyline(
+                scene,
+                [end - up * 0.34, end + up * 0.34],
+                0.075,
+                (1.0, 1.0, 1.0, 0.90),
+            )
+        ents["scalebar_mid"] = tuple(0.5 * (bar_a + bar_b))
     elif task == "missile":
-        # km-scale air-intercept scene at ~4 km altitude: missile URDF (enlarged
-        # 200x, otherwise a 3 m body is sub-pixel at engagement range), red
-        # marker for the kinematic target aircraft (posed per frame from the
-        # recorded target state), a yellow locator dot riding on the missile
-        # (the narrow white airframe alone is easy to lose against the ground),
-        # engagement trail, fixed global camera.
+        # km-scale air-intercept scene at ~4 km altitude: project-authored
+        # missile model (enlarged 200x, otherwise a 3 m body is sub-pixel at
+        # engagement range), red aircraft silhouette (10x) for the kinematic
+        # target (posed per frame from the recorded target state), a yellow
+        # locator dot riding on the missile (the narrow white airframe alone is
+        # easy to lose against the ground), smoke trail, fixed global camera.
         # A far grassland plane plus the cloud sky background give the
         # engagement an unambiguous horizon instead of an empty dark frame.
         _ground(scene, 100000.0, color=GRASS_GROUND)
@@ -4233,9 +4209,10 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         ents["target"] = _model(
             scene, "target_aircraft", _build_target_aircraft(), scale=1.0
         )
-        tg = np.asarray(first["tgt"], dtype=float)
-        _ring(scene, 150.0, (1.0, 0.25, 0.22, 0.75), tuple(tg), n=72, tube=4.0)
-        _beam(scene, (tg[0], tg[1], 0.0), float(tg[2]), (1.0, 0.25, 0.22, 0.16), 6.0)
+        # NOTE: no static ground ring / drop beam here. They were pinned to the
+        # target's INITIAL position and stayed behind once the aircraft manoeuvred
+        # (up to ~1 km at 250 m/s), reading as unexplained red curves. The moving
+        # aircraft plus the dashed line of sight carry the target now.
         # plume down the -x body axis: white-hot near the nozzle, ember tail
         flame_t = np.linspace(0.0, 1.0, 40)
         flame_r = tuple(26.0 * (1.0 - t) ** 0.9 + 0.8 for t in flame_t)
@@ -4248,7 +4225,8 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         )
         # dashed line of sight: reads the closing geometry at km range
         ents["los"] = [_marker(scene, 11.0, (1.0, 0.42, 0.32, 0.85)) for _ in range(30)]
-        ents["trail"] = _trail(scene, 8.0, (0.25, 0.52, 0.92, 0.65))
+        # light warm smoke: a dark grey trail vanished against the storm plate
+        ents["trail"] = _trail(scene, 14.0, (0.76, 0.74, 0.70, 0.55))
         mid0 = 0.5 * (np.asarray(p0) + np.asarray(first["tgt"]))
         # Pan the look-at point along the engagement line (+x) so the pair sits
         # left of the bottom-right inset window for the whole approach.
@@ -4276,21 +4254,35 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         s = (3.0 if big else 1.5) * k  # station body edge [m]
         c = (2.0 if big else 1.0) * k  # chaser body edge [m]
         px = s / 2.0  # docking-port face offset from origin
+        # The station model carries its docking node on local +x. Rotate the
+        # whole station so that face is presented along the recorded terminal
+        # approach direction (extras["port_dir"], set in render()): the env has
+        # no target attitude, and a hard-coded +x port ended up on the far side
+        # of the station whenever the baseline terminated on the other side.
+        pdir = np.asarray(extras.get("port_dir") or (1.0, 0.0, 0.0), dtype=float)
+        pn = float(np.linalg.norm(pdir))
+        pdir = pdir / pn if pn > 1e-9 else np.array((1.0, 0.0, 0.0))
+        q_port = _quat_x_to(pdir)
+        ents["port_quat"] = q_port
         ents["station"] = _model(scene, "station", _build_station(), scale=s)
-        # target docking port on the +x face: ring edge, centre marker, axis
+        # target docking port: ring edge, centre marker, axis on that face
+        port = pdir * px
         rr = (0.7 if big else 0.35) * k  # port ring radius [m]
         ents["t_ring"] = _ring(
-            scene, rr, (0.2, 0.95, 0.45, 0.95), (px, 0, 0),
-            n=48, plane="yz", tube=(0.045 if big else 0.022) * k,
+            scene, rr, (0.2, 0.95, 0.45, 0.95), tuple(port),
+            n=48, plane="yz", tube=(0.045 if big else 0.022) * k, quat=q_port,
         )
         ents["t_center"] = _marker(
-            scene, (0.16 if big else 0.07) * k, (0.1, 0.95, 0.3, 1.0), (px, 0, 0)
+            scene, (0.16 if big else 0.07) * k, (0.1, 0.95, 0.3, 1.0), tuple(port)
         )
+        axis_len = 3.5 * s if big else 2.2 * k
         ents["t_axis"] = _cyl(
             scene,
             (0.12 if big else 0.05) * k,
-            3.5 * s if big else 2.2 * k,
+            axis_len,
             (0.2, 0.9, 0.4, 0.28),
+            tuple(port + pdir * (axis_len / 2.0)),
+            _quat_z_to(pdir),
         )
         # Chaser: capsule + trunk built as one model (nose on +x). The old
         # per-frame attach list is no longer needed -- the model carries the
@@ -4326,20 +4318,29 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
         )
         if extras.get("keep_out"):
             ents["keep_out"] = _marker(scene, extras["keep_out"], (0.9, 0.2, 0.2, 0.12))
-        # relative-velocity arrow pool (quantized; true speed * per-task scale)
+        # relative-velocity arrow pool (quantized; true speed * per-task scale).
+        # Slim shafts: at the 5x docking scale a 1.5 m section read as a solid
+        # yellow boom bolted to the chaser instead of a HUD velocity vector.
         if big:
             ents["arrows"] = {
-                L: _box(scene, (1.1, 1.1, L), (1.0, 0.9, 0.25, 0.95), HIDDEN)
+                L: _box(scene, (0.55, 0.55, L), (1.0, 0.9, 0.25, 0.95), HIDDEN)
                 for L in ARROW_SIZES
             }
         else:
             ents["arrows"] = {
-                L: _box(scene, (1.5, 1.5, L), (1.0, 0.9, 0.25, 0.95), HIDDEN)
+                L: _box(scene, (0.26, 0.26, L), (1.0, 0.9, 0.25, 0.95), HIDDEN)
                 for L in DOCKING_ARROW_SIZES
             }
         if big:  # rendezvous-only LVLH furniture
             # success goal ball (r = pos_goal = 10 m, the real criterion)
             ents["goal"] = _marker(scene, extras["pos_goal"], (0.2, 0.85, 0.3, 0.15))
+            # the translucent spheres read as dark blobs; bright rings make the
+            # goal and keep-out radii legible at the 550 m global view
+            _ring(scene, extras["pos_goal"], (0.20, 1.0, 0.35, 1.0),
+                  (0, 0, 0), n=64, tube=0.40)
+            if extras.get("keep_out"):
+                _ring(scene, extras["keep_out"], (1.0, 0.25, 0.20, 1.0),
+                      (0, 0, 0), n=48, tube=0.30)
             # LVLH axis bars through the target: x radial (red), y along-track
             # (green), z cross-track (blue); shorten/thin them so they read as
             # frame furniture instead of laser beams across the station
@@ -4388,6 +4389,11 @@ def build_scene(task, extras, first, close_res=CLOSE_RES):
             res=close_res, fov=_hfov_match(55, close_res), far=3000
         )
     scene.build(n_envs=1)
+    if task in ("docking", "rendezvous"):
+        # the station mesh is authored on local +x; rotate it once now that the
+        # entity exists (set_quat before build raises "RigidEntity is not built
+        # yet"). The port markers were already placed in this rotated frame.
+        ents["station"].set_quat(ents["port_quat"])
     if task == "rocket":
         # display-only: after build the visual geometry is final, so the anchor
         # offset for the 16x airframe can be measured exactly from the model
@@ -4469,9 +4475,17 @@ def _telemetry(task, frames, dt):
 
 
 def render(task, frames, extras, out_path, fps, closeup=False):
-    global _CLOSEUP_ONLY, _PLUME, _CONTACT_SHADOW, _SPACE_BASE_CAM
+    global _CLOSEUP_ONLY, _PLUME, _CONTACT_SHADOW
     _CLOSEUP_ONLY = closeup
-    _SPACE_BASE_CAM = None
+    if task in ("docking", "rendezvous"):
+        # The env records no target attitude: success is simply |p| < pos_goal
+        # around the station centre, so the chaser can arrive from any side (and
+        # in docking it usually flies through and re-approaches). Present the
+        # display port on the terminal approach side so the marked port is the
+        # face the chaser actually reaches at the end of the episode.
+        pe = np.asarray(frames[-1]["pos"], dtype=float)
+        ne = float(np.linalg.norm(pe))
+        extras["port_dir"] = tuple(pe / ne) if ne > 1e-6 else (1.0, 0.0, 0.0)
     scene, ents, cam = build_scene(
         task, extras, frames[0], close_res=CLOSE_HERO_RES if closeup else CLOSE_RES
     )
@@ -4487,17 +4501,10 @@ def render(task, frames, extras, out_path, fps, closeup=False):
     space = task in ("docking", "rendezvous")
     k = 7.0 if big else 5.0
     c_size = (2.0 if big else 1.0) * k
-    px = 0.5 * ((3.0 if big else 1.5) * k)  # target port face offset
     arrows = ents.get("arrows", {})
     link = ents.get("link", [])
     arrow_scale = VEL_ARROW_SCALE if big else DOCKING_ARROW_SCALE
     arrow_sizes = ARROW_SIZES if big else DOCKING_ARROW_SIZES
-    if space:
-        # static target approach-axis marker: translucent +x cylinder from
-        # the port face outward
-        L = 3.5 * ((3.0 if big else 1.5) * k) if big else 2.2 * k
-        ents["t_axis"].set_pos((px + L / 2.0, 0.0, 0.0))
-        ents["t_axis"].set_quat((math.sqrt(0.5), 0.0, math.sqrt(0.5), 0.0))
     terminal = extras.get("terminal")
     n_frames = len(frames)
     telem = _telemetry(task, frames, extras.get("dt", 1.0 / 30.0))
@@ -4713,9 +4720,23 @@ def render(task, frames, extras, out_path, fps, closeup=False):
             # orange chaser inside the grey station. Only the DRAWN chaser is
             # held at a minimum separation; ranges/speeds in the overlay and
             # the recorded trail stay in true metres.
-            min_sep = 0.5 * (c_size + ((3.0 if big else 1.5) * k)) + 0.4 * k
-            pd = p * max(1.0, min_sep / dist) if dist > 1e-9 else p
-            d = -pd / np.linalg.norm(pd) if dist > 1e-9 else np.array((1.0, 0.0, 0.0))
+            min_sep = 0.5 * (c_size + ((3.0 if big else 1.5) * k)) + 0.12 * k
+            pdir = np.asarray(extras.get("port_dir") or (1.0, 0.0, 0.0), dtype=float)
+            if dist < min_sep:
+                # Blend the drawn body onto the presented port instead of
+                # radially clamping it. Docking's recorded path flies through
+                # the goal, and a radial clamp made the chaser teleport from
+                # one side of the station to the other when p crossed zero.
+                w = 1.0 - dist / min_sep
+                w = w * w * (3.0 - 2.0 * w)
+                pd = p * (1.0 - w) + pdir * (min_sep * w)
+            else:
+                pd = p
+            pdn = float(np.linalg.norm(pd))
+            if pdn < 1e-9:
+                pd = pdir * min_sep
+                pdn = min_sep
+            d = -pd / pdn
             ents["body"].set_pos(tuple(map(float, pd)))
             qc = _quat_x_to(d)
             ents["body"].set_quat(qc)
@@ -5002,6 +5023,22 @@ def render(task, frames, extras, out_path, fps, closeup=False):
                 state,
                 "CLOSE-UP: spacecraft",
             )
+            if ents.get("scalebar_mid") is not None:
+                # caption the 3-D bar in screen space so its length is readable
+                pr = _project(
+                    np.asarray(ents["scalebar_mid"]) + np.array((0.0, 0.0, 0.55))
+                )
+                if pr is not None:
+                    from PIL import Image, ImageDraw  # noqa: E402
+
+                    canvas = Image.fromarray(rgb)
+                    d = ImageDraw.Draw(canvas, "RGBA")
+                    d.text(
+                        (pr[0], pr[1]), "2000 km", font=_mono(12),
+                        fill=(238, 244, 250, 235), anchor="mm",
+                        stroke_width=2, stroke_fill=(2, 7, 12, 190),
+                    )
+                    rgb = np.asarray(canvas)
             rgb_frames.append(rgb)
         elif task == "satellite":
             # main camera is the fixed global attitude view; the close-up is a
@@ -5093,8 +5130,8 @@ def render(task, frames, extras, out_path, fps, closeup=False):
                 "Missile intercept",
                 ("Altitude", f"{p[2] / 1000.0:.2f} km"),
                 _missile_rows(f["surfaces"]),
-                [("yellow", "missile + locator"), ("red", "target marker")],
-                "live fin actuation + boost-coast plume · global engagement view",
+                [("yellow", "missile + locator"), ("red", "target aircraft")],
+                "fin actuation + plume · missile 200x · target 10x",
                 fi,
                 terminal if fi == n_frames - 1 else None,
             )
