@@ -124,14 +124,14 @@ $$
 
 ## 6. 实测表现
 
-**已发布记录（当前检出）**：数据集 B（`results/fixedwing/baselines/*.json`，256 副本 / seed 7 / 1500 步窗口）与数据集 A（`results/baseline_protocol/seed*/fixedwing/baseline.json`，128 副本 × seeds 7/13/21/101 / 3600 步窗口）：
+**已发布记录（当前检出）**：数据集 B（`results/fixedwing/baselines/*.json`，128 副本 × seeds 7/13/21/101，完整 3616 步窗口）与数据集 A（`results/baseline_protocol/seed*/fixedwing/baseline.json`，128 副本 × seeds 7/13/21/101）：
 
-| 控制器 | 数据集 B 成功（完成首回合） | 数据集 B 出界 | 数据集 A 均值（4 seeds） |
+| 控制器 | 数据集 B 均值（4 seeds） | 数据集 B 出界 | 数据集 B 留出 101 |
 |---|---|---|---|
-| L1+TECS（`l1_tecs`） | 98.6%（216 完成 / 256） | 2.5% | 87.0±3.2% |
-| PID 级联（`pid_cascade`） | 91.6%（179 / 256） | 10.1% | 不在协议数据集 A |
+| L1+TECS（`l1_tecs`） | 87.0±3.2% | 2.2% | 90.6% |
+| PID 级联（`pid_cascade`） | 76.8±4.6% | 12.9% | 76.6% |
 
-数据集 B 的 1500 步窗口对回合集做右删失，故分母为完成的首回合数而非 256；数据集 A 用完整 3600 步时域，是跨方法参考。
+2026-11-12 复测使用完整时域，不再有回合被右删失；数据集 A/B 现在共享同一窗口与副本数。PID 臂的主要失败模式是 12.9% 出界：纯级联没有距离调度减速，高/远航点仍以 16 m/s 配平速度追赶，转弯半径超过 100 m 球界。
 
 **留出比较（调参时 harness，未发布）**：harness `environments/fixedwing/eval_fixedwing_pid.py benchmark`，每次 1024 副本、静风、确定性动作、seeds 2000–2003（调参均未见）；窗口内全部完成的回合均计入（scripts/eval.py 记账）。PID 增益仅在场景航线 + seed 7 上调，故下表对 PID 臂是样本外。harness 写 `results/fixedwing_pid/comparison.json`，**未发布**。
 

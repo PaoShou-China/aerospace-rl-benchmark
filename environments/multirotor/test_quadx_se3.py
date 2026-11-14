@@ -163,14 +163,17 @@ def test_allocation_exactness():
     # allocation gains exactly as assembled in QuadXSE3Baseline.actions()
     w_alloc = torch.cat(
         (ctrl.rotor_xy / (4.0 * ctrl.ARM), ctrl.mixer_t[:, 2:3] / (4.0 * ctrl.KM_KF)), -1
-    )  # (4, 3)
+    ).double()  # controller tables are float32; the probe is float64
     # physical moment arms the plant realizes: arm_y = d*ay, -arm_x = -d*ax, c*spin
-    w_arm = torch.cat((ctrl.rotor_xy * ctrl.ARM, ctrl.mixer_t[:, 2:3] * ctrl.KM_KF), -1)  # (4, 3)
+    w_arm = torch.cat((ctrl.rotor_xy * ctrl.ARM, ctrl.mixer_t[:, 2:3] * ctrl.KM_KF), -1).double()
     t = f * 0.25 + M @ w_alloc.T  # (n, 4)
     f_rec = t.sum(-1, keepdim=True)
     M_rec = t @ w_arm
-    assert (f_rec - f).abs().max() < 1e-12, "thrust allocation mismatch"
-    assert (M_rec - M).abs().max() < 1e-12, "torque allocation mismatch"
+    # The controller tables are float32 (COMPUTE_DTYPE); promoting them to the
+    # float64 probe leaves a ~1e-10 representation error.  A sign/gain bug is
+    # O(1e-3), so 1e-9 keeps the exactness check meaningful.
+    assert (f_rec - f).abs().max() < 1e-9, "thrust allocation mismatch"
+    assert (M_rec - M).abs().max() < 1e-9, "torque allocation mismatch"
     env.close()
     print("  [allocation] wrench->rotor exactness ok")
 

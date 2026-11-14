@@ -266,8 +266,8 @@ class QuadXTrackPursuitBaseline(QuadXSE3Baseline):
         V_MAX=dict(low=1.0, high=6.0, default=3.0),
     )
 
-    def __init__(self, env):
-        super().__init__(env)
+    def __init__(self, env, design=None):
+        super().__init__(env, design=design)
         d = self.device
         self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=COMPUTE_DTYPE)
         self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=COMPUTE_DTYPE)
@@ -348,8 +348,8 @@ class QuadXTrackPIDEMABaseline(QuadXSE3Baseline):
         V_MAX=dict(low=1.0, high=6.0, default=3.0),
     )
 
-    def __init__(self, env):
-        super().__init__(env)
+    def __init__(self, env, design=None):
+        super().__init__(env, design=design)
         d = self.device
         self.offset = torch.tensor(env.REF_OFFSET_XY, device=d, dtype=COMPUTE_DTYPE)
         self.home = torch.tensor((0.0, 0.0, env.ALT_REF), device=d, dtype=COMPUTE_DTYPE)

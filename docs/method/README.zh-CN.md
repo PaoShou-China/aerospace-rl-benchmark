@@ -46,7 +46,7 @@ CLI 可选的替代控制律（`scripts/baseline_eval.py --baseline <key>`）。
 | [baseline-quadx-se3.zh-CN.md](baseline-quadx-se3.zh-CN.md) | quadx | SE(3) 几何跟踪控制（Lee et al. 2010）+ 积分配平 |
 | [baseline-quadx-track-kf-pid.zh-CN.md](baseline-quadx-track-kf-pid.zh-CN.md) | quadx_track | 匀速卡尔曼滤波 + 固定偏移 SE(3) 跟踪，含公开超时保持 |
 | [baseline-fixedwing-l1-tecs.zh-CN.md](baseline-fixedwing-l1-tecs.zh-CN.md) | fixedwing | L1 横向制导（Park-Deyst-Howe 2004）+ TECS 纵向自驾 |
-| [variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py)（`QuadplaneSE3PusherBaseline`） | quadplane | 全航点任务用四旋翼 SE(3) 几何控制，推进器油门闭合机体系 x 地速误差（已验证：256 副本 / seed 7 上 87.5%，四 seed 协议 89.1%±3.1） |
+| [variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py)（`QuadplaneSE3PusherBaseline`） | quadplane | 全航点任务用四旋翼 SE(3) 几何控制，推进器油门闭合机体系 x 地速误差（已验证：128 副本 × seeds 7/13/21 上 98.2%±0.5，留出 seed 101 = 96.1%） |
 | [baseline-rocket-pdg.zh-CN.md](baseline-rocket-pdg.zh-CN.md) | rocket | ZEM/ZEV 动力下降制导、虚拟平台制动流形、脉冲伺服 |
 | [baseline-missile-apn.zh-CN.md](baseline-missile-apn.zh-CN.md) | missile | 增广比例导引映射为体轴角速率指令 |
 | [baseline-satellite-cmg-pd.zh-CN.md](baseline-satellite-cmg-pd.zh-CN.md) | satellite | 四元数 PD + Schaub-Junkins 阻尼伪逆 CMG 操纵 |
@@ -71,8 +71,8 @@ CLI 可选的替代控制律（`scripts/baseline_eval.py --baseline <key>`）。
 | rocket | `eguidance` | `RocketEGuidanceBaseline` | [variants_fw_rocket.py](../../algorithms/baselines/variants_fw_rocket.py)：Apollo E-guidance（二次多项式瞄准）中段制导 |
 | missile | `ppn` | `MissilePPNBaseline` | [variants_air.py](../../algorithms/baselines/variants_air.py)：纯追踪，无前置量 |
 | missile | `tpn` | `MissileTPNBaseline` | [variants_air.py](../../algorithms/baselines/variants_air.py)：真比例导引，无重力增广 |
-| quadplane | `hybrid_cascade` | `QuadplaneHybridBaseline` | [baselines.py](../../algorithms/baselines/baselines.py)：速度调度的旋翼/机翼模式切换，含机翼升力卸荷项；为 live-wing plant 重调（26.6% 成功率，消融臂） |
-| quadplane | `l1_wing` | `QuadplaneL1WingBaseline` | [variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py)：机翼模式 L1 横向制导 + 旋翼低速辅助（49.6%，消融臂） |
+| quadplane | `hybrid_cascade` | `QuadplaneHybridBaseline` | [baselines.py](../../algorithms/baselines/baselines.py)：速度调度的旋翼/机翼模式切换，含机翼升力卸荷项；为 live-wing plant 重调（26.8% 成功率，消融臂） |
+| quadplane | `l1_wing` | `QuadplaneL1WingBaseline` | [variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py)：机翼模式 L1 横向制导 + 旋翼低速辅助（49.2%，消融臂） |
 | satellite | `quat_pd_damped_cmg` | `SatelliteCMGBaseline` | [baseline-satellite-cmg-pd.zh-CN.md](baseline-satellite-cmg-pd.zh-CN.md)：默认臂，可通过键选择 |
 | satellite | `quat_pd_mp_pinv_cmg` | `SatelliteOrdinaryPinvBaseline` | [baseline-satellite-mp-pinv.zh-CN.md](baseline-satellite-mp-pinv.zh-CN.md)：同一 PD，普通 Moore–Penrose 伪逆操纵 |
 | satellite | `quat_pd_wpinv_cmg` | `SatelliteWeightedPinvBaseline` | [variants_space.py](../../algorithms/baselines/variants_space.py)：加权伪逆 + 零空间奇异规避操纵 |

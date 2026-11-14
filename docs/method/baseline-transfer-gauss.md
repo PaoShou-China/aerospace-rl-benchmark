@@ -132,38 +132,38 @@ leaves it at `None`.
 ## 5. Measured performance
 
 All shipped records use the `scripts/baseline_eval.py` accounting (first
-episode per replica, `env_kwargs = {}`, 166-step horizon). No 1024-replica
+episode per replica, nominal plant, 166-step horizon). No 1024-replica
 transfer artifact exists, so the older "1024 envs / seed 7 / terminal
 R ≈ 0.86" claim is withdrawn; the verified numbers are:
 
 **Protocol dataset A** (`results/baseline_protocol/seed{7,13,21,101}/transfer/baseline.json`,
-128 replicas per seed):
+128 replicas per seed, re-measured 2026-11-12):
 
 | seed | success | successes / finished | mean episode return | env steps |
 |---|---:|---:|---:|---:|
-| 7 | 100% | 128 / 128 | 0.0074 | 166 |
-| 13 | 100% | 128 / 128 | 0.0067 | 166 |
-| 21 | 97.7% | 125 / 128 | 0.0066 | 166 |
-| 101 (held-out) | 100% | 128 / 128 | 0.0074 | 166 |
+| 7 | 100% | 128 / 128 | 0.7680 | 192 |
+| 13 | 100% | 128 / 128 | 0.7686 | 192 |
+| 21 | 100% | 128 / 128 | 0.7690 | 192 |
+| 101 (held-out) | 100% | 128 / 128 | 0.7681 | 192 |
 
-Protocol seeds 7/13/21: mean **99.2% ± 1.4** (509/512), `complete = true`.
+Protocol seeds 7/13/21: mean **100.0% ± 0.0** (384/384), `complete = true`.
 Because the task-level success criterion is `R > 0` at the final orbit
-(the environment's `terminal_reward` is the telescoping episode return),
-the 21-seed failures are exactly the replicas whose final `R` was non-positive.
+(the environment's `terminal_reward` is the telescoping episode return), the
+2026-11-12 retune (aim 300 km above the nominal perigee, §6) also turns the
+previously marginal returns into a decisive 0.77.
 
 **Shipped single record.** `results/transfer/baseline.json` is the seed-13
-protocol record: 128 replicas, seed 13, 166 steps, **100% (128/128)**,
-mean episode return **0.0067**, `complete = true`.
+protocol record: 128 replicas, seed 13, 192 steps, **100% (128/128)**,
+mean episode return **0.7686**, `complete = true`.
 
 **Dataset B** (`results/transfer/baselines/gauss_tangential_seed7.json`,
-256 replicas, seed 7): **100% (256/256)**, mean episode return **0.0074**.
+128 replicas, seed 7): **100% (128/128)**, mean episode return **0.7680**.
 
-**Per-episode physical accounting** (dataset B `task_metrics`, means over
-256 episodes): pericenter raise **0.134 km**, apocenter drift
-**0.0375 km**, propellant **1.17 × 10⁻⁴ kg**. The law therefore satisfies
-`R > 0` narrowly rather than driving the perigee toward the +20 km
-reference used by the Q-law arm; its one-step greedy gate coasts unless a
-burn's predicted objective gain exceeds the propellant price.
+**Per-episode physical accounting** (dataset B `task_metrics`, 128 episodes):
+perigee raise **10.69 km**, apoapsis drift **0.178 km**, propellant
+**1.42×10⁻² kg**. The internal 8.8×10⁶ m perigee target makes the greedy law
+burn decisively past the +0 km admissibility bar, so the final `R` is well
+clear of zero instead of the pre-retune 0.007 margin.
 
 The frozen controller audit (`docs/evaluation_protocol.md`, §2) lists the
 law as fully successful and frozen as the behavior-cloning data source for

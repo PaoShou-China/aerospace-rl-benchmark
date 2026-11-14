@@ -53,11 +53,11 @@ the expert success rate.
 
 > Note: the table above is an audit snapshot frozen on 2026-10-22; its numbers
 > are not current release artifacts. Current verifiable values are in
-> [baselines.md](baselines.md):
-> `results/fixedwing/baseline.json` is 97.0% (128 replicas / seed 13 / 1500
-> steps, `complete=false`), and `results/rocket/baseline.json` is 100% (v2
-> `ever_stable_2s`). The nonexistent `pendulum` task has been removed from the
-> table — this repository registers only 10 tasks (see `ENVS` in
+> [baselines.md](baselines.md) (re-measured 2026-11-12):
+> `results/fixedwing/baseline.json` is 87.5% (128 replicas / seed 13 / full
+> 3616-step window, `complete=true`), and `results/rocket/baseline.json` is
+> 100% (v2 `ever_stable_2s`). The nonexistent `pendulum` task has been removed
+> from the table — this repository registers only 10 tasks (see `ENVS` in
 > `scripts/baseline_eval.py`).
 
 Satellite steering-law ablation (does not change the frozen baseline): with the

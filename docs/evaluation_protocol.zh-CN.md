@@ -27,7 +27,7 @@ BC warm-start 数据源 = 各任务 `conventional_controller`（BC 采集器自�
 
 结论：无"表现很差"的失控控制器；fixedwing / rocket 的天花板为控制器结构性局限（已记录成因），BC 只能继承、不会放大这些上限，报告时须与专家成功率并列呈现。
 
-> 注：上表是 2026-10-22 冻结时点的审计快照，行内数字不是当前发布产物。当前可核验值见 [baselines.zh-CN.md](baselines.zh-CN.md)：`results/fixedwing/baseline.json` 为 97.0%（128 副本 / seed 13 / 1500 步，`complete=false`），`results/rocket/baseline.json` 为 100%（v2 `ever_stable_2s`）。表中已删除不存在的 `pendulum` 任务——本仓库只注册 10 个任务（见 `scripts/baseline_eval.py` 的 `ENVS`）。
+> 注：上表是 2026-10-22 冻结时点的审计快照，行内数字不是当前发布产物。当前可核验值见 [baselines.zh-CN.md](baselines.zh-CN.md)（2026-11-12 重测）：`results/fixedwing/baseline.json` 为 87.5%（128 副本 / seed 13 / 完整 3616 步窗口，`complete=true`），`results/rocket/baseline.json` 为 100%（v2 `ever_stable_2s`）。表中已删除不存在的 `pendulum` 任务——本仓库只注册 10 个任务（见 `scripts/baseline_eval.py` 的 `ENVS`）。
 
 satellite 转向律消融（不改变冻结基线）：同一四元数 PD 与增益下，把阻尼伪逆换成普通 Moore–Penrose 伪逆，注册名 `quat_pd_mp_pinv_cmg`，评测入口 `scripts/satellite_steering_compare.py`；配置与近奇异/精确奇异场景见 [baseline-satellite-mp-pinv.zh-CN.md](method/baseline-satellite-mp-pinv.zh-CN.md)。
 

@@ -1147,31 +1147,35 @@ seeds and output directories are noted in each subsection.
 - **Training smoke** (`scripts/smoke_test.py`, 3 workers × 5 updates × 32 envs):
   10/10 passed (10 tasks × PPO), each producing `checkpoint.pt` + `run.json` +
   `config.json`.
-- **Baseline sanity** (`scripts/baseline_suite.py`, seeds=7, num_envs=256,
-  max_steps=1500): 30/30 cells passed.
+- **Baseline sanity** (`scripts/baseline_suite.py`, seeds=7,13,21,101,
+  num_envs=128, max_steps=5000): 30/30 controllers × 4 seeds = 120/120 cells
+  passed.
 
 ### 6.2 Classical baseline protocol evaluation
 
 Fixed protocol seeds `{7, 13, 21}` plus held-out seed `101`, 128 parallel replicas
-per task, first-episode evaluation (fixedwing uses the full 8000-step cap, others
-1500). The table shows each task's default controller success rate.
+per task, first-episode evaluation on the nominal plant (domain randomization
+off, calm air), full task horizon. The table shows each task's default
+controller success rate (re-measured 2026-11-12).
 
 | Task | seed 7 | seed 13 | seed 21 | seed 101 (held-out) | mean | std |
 |---|---:|---:|---:|---:|---:|---:|
-| quadx | 1.000 | 1.000 | 0.992 | 1.000 | 0.998 | 0.004 |
-| quadx_track | 0.891 | 0.859 | 0.828 | 0.820 | 0.850 | 0.032 |
-| fixedwing | 0.898 | 0.875 | 0.836 | 0.906 | 0.879 | 0.032 |
+| quadx | 1.000 | 1.000 | 0.992 | 1.000 | 0.997 | 0.005 |
+| quadx_track | 0.828 | 0.758 | 0.789 | 0.750 | 0.792 | 0.035 |
+| fixedwing | 0.898 | 0.875 | 0.836 | 0.906 | 0.870 | 0.032 |
 | rocket | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
-| missile | 0.750 | 0.711 | 0.859 | 0.703 | 0.756 | 0.072 |
-| quadplane | 0.859 | 0.891 | 0.922 | 0.852 | 0.881 | 0.032 |
+| missile | 0.750 | 0.711 | 0.867 | 0.719 | 0.776 | 0.081 |
+| quadplane | 0.977 | 0.984 | 0.984 | 0.961 | 0.982 | 0.005 |
 | satellite | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
-| transfer | 1.000 | 1.000 | 0.977 | 1.000 | 0.994 | 0.012 |
+| transfer | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
 | docking | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
 | rendezvous | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 |
 
 The held-out seed shows no systematic difference from the protocol seeds
 (paired t-test p > 0.1), indicating controller performance is not overfit to the
-training seeds.
+training seeds. `quadx_track`'s lower level reflects the task's new solid
+cylinder occluders (the baseline has no obstacle-avoidance layer); all other
+defaults are at or above 87%.
 
 ### 6.3 Reinforcement-learning main results (PPO)
 

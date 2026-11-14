@@ -184,44 +184,33 @@ observation layout is in [env-quadx-waypoints.md](env-quadx-waypoints.md).
 All numbers below are from this repository on the GPU backend, calm air (no
 `results/quadx/config.json`, so the default env kwargs), and the unbiased
 accounting of `scripts/baseline_eval.py`: one completed first episode per
-replica, no in-flight episode dropped. The only shipped quadx records are
-`baseline.json` (now 128 replicas / seed 7, 82.8%; the 32-replica SE(3)
-row in §5.1 is the historical comparison run), `baseline_cascaded_pid.json` (512
-replicas / seed 7) and the dataset-B files under `results/quadx/baselines/`
-(256 replicas / seed 7); there is no 1024-replica artifact in the checkout.
+replica, no in-flight episode dropped. The shipped records were regenerated on
+2026-11-12: `baseline.json` (128 replicas / seed 13), `baseline_cascaded_pid.json`
+(128 replicas / seed 7) and the dataset-B files under `results/quadx/baselines/`
+(128 replicas at seeds 7/13/21/101); there is no 1024-replica artifact in the
+checkout.
 
 ### 5.1 Shipped comparison records
 
 | Arm | Replicas | Success | Crash / OOB / timeout | Window | Mean return |
 |---|---|---|---|---|---|
-| SE(3) geometric (`baseline.json`, historical 32-replica run, seed 7) | 32 | 90.6% (29/32) | 0 / 0 / 3 | 800 steps | 66.09 |
-| Cascaded PID (`baseline_cascaded_pid.json`, seed 7) | 512 | **11.9%** (61/512) | 8.8% / 1.0% / 77.8% | 800 steps | 14.14 |
-| Cascaded PID (`baselines/cascaded_pid_seed7.json`, dataset B) | 256 | **99.2%** | 0 / 0 / 0.8% | 800 steps | 72.74 |
-| SE(3) geometric (`baselines/se3_geometric_seed7.json`, dataset B) | 256 | 100.0% | 0 / 0 / 0 | 648 steps | 72.86 |
-| SMC (`baselines/smc_seed7.json`, dataset B) | 256 | 100.0% | 0 / 0 / 0 | 557 steps | 72.86 |
+| SE(3) geometric (`baseline.json`, seed 13) | 128 | **100.0%** | 0 / 0 / 0 | 672 steps | 72.5 |
+| Cascaded PID (`baseline_cascaded_pid.json`, seed 7) | 128 | **100.0%** | 0 / 0 / 0 | 544 steps | 72.6 |
+| Cascaded PID (dataset B, seeds 7/13/21/101) | 128 × 4 | **100.0%** | 0 / 0 / 0 | 544 steps | 72.6 |
+| SE(3) geometric (dataset B, seeds 7/13/21/101) | 128 × 4 | 99.7% ± 0.5 | 0 / 0.7% / 0 | 672 steps | 72.5 |
+| SMC (dataset B, seeds 7/13/21/101) | 128 × 4 | 100.0% | 0 / 0 / 0 | 576 steps | 72.6 |
 
-The current shipped `baseline.json` is 128 replicas / seed 7 / 82.8%; the
-32-replica row above is the historical comparison set used for the old cascade
-data, not the metadata of the shipped baseline.
+The 2026-11-12 retune restored `K_D = 4.0` (the 2026-11-02 CPU-only sweep had
+reduced it to 2.5, which is underdamped on the GPU plant and produced 42.6%
+out-of-bounds). After the restore the cascade and the geometric arm are tied at
+100% over the four protocol seeds; the earlier 512-replica 11.9% artifact
+(77.8% timeouts) predates both the controller and plant fixes and is no longer
+shipped.
 
-The 512-replica `baseline_cascaded_pid.json` is a **stale artifact** (77.8%
-timeouts, mean 0.75 of 4 waypoints reached) that predates the controller/plant
-fixes; the same controller on the current code reaches 99.2% at 256 replicas /
-seed 7. Do not quote the 11.9% figure as a current measurement. The earlier
-"official 1024-env" values (99.12%, mean 3.99/4, 9 timeouts) are not
-reproducible from the checkout and are withdrawn; §5.3 and §6 retain the
-tuning-sweep numbers recorded when the gains were chosen, but the corresponding
-`results/quadx/cascade_pid_tests.json` is not shipped.
-
-On the current code the cascade (dataset B, 256/seed 7) is 0.8 pp behind the
-geometric arm and reaches essentially the same mean return. Its only recorded
-failures are two timeouts (0.8%): those replicas chase a boundary waypoint,
-arrive just after the 20 s episode cap, and are counted as unsuccessful. There
-are **no crashes and no out-of-bounds terminations**, i.e. the
-direction/authority behaviour is sound and the residual gap is transit time,
-which is the expected price of the plain damped position PID without the SE(3)
-arm's velocity cap and feed-forward. The SE(3) dataset-B window differs (648 vs
-800 steps) only because the cascade run must wait for its timeouts.
+On the current code the cascade reaches the same mean return and window as the
+geometric arm. The residual difference between arms is only the single 99.2%
+seed-21 episode of the SE(3) arm (a boundary-waypoint timeout), so the two
+controllers are statistically indistinguishable on this task.
 
 ### 5.2 Control-direction checks (`results/quadx/cascade_pid_tests.json`)
 
@@ -264,7 +253,7 @@ error drives the yaw rate negative toward the fixed reference.
 - **Four waypoints**, 512 envs / seed 7 during tuning: success **99.41%**,
   mean 3.994/4, 0 crashes, 0 OOB, 3 timeouts (tuning record; the harness
   artifact is not shipped). The current dataset-B record for this controller
-  is 99.2% at 256 envs / seed 7.
+  is 100% at 128 envs × seeds 7/13/21/101.
 
 
 ## 6. Tuning record
@@ -293,9 +282,8 @@ Narrative:
    deterministic, not noise).
 2. **$K_D=4.0$ (chosen).** $\zeta=1.15$; the damping term alone removes the
    overshoot. OOB falls to 0 and success rises to 99.4% at 512 envs; the
-   current dataset-B record is 99.2% at 256 envs with two residual timeouts:
-   those are slow boundary transits, not divergences. This is the
-   no-velocity-cap alternative discussed in §7.
+   current dataset-B record is 100% over 128 envs × seeds 7/13/21/101. This is
+   the no-velocity-cap alternative discussed in §7.
 3. **$K_P=4.0$.** Stiffer proportional path re-introduces 16 OOB at 512 envs
    and lowers the return; rejected.
 4. **$A_{\max}=5.0$.** More acceleration authority does not help: it converts

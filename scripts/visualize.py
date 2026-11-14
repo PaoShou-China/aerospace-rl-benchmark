@@ -73,17 +73,18 @@ Per-task scene contents:
               centre-to-centre line of sight, a true-state velocity arrow
               (10 m per m/s, slim shaft) and an approach trail. The env has no
               target attitude and success is just |p| < pos_goal, so the port
-              side is display furniture and the drawn chaser eases onto that
-              port as the range closes instead of snapping across the station
-              when the recorded path crosses the goal. Overlay burns the live
-              range / speed (real state, metres) plus the actual success/fail
-              thresholds; a labeled CLOSE-UP inset follows the chaser and
-              continuously widens from a chaser close-up to a chaser+station
-              pair frame (solar panels included) as the range closes; the
-              drawn chaser is held at a minimum separation so the enlarged
-              bodies never intersect at contact (overlay range/speed stay
-              true). The terminal banner is the env's own termination outcome
-              (SUCCESS / FAILURE / TIMEOUT)
+              side is display furniture. The recorded CWH path overshoots the
+              goal and re-approaches from the far side, so the drawn chaser is
+              re-projected onto a smooth arc around the station whenever the
+              true position is inside the hull standoff: the enlarged bodies
+              never intersect and the capsule never snaps across the hull in a
+              single frame (the overlay range / speed stay true metres).
+              Overlay burns the live range / speed (real state, metres) plus
+              the actual success/fail thresholds; a labeled CLOSE-UP inset
+              follows the chaser and continuously widens from a chaser
+              close-up to a chaser+station pair frame (solar panels included)
+              as the range closes. The terminal banner is the env's own
+              termination outcome (SUCCESS / FAILURE / TIMEOUT)
   rendezvous  docking scene plus LVLH display furniture: radial/along-track/
               cross-track axis bars, range rings (250/500/1000/2000 m, all in
               metres), green goal ball (r = 10 m, the real pos_goal), the
@@ -613,7 +614,93 @@ def _trail(scene, radius, color):
     return [_marker(scene, radius, color, (0, 0, -1e5)) for _ in range(TRAIL_MARKERS)]
 
 
-def _update_trail(markers, path, clearance=0.0, span=1.0):
+def _hull_standoff(u, s_size, c_nose, margin):
+    """Smallest centre distance keeping the chaser hull clear of the station.
+
+    ``u`` is a unit direction in the station's local frame. The station is
+    reduced to its x-z silhouette (the replay only ever needs standoffs in
+    that plane); the y extents are covered by the arc itself, which stays
+    above the solar-wing plane.
+    """
+    ux, uz = float(u[0]), float(u[2])
+    exit_local = 0.0
+    for lo, hi, hz in (
+        (-0.770, 0.5325, 0.300),  # pressurised core + forward docking node
+        (-1.045, -0.770, 0.170),  # aft module, truss and aft radiator
+        (-0.200, 0.200, 0.645),   # antenna masts and dishes
+    ):
+        t = hi / ux if ux > 1e-6 else (lo / ux if ux < -1e-6 else np.inf)
+        if abs(uz) > 1e-9:
+            t = min(t, hz / abs(uz))
+        if np.isfinite(t):
+            exit_local = max(exit_local, t)
+    return s_size * max(0.0, exit_local) + c_nose + margin
+
+
+def _space_draw_path(pts, pdir, s_size, c_nose, margin):
+    """Display-only chaser positions for the docking / rendezvous replay.
+
+    The recorded CWH path flies straight through the target: the baseline
+    overshoots the goal and re-approaches from the far side. Drawn literally
+    the capsule is buried in the station; radially clamping it teleports the
+    capsule across the hull in a single frame. Frames whose true position sits
+    inside the hull standoff are therefore re-projected onto a smooth arc
+    around the station (over its thin axis), at the standoff distance. The
+    overlaid ranges, speeds and the recorded trail stay in true metres.
+    """
+    n = len(pts)
+    rt = np.linalg.norm(pts, axis=1)
+    qp = _quat_x_to(pdir)
+    ey = np.asarray(_quat_rot(qp, (0.0, 1.0, 0.0)), dtype=float)
+    ez = np.asarray(_quat_rot(qp, (0.0, 0.0, 1.0)), dtype=float)
+
+    def to_local(v):
+        return np.array((v @ pdir, v @ ey, v @ ez))
+
+    dirs = pts / np.maximum(rt, 1e-9)[:, None]
+    hold = np.array([_hull_standoff(to_local(d), s_size, c_nose, margin) for d in dirs])
+    inside = rt < hold
+    out = [pts[i] if not inside[i] else None for i in range(n)]
+    i = 0
+    while i < n:
+        if not inside[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and inside[j + 1]:
+            j += 1
+        a0, a1 = max(0, i - 1), min(n - 1, j + 1)
+        u0, u1 = to_local(dirs[a0]), to_local(dirs[a1])
+        phi0 = math.atan2(-u0[2], u0[0])
+        phi1 = math.atan2(-u1[2], u1[0])
+        delta = (phi1 - phi0 + math.pi) % (2.0 * math.pi) - math.pi
+        if delta < 0.0 and abs(delta) > math.radians(170.0):
+            delta += 2.0 * math.pi  # flip over the station's +z side, not under
+        for k in range(i, j + 1):
+            t = (k - a0) / (a1 - a0) if a1 > a0 else 1.0
+            t = t * t * (3.0 - 2.0 * t)
+            phi = phi0 + delta * t
+            ul = np.array((math.cos(phi), u0[1] + (u1[1] - u0[1]) * t, -math.sin(phi)))
+            ul /= np.linalg.norm(ul)
+            u = pdir * ul[0] + ey * ul[1] + ez * ul[2]
+            out[k] = u * max(rt[k], _hull_standoff(ul, s_size, c_nose, margin))
+        i = j + 1
+    return np.array(out)
+
+
+def _outside_box(pts, box):
+    """Keep-mask for points outside an oriented box (docking station hull)."""
+    axis, side_y, side_z, a_lo, a_hi, b_half, c_half = box
+    pts = np.asarray(pts, dtype=float)
+    a, b, c = pts @ axis, pts @ side_y, pts @ side_z
+    inside = (
+        (a > a_lo) & (a < a_hi)
+        & (np.abs(b) < b_half) & (np.abs(c) < c_half)
+    )
+    return ~inside
+
+
+def _update_trail(markers, path, clearance=0.0, span=1.0, occlude=None):
     """Replay historical positions without covering the current entity.
 
     `clearance` (scene metres) drops the newest history points inside the
@@ -621,6 +708,8 @@ def _update_trail(markers, path, clearance=0.0, span=1.0):
     otherwise sit on the airframe, and the space chasers are 5 / 14 m long.
     `span` keeps only the newest fraction of the history, so a long vertical
     descent does not turn into a light column across the whole sky.
+    `occlude` is a predicate dropping beads that fall inside another body, so
+    the docking path does not spear visibly through the station hull.
     """
     history = path[:-1]
     if span < 1.0 and history:
@@ -628,6 +717,9 @@ def _update_trail(markers, path, clearance=0.0, span=1.0):
     if clearance > 0.0 and history and len(path) > 1:
         cur = np.asarray(path[-1], float)
         keep = np.linalg.norm(np.asarray(history, float) - cur, axis=1) > clearance
+        history = [p for p, k in zip(history, keep) if k]
+    if occlude is not None and history:
+        keep = np.asarray(occlude(np.asarray(history, float)), dtype=bool)
         history = [p for p, k in zip(history, keep) if k]
     n = min(len(history), TRAIL_MARKERS)
     if n == 0:
@@ -4501,6 +4593,27 @@ def render(task, frames, extras, out_path, fps, closeup=False):
     space = task in ("docking", "rendezvous")
     k = 7.0 if big else 5.0
     c_size = (2.0 if big else 1.0) * k
+    s_size = (3.0 if big else 1.5) * k
+    # Docking / rendezvous recorded paths run straight through the target (the
+    # baseline overshoots the goal and re-approaches), so the true-metre trail
+    # drew orange beads through the station hull. Hide beads inside the hull.
+    trail_box = None
+    space_pd = None
+    if space:
+        pdir_t = np.asarray(extras.get("port_dir") or (1.0, 0.0, 0.0), dtype=float)
+        pdir_t = pdir_t / max(1e-9, float(np.linalg.norm(pdir_t)))
+        qp = _quat_x_to(pdir_t)
+        trail_box = (
+            pdir_t,
+            np.asarray(_quat_rot(qp, (0.0, 1.0, 0.0)), dtype=float),
+            np.asarray(_quat_rot(qp, (0.0, 0.0, 1.0)), dtype=float),
+            -1.06 * s_size, 0.57 * s_size,   # local x: aft truss .. port face
+            1.77 * s_size, 0.61 * s_size,    # local y: solar wings, z: antennas
+        )
+        space_pd = _space_draw_path(
+            np.array([f["pos"] for f in frames], dtype=float),
+            pdir_t, s_size, 0.543 * c_size, 0.08 * k,
+        )
     arrows = ents.get("arrows", {})
     link = ents.get("link", [])
     arrow_scale = VEL_ARROW_SCALE if big else DOCKING_ARROW_SCALE
@@ -4630,6 +4743,10 @@ def render(task, frames, extras, out_path, fps, closeup=False):
                 _update_trail(
                     trail, path, clearance=clearance,
                     span=0.28 if task == "rocket" else 1.0,
+                    occlude=(
+                        (lambda pts: _outside_box(pts, trail_box))
+                        if trail_box is not None else None
+                    ),
                 )
         p = np.asarray(f["pos"], dtype=float)
         if task == "quadx":
@@ -4714,24 +4831,19 @@ def render(task, frames, extras, out_path, fps, closeup=False):
             # target; port ring / centre marker on that face; dashed
             # line-of-sight between the two centres, kept short of both
             # bodies so it never covers a port
-            dist = float(np.linalg.norm(p))
             # The bodies are drawn enlarged (see the overlay magnification
-            # note), so at terminal range the true separation would push the
-            # orange chaser inside the grey station. Only the DRAWN chaser is
-            # held at a minimum separation; ranges/speeds in the overlay and
-            # the recorded trail stay in true metres.
-            min_sep = 0.5 * (c_size + ((3.0 if big else 1.5) * k)) + 0.12 * k
+            # note), so the true terminal separation would push the orange
+            # chaser inside the grey station. Only the DRAWN chaser is held
+            # outside the hull (_space_draw_path); ranges/speeds in the overlay
+            # and the recorded trail stay in true metres.
+            # Clearance is measured off the authored meshes, not the nominal
+            # body cube: the station's docking node reaches 0.5325 * s_size
+            # along local +x and the chaser's nose 0.543 * c_size.
+            c_nose = 0.543 * c_size
+            s_face = 0.5325 * s_size
+            min_sep = s_face + c_nose + 0.08 * k
             pdir = np.asarray(extras.get("port_dir") or (1.0, 0.0, 0.0), dtype=float)
-            if dist < min_sep:
-                # Blend the drawn body onto the presented port instead of
-                # radially clamping it. Docking's recorded path flies through
-                # the goal, and a radial clamp made the chaser teleport from
-                # one side of the station to the other when p crossed zero.
-                w = 1.0 - dist / min_sep
-                w = w * w * (3.0 - 2.0 * w)
-                pd = p * (1.0 - w) + pdir * (min_sep * w)
-            else:
-                pd = p
+            pd = space_pd[fi]
             pdn = float(np.linalg.norm(pd))
             if pdn < 1e-9:
                 pd = pdir * min_sep
@@ -4753,8 +4865,16 @@ def render(task, frames, extras, out_path, fps, closeup=False):
                 a = 2 * math.pi * i / len(ents["c_ring"])
                 m.set_pos(tuple(front + (math.cos(a) * uu + math.sin(a) * ww) * ring_r))
             ents["c_center"].set_pos(tuple(front))
+            # dashed line of sight clipped to the empty gap between the two
+            # hulls: the old fixed 12%..88% span put the first beads inside the
+            # station's docking node once the bodies closed to docking range
+            t0 = (s_face + 0.06 * k) / pdn
+            t1 = (pdn - c_nose - 0.06 * k) / pdn
             for i, m in enumerate(link):
-                m.set_pos(tuple(pd * (0.12 + 0.76 * i / (len(link) - 1))))
+                if t1 - t0 < 0.02:
+                    m.set_pos(tuple(HIDDEN))
+                    continue
+                m.set_pos(tuple(pd * (t0 + (t1 - t0) * i / (len(link) - 1))))
             # relative-velocity arrow: pool entry with true length
             # |v| * per-task arrow scale, oriented along v
             v = f.get("vel", np.zeros(3))

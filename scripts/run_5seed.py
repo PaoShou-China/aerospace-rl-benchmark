@@ -349,6 +349,11 @@ def _baseline_job(job):
         str(out),
         "--seed",
         str(eval_seed),
+        # matched-condition comparison: the learned policies train/evaluate
+        # with the env's per-episode randomization ON, so the baselines must
+        # use it too (the plain CLI defaults to the nominal plant)
+        "--domain-randomize",
+        "on",
     ]
     if variant:
         cmd += ["--baseline", variant]

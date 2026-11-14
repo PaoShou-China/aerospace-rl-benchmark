@@ -63,11 +63,11 @@ def run_apn(env, ctrl, obs, max_steps, target_episodes):
     records = {"type": [], "kill": [], "min": []}
     orig_reset = env.reset_idx
 
-    def spy(mask):
+    def spy(mask, **kwargs):
         records["type"].append(env.t_type[mask].clone())
         records["kill"].append(env.complete[mask].clone())
         records["min"].append(env.min_distance[mask].clone())
-        orig_reset(mask)
+        orig_reset(mask, **kwargs)
 
     env.reset_idx = spy
     try:

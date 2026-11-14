@@ -19,9 +19,10 @@ Sensing (geometric, no rendering)
     the vehicle, y - p, corrupted by isotropic N(0, POS_NOISE_STD^2) per
     axis. When any condition fails the environment reports a ZERO relative
     measurement and a 0 visibility flag: the true target state is never
-    exposed. Occluders are pure line-of-sight geometry -- they carry no
-    collision dynamics, and there is no interception, contact or weapon
-    objective anywhere in the task.
+    exposed. The static cylinders are SOLID obstacles: a sphere of radius
+    UAV_COLLISION_RADIUS centred on the vehicle is tested against each
+    cylinder each control step, and an intersection is a fatal collision
+    (same termination and crash penalty as ground contact).
 
 Action Space (4,)
     Same interface as QuadX-Waypoints: policy output in [-1, 1]^4 affinely
@@ -48,7 +49,8 @@ Reward
     that the policy could exploit through observations).
 
 Episode End
-    Termination: ground contact (collision) or ||p|| > 30 m.
+    Termination: ground contact, collision with a static cylinder obstacle,
+    or ||p|| > 30 m.
     Truncation: 1200 policy steps (30 s).
     Success: recorded at the time-limit truncation when the episode's
     visible-time fraction is at least SUCCESS_VISIBLE_FRACTION and the
@@ -110,6 +112,11 @@ OCCLUDERS = (
     (-1.5, 8.5, 1.0, 6.5),
 )
 
+# The Crazyflie-class airframe is modelled as a sphere for obstacle collision:
+# the cf2x body box is 0.09 m and the propeller tips sweep a ~0.065 m radius,
+# so 0.08 m covers the airframe and prop disc with a small contact margin.
+UAV_COLLISION_RADIUS = 0.08
+
 # ---- reward -----------------------------------------------------------------
 VIS_BONUS = 0.10
 LOST_PENALTY = 0.10
@@ -134,6 +141,32 @@ def _occluded(p_uav, p_tgt):
         z_at = uz + t * dz
         blocked |= (dist2 < radius * radius) & (z_at < height)
     return blocked
+
+
+def _cylinder_collision(p, uav_radius=UAV_COLLISION_RADIUS):
+    """(n,) bool: the UAV sphere (radius ``uav_radius``) intersects any static
+    vertical cylinder in ``OCCLUDERS`` (axis along z, grounded at z=0).
+
+    Sphere-vs-finite-cylinder test: for each cylinder the closest point on its
+    surface to the UAV centre is found by clamping z to [0, h] and, when the
+    horizontal projection falls outside the radius, projecting onto the rim;
+    collision when that distance is below the UAV radius.
+    """
+    px, py, pz = p.unbind(-1)
+    hit = torch.zeros_like(px, dtype=torch.bool)
+    r2 = uav_radius * uav_radius
+    for cx, cy, radius, height in OCCLUDERS:
+        dx, dy = px - cx, py - cy
+        dxy = torch.sqrt(dx * dx + dy * dy).clamp_min(1e-9)
+        zc = pz.clamp(0.0, height)
+        inside_xy = dxy <= radius
+        # closest point on the cylindrical surface
+        sx = torch.where(inside_xy, px, cx + radius * dx / dxy)
+        sy = torch.where(inside_xy, py, cy + radius * dy / dxy)
+        sz = zc
+        dist2 = (px - sx) ** 2 + (py - sy) ** 2 + (pz - sz) ** 2
+        hit |= dist2 < r2
+    return hit
 
 
 class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
@@ -538,6 +571,8 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         p, _, v, _ = self.plant.state()
         collision = self.plant.ground_contact
         bounds = p.norm(dim=-1) > BOUNDS_RADIUS
+        cyl_hit = _cylinder_collision(p)
+        collision = collision | cyl_hit
         term = collision | bounds
         self._crash |= term & active
         self.terminated |= term & active

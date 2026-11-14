@@ -96,6 +96,15 @@ def main():
     assert bool(term[1]), "ground contact did not terminate"
     print("PASS ground-contact collision termination")
 
+    # static cylinders are solid: placing the vehicle inside one is a fatal
+    # collision (same termination path as ground contact)
+    p, q, v, w = env.plant.state()
+    p[2] = torch.tensor([4.5, 3.0, 2.5], device=env.device, dtype=torch.float64)
+    env.plant.set_state(p, q, v, w)
+    _, _, term, _, _ = env.step(torch.zeros((n, 4), device=env.device, dtype=torch.float32))
+    assert bool(term[2]), "cylinder obstacle collision did not terminate"
+    print("PASS cylinder-obstacle collision termination")
+
     # the controller only consumes the policy observation (it has no env state
     # reference beyond the public geometry constants)
     a = ctrl.actions(env.get_observations())

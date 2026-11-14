@@ -133,33 +133,41 @@ same constants are used for every reported episode.
 ## 6. Measured performance
 
 Protocol dataset B: `results/quadx_track/baselines/cv_kf_pid_seed7.json`
-(256 replicas, seed 7, one full 1200-step 30 s episode per replica). The
-controller saw only the public observation — the same 25-D vector, zero
-placeholder and visibility flag the learned policies receive. Protocol dataset
-A (128 replicas × seeds 7/13/21/101) gives 89.1 / 85.9 / 82.8 / 82.0%, mean
-85.9±3.1%; the shipped `results/quadx_track/baseline.json` is the seed-21
-member of that set (82.8%). The table below is the seed-7 dataset-B record.
+(128 replicas, seed 7, one full 1200-step 30 s episode per replica, measured
+2026-11-12). The controller saw only the public observation — the same 25-D
+vector, zero placeholder and visibility flag the learned policies receive.
+Protocol dataset A (128 replicas × seeds 7/13/21/101) gives
+82.8 / 75.8 / 78.9 / 75.0%, mean 79.2±3.5%; the shipped
+`results/quadx_track/baseline.json` is the seed-13 member of that set (75.8%).
+The table below is the seed-7 dataset-B record.
+
+The task now models the six occluder cylinders as SOLID obstacles (a sphere of
+8 cm around the airframe is tested every step, and an intersection is a crash).
+This controller has no obstacle-awareness layer, so the collision rate below is
+the honest price of flying a fixed standoff through the clutter; the pre-change
+85.9% protocol mean was measured when the cylinders were line-of-sight-only.
 
 | Metric | Value |
 |---|---|
-| Success rate (visible fraction ≥ 0.85, no crash) | 0.8516 (218/256 first episodes) |
-| Visible-time fraction | 0.9219 |
-| Lost time per episode | 2.343 s |
-| Longest dropout | 2.187 s |
-| Mean standoff tracking error (visible steps) | 0.2626 m |
-| Collision rate (ground contact) | 0.000 |
+| Success rate (visible fraction ≥ 0.85, no crash) | 0.8281 (106/128 first episodes) |
+| Visible-time fraction | 0.9435 |
+| Lost time per episode | 1.689 s |
+| Longest dropout | 1.623 s |
+| Mean standoff tracking error (visible steps) | 0.2564 m |
+| Collision rate (ground or solid cylinder) | 0.0703 |
 | Out-of-bounds rate | 0.000 |
-| Time-limit rate without success | 0.1484 |
-| Flight distance per episode | 23.80 m |
-| Loss-cause steps per episode (FOV / range / occlusion) | 28.1 / 0.0 / 65.6 |
-| Mean episode return | 85.68 |
+| Time-limit rate without success | 0.1016 |
+| Flight distance per episode | 23.22 m |
+| Loss-cause steps per episode (FOV / range / occlusion) | 13.3 / 0.0 / 54.3 |
+| Mean episode return | 87.70 |
 
-Reading: the baseline keeps the target visible 92% of the 30 s episode and holds the fixed 1.5 m
-standoff to 0.26 m RMS. All losses are geometric — the target leaves the footprint (FOV, 28 steps) or
-passes behind a static occluder (66 steps); the range window never fails, because the fixed 6 m altitude
-keeps the slant range near 6 m. The longest dropout (2.19 s) stays below the 3 s hold timeout, so the
-frozen-hold rule never fires in the reported run; the 15% of episodes that miss the 0.85 success bar do
-so by losing slightly more than 4.5 s of visibility, not by crashing.
+Reading: the baseline keeps the target visible 94.4% of the 30 s episode and holds the fixed 1.5 m
+standoff to 0.26 m RMS. All visibility losses are geometric — the target leaves the footprint
+(FOV, 13 steps) or passes behind a static occluder (54 steps); the range window never fails, because
+the fixed 6 m altitude keeps the slant range near 6 m. The longest dropout (1.62 s) stays below the
+3 s hold timeout, so the frozen-hold rule rarely fires. The 17% of seed-7 episodes that miss the
+success bar split into visibility shortfalls and 7.0% solid-cylinder collisions: the controller has
+no obstacle map, so the geometry change, not a tracking failure, is the dominant new failure mode.
 
 ## 7. Known limitations
 

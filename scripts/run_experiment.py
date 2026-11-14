@@ -75,8 +75,11 @@ def log(msg):
 # --------------------------------------------------------------------------- #
 # 训练阶段
 # --------------------------------------------------------------------------- #
-def _train_one(job):
-    """跑一次 (task, method, seed) 训练，子进程隔离防止 Genesis 崩溃传染。"""
+def _train_one(job, attempts=2):
+    """跑一次 (task, method, seed) 训练，子进程隔离防止 Genesis 崩溃传染。
+
+    失败自动重试一次：Genesis 偶发的中途崩溃（NaN/求解器异常）重跑通常可恢复。
+    """
     task, method, seed = job
     out = OUT_ROOT / task / method / f"seed_{seed}"
 
@@ -102,19 +105,30 @@ def _train_one(job):
                BC_RECIPE["lr"], BC_RECIPE["fit_critic"], str(ckpt))
         )
 
-    # 写临时 runner 脚本，避免 python -c 的引号嵌套问题
-    runner = OUT_ROOT / "_tmp_runner.py"
-    runner.write_text(_runner_template(task, method, seed, str(out), bc_src))
-    proc = subprocess.run(
-        [sys.executable, str(runner)], cwd=_ROOT,
-        capture_output=True, text=True, timeout=None,
-    )
-    runner.unlink(missing_ok=True)
+    # 写临时 runner 脚本（每次尝试重写），避免 python -c 的引号嵌套问题
+    runner = OUT_ROOT / f"_tmp_runner_{task}_{method}_{seed}.py"
+    proc = None
+    for attempt in range(1, attempts + 1):
+        runner.write_text(_runner_template(task, method, seed, str(out), bc_src))
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runner)], cwd=_ROOT,
+                capture_output=True, text=True, timeout=None,
+            )
+        finally:
+            runner.unlink(missing_ok=True)
+        if proc.returncode == 0:
+            break
+        if attempt < attempts:
+            err = proc.stderr.splitlines()[-1] if proc.stderr else "unknown"
+            log(f"RETRY {task}/{method}/seed_{seed} (第{attempt}次失败: {err[:100]})")
 
     elapsed = time.perf_counter() - t0
     if proc.returncode != 0:
-        err = proc.stderr.splitlines()[-1] if proc.stderr else "unknown"
-        log(f"FAIL  {task}/{method}/seed_{seed} ({elapsed:.0f}s) {err[:120]}")
+        # 取 stderr 最后一条非空行作为原因
+        lines = [s for s in (proc.stderr or "").splitlines() if s.strip()]
+        err = lines[-1] if lines else "unknown"
+        log(f"FAIL  {task}/{method}/seed_{seed} ({elapsed:.0f}s) {err[:150]}")
     else:
         log(f"DONE  {task}/{method}/seed_{seed} ({elapsed:.0f}s)")
 
@@ -122,7 +136,8 @@ def _train_one(job):
 def _run_bc_init(task, seed, bc_dir, ckpt):
     """生成共享 BC 初始化 checkpoint（同 task+seed 的 bc_ppo 复用）。"""
     bc_dir.mkdir(parents=True, exist_ok=True)
-    script = OUT_ROOT / "_tmp_bc_init.py"
+    # 文件名按 task+seed 唯一：两个 worker 并发时不能写同一个临时脚本
+    script = OUT_ROOT / f"_tmp_bc_init_{task}_{seed}.py"
     script.write_text(_bc_init_template(task, seed, str(bc_dir), str(ckpt)))
     proc = subprocess.run(
         [sys.executable, str(script)], cwd=_ROOT,
@@ -158,24 +173,42 @@ def _bc_init_template(task, seed, bc_dir, ckpt):
 
 
 def _runner_template(task, method, seed, out, bc_src):
-    """生成训练 runner 脚本。"""
-    # residual_ppo 需要包一层残差环境
-    env_wrapper = (
-        "('residual', {'rho': %g})" % RESIDUAL_RHO if method == "residual_ppo" else "None"
-    )
-    return (
-        "import sys, importlib\n"
-        "sys.path.insert(0, %r)\n"
-        "mod = importlib.import_module(%r)\n"
-        "mod.main(\n"
-        "    seed=%d,\n"
-        "    out_dir=%r,\n"
-        "    bc_warmstart=%s,\n"
-        "    env_wrapper=%s,\n"
-        "    performance=True,\n"
-        ")\n"
-        % (str(_ROOT), TRAIN_MODULES[task], seed, out, bc_src, env_wrapper)
-    )
+    """生成训练 runner 脚本（子进程隔离，异常写 stderr 便于定位）。"""
+    lines = [
+        "import sys, traceback",
+        "sys.path.insert(0, %r)" % str(_ROOT),
+        "from %s import main" % TRAIN_MODULES[task],
+        "",
+        "overrides = {",
+        "    'seed': %d," % seed,
+        "    'out_dir': %r," % out,
+        "    'bc_warmstart': %s," % bc_src,
+        "    'performance': True,",
+        "}",
+    ]
+    if method == "residual_ppo":
+        # 残差方法：外包基线控制器，actor 输出层零初始化（未训练时残差恒为 0）
+        lines += [
+            "from algorithms.baselines.baselines import build_baseline",
+            "from algorithms.residual.residual_env import ResidualVecEnv, zero_init_policy_output",
+            "",
+            "def _wrap(env, _task=%r):" % task,
+            "    return ResidualVecEnv(env, build_baseline(_task, env, None),",
+            "                         residual_rho=%g, task=_task)" % RESIDUAL_RHO,
+            "",
+            "overrides['env_wrapper'] = _wrap",
+            "overrides['runner_init_hook'] = zero_init_policy_output",
+        ]
+    lines += [
+        "",
+        "try:",
+        "    main(**overrides)",
+        "except BaseException:",
+        "    sys.stderr.write(traceback.format_exc())",
+        "    sys.stderr.flush()",
+        "    raise",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 # --------------------------------------------------------------------------- #

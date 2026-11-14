@@ -95,9 +95,13 @@ class QuadplaneSE3PusherBaseline(Baseline):
     MIXER_TAU = (3.50, 3.50, 0.1758)  # N·m / PID 单位（悬停线性化）
 
     # ---- SE(3) 增益 ----
+    # 2026-11-12 复测调优（128 副本，seeds 7/13/21/101，静风冻结协议）：
+    # 原 A_MAX=6.5 在 30 s / 4 航点预算下产生 11.6% 超时（waypoints 3.86）；
+    # 提到 12（约 50° 最大倾角）后均值 88.1% -> 97.7%，V_MAX 17 -> 20 减少
+    # 长途航点耗时，再高（23）无额外收益。
     KX, KV = 3.0, 3.0  # 位置 PD [1/s², 1/s]
-    V_MAX = 17.0  # 巡航速度上限 [m/s]
-    A_MAX = 6.5  # 加速度指令范数上限 [m/s²]
+    V_MAX = 20.0  # 巡航速度上限 [m/s]
+    A_MAX = 12.0  # 加速度指令范数上限 [m/s²]
     KR = (4.6, 2.8, 0.6)  # 姿态 P [N·m/rad]（yaw 受权限限制单独降）
     KOM = (2.75, 1.67, 0.8)  # 姿态 D [N·m·s/rad]
     RATE_MAX = math.pi * 0.7  # 角速度指令限幅 [rad/s]
@@ -111,8 +115,8 @@ class QuadplaneSE3PusherBaseline(Baseline):
     TUNABLE_PARAMS = {
         "KX": dict(low=1.0, high=6.0, default=3.0),
         "KV": dict(low=1.0, high=6.0, default=3.0),
-        "V_MAX": dict(low=8.0, high=25.0, default=17.0),
-        "A_MAX": dict(low=3.0, high=10.0, default=6.5),
+        "V_MAX": dict(low=8.0, high=25.0, default=20.0),
+        "A_MAX": dict(low=3.0, high=15.0, default=12.0),
         "K_PUSH": dict(low=0.02, high=0.15, default=0.06, log=True),
     }
 
@@ -303,8 +307,8 @@ class QuadplaneL1WingBaseline(Baseline):
     KD_YAW = 0.3  # yaw 角速率阻尼 [-]
     RATE_MAX = math.pi * 0.7  # 角速度指令限幅 [rad/s]
 
-    def __init__(self, env):
-        super().__init__(env)
+    def __init__(self, env, design=None):
+        super().__init__(env, design=design)
         self.g = 9.81
         self.dt = 1.0 / env.agent_hz
         d = self.device

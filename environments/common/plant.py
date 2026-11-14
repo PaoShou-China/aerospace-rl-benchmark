@@ -421,8 +421,12 @@ class TensorPlant:
         # Realistic mode resolves contact forces for every rigid vehicle, so a
         # soft touchdown/crash gets support, friction and restitution instead
         # of detection-only behaviour.  Legacy keeps constraints disabled for
-        # the published bit-for-bit benchmark.
-        self.contact_solver = bool(self.realistic)
+        # the published bit-for-bit benchmark -- except the rocket, which
+        # LANDING on the pad needs the constraint solver to turn a sub-1 m/s
+        # touchdown into the zero-velocity contact state the v2 success gate
+        # tests (detection-only made the booster sink through the pad and
+        # turned the shipped 100% PDG baseline into 0%).
+        self.contact_solver = bool(self.realistic) or vehicle == "rocket"
         with engine_configuration(backend):
             self._geometry = ConfiguredBulletClient(
                 disable_constraint=not self.contact_solver

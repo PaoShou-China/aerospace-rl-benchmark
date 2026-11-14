@@ -658,16 +658,16 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>QuadX-Waypoints</td><td class="ctrl" data-i18n="ctrl.quadx">SE(3) geometric control + integral trim</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx">128 replicas, seed 7 · protocol mean 99.7% · cascade PID arm 99.2% (256 replicas)</td></tr>
-            <tr><td>QuadX-Track</td><td class="ctrl" data-i18n="ctrl.quadx_track">CV Kalman filter + fixed-offset SE(3)</td><td class="num">82.8%</td><td class="cond" data-i18n="cond.quadx_track">128 replicas, seed 21 · visible-time fraction 90.2%</td></tr>
-            <tr><td>Fixedwing-Waypoints</td><td class="ctrl" data-i18n="ctrl.fixedwing">L1 lateral + TECS longitudinal autopilot</td><td class="num">97.0%</td><td class="cond" data-i18n="cond.fixedwing">128 replicas, seed 13 · window ends before the 120 s limit</td></tr>
-            <tr><td>Quadplane-VTOL</td><td class="ctrl" data-i18n="ctrl.quadplane">SE(3) + forward pusher</td><td class="num">89.1%</td><td class="cond" data-i18n="cond.quadplane">128 replicas, seed 13</td></tr>
+            <tr><td>QuadX-Waypoints</td><td class="ctrl" data-i18n="ctrl.quadx">SE(3) geometric control + integral trim</td><td class="num">100%</td><td class="cond" data-i18n="cond.quadx">128 replicas, seed 13 · protocol mean 99.7% · cascade PID arm 100%</td></tr>
+            <tr><td>QuadX-Track</td><td class="ctrl" data-i18n="ctrl.quadx_track">CV Kalman filter + fixed-offset SE(3)</td><td class="num">75.8%</td><td class="cond" data-i18n="cond.quadx_track">128 replicas, seed 13 · visible-time fraction 94.4% · solid occluders</td></tr>
+            <tr><td>Fixedwing-Waypoints</td><td class="ctrl" data-i18n="ctrl.fixedwing">L1 lateral + TECS longitudinal autopilot</td><td class="num">87.5%</td><td class="cond" data-i18n="cond.fixedwing">128 replicas, seed 13 · full 3616-step window</td></tr>
+            <tr><td>Quadplane-VTOL</td><td class="ctrl" data-i18n="ctrl.quadplane">SE(3) + forward pusher</td><td class="num">98.4%</td><td class="cond" data-i18n="cond.quadplane">128 replicas, seed 13 · protocol mean 98.2%</td></tr>
             <tr><td>Rocket-Landing</td><td class="ctrl" data-i18n="ctrl.rocket">ZEM/PN PDG + virtual pad + pulse servo</td><td class="num">100%</td><td class="cond" data-i18n="cond.rocket">v2 criterion · 40 Hz · settled for 2 s</td></tr>
-            <tr><td>Missile-Intercept</td><td class="ctrl" data-i18n="ctrl.missile">Augmented PN (N = 15) → body-rate commands</td><td class="num">71.1%</td><td class="cond" data-i18n="cond.missile">128 replicas, seed 13</td></tr>
+            <tr><td>Missile-Intercept</td><td class="ctrl" data-i18n="ctrl.missile">Augmented PN (N = 15) → body-rate commands</td><td class="num">71.1%</td><td class="cond" data-i18n="cond.missile">128 replicas, seed 13 · protocol mean 77.6%</td></tr>
             <tr><td>Satellite Attitude</td><td class="ctrl" data-i18n="ctrl.satellite">Quaternion PD + Schaub–Junkins damped pseudo-inverse</td><td class="num">100%</td><td class="cond" data-i18n="cond.satellite">128 replicas, seed 13</td></tr>
-            <tr><td>Low-Thrust Transfer</td><td class="ctrl" data-i18n="ctrl.transfer">Gauss one-step greedy tangential guidance</td><td class="num">100%</td><td class="cond" data-i18n="cond.transfer">128 replicas, seed 13 · terminal return 0.0067</td></tr>
-            <tr><td>Space Docking</td><td class="ctrl" data-i18n="ctrl.docking">CWH discrete LQR + shield / fuel derating</td><td class="num">100%</td><td class="cond" data-i18n="cond.docking">128 replicas, seed 13 · 263-step window</td></tr>
-            <tr><td>Space Rendezvous</td><td class="ctrl" data-i18n="ctrl.rendezvous">Two-impulse CWH ZEM/PN, recursive re-solve</td><td class="num">100%</td><td class="cond" data-i18n="cond.rendezvous">128 replicas, seed 13 · 581-step window</td></tr>
+            <tr><td>Low-Thrust Transfer</td><td class="ctrl" data-i18n="ctrl.transfer">Gauss one-step greedy tangential guidance</td><td class="num">100%</td><td class="cond" data-i18n="cond.transfer">128 replicas, seed 13 · terminal return 0.769</td></tr>
+            <tr><td>Space Docking</td><td class="ctrl" data-i18n="ctrl.docking">CWH discrete LQR + shield / fuel derating</td><td class="num">100%</td><td class="cond" data-i18n="cond.docking">128 replicas, seed 13 · 288-step window</td></tr>
+            <tr><td>Space Rendezvous</td><td class="ctrl" data-i18n="ctrl.rendezvous">Two-impulse CWH ZEM/PN, recursive re-solve</td><td class="num">100%</td><td class="cond" data-i18n="cond.rendezvous">128 replicas, seed 13 · 608-step window</td></tr>
           </tbody>
         </table>
       </div>
@@ -866,16 +866,16 @@ python scripts/baseline_eval.py quadx</code></pre>
       "ctrl.transfer": "Gauss one-step greedy tangential guidance",
       "ctrl.docking": "CWH discrete LQR + shield / fuel derating",
       "ctrl.rendezvous": "Two-impulse CWH ZEM/PN, recursive re-solve",
-      "cond.quadx": "128 replicas, seed 7 · protocol mean 99.7% · cascade PID arm 99.2% (256 replicas)",
-      "cond.quadx_track": "128 replicas, seed 21 · visible-time fraction 90.2%",
-      "cond.fixedwing": "128 replicas, seed 13 · window ends before the 120 s limit",
-      "cond.quadplane": "128 replicas, seed 13",
+      "cond.quadx": "128 replicas, seed 13 · protocol mean 99.7% · cascade PID arm 100%",
+      "cond.quadx_track": "128 replicas, seed 13 · visible-time fraction 94.4% · solid occluders",
+      "cond.fixedwing": "128 replicas, seed 13 · full 3616-step window",
+      "cond.quadplane": "128 replicas, seed 13 · protocol mean 98.2%",
       "cond.rocket": "v2 criterion · 40 Hz · settled for 2 s",
-      "cond.missile": "128 replicas, seed 13",
+      "cond.missile": "128 replicas, seed 13 · protocol mean 77.6%",
       "cond.satellite": "128 replicas, seed 13",
-      "cond.transfer": "128 replicas, seed 13 · terminal return 0.0067",
-      "cond.docking": "128 replicas, seed 13 · 263-step window",
-      "cond.rendezvous": "128 replicas, seed 13 · 581-step window",
+      "cond.transfer": "128 replicas, seed 13 · terminal return 0.769",
+      "cond.docking": "128 replicas, seed 13 · 288-step window",
+      "cond.rendezvous": "128 replicas, seed 13 · 608-step window",
       "baselines.hint": "Scroll horizontally to see all columns →",
       "baselines.note1": "Within one task, a higher rate is better. Across tasks these numbers are not a unified ranking: the environments, horizons and success criteria differ.",
       "baselines.note2": "<b>Version note.</b> The rocket v1 instantaneous rates quoted in older notes (82.8% / 84.1%) are not comparable with the v2 settled criterion: 40 Hz and two continuous seconds of pad contact, low speed and low spin.",
@@ -984,16 +984,16 @@ python scripts/baseline_eval.py quadx</code></pre>
       "ctrl.transfer": "Gauss 单步贪心切向制导",
       "ctrl.docking": "CWH 离散 LQR + 安全盾 / 燃料降额",
       "ctrl.rendezvous": "双脉冲 CWH ZEM/PN，递推重解",
-      "cond.quadx": "128 个副本，随机种子 7 · 多种子协议均值 99.7% · 级联 PID 臂 99.2%（256 个副本）",
-      "cond.quadx_track": "128 个副本，随机种子 21 · 可见时间占比 90.2%",
-      "cond.fixedwing": "128 个副本，随机种子 13 · 窗口在 120 s 上限前结束",
-      "cond.quadplane": "128 个副本，随机种子 13",
+      "cond.quadx": "128 个副本，随机种子 13 · 多种子协议均值 99.7% · 级联 PID 臂 100%",
+      "cond.quadx_track": "128 个副本，随机种子 13 · 可见时间占比 94.4% · 实体遮挡物",
+      "cond.fixedwing": "128 个副本，随机种子 13 · 完整 3616 步窗口",
+      "cond.quadplane": "128 个副本，随机种子 13 · 多种子协议均值 98.2%",
       "cond.rocket": "v2 判据 · 40 Hz · 连续停稳 2 s",
-      "cond.missile": "128 个副本，随机种子 13",
+      "cond.missile": "128 个副本，随机种子 13 · 多种子协议均值 77.6%",
       "cond.satellite": "128 个副本，随机种子 13",
-      "cond.transfer": "128 个副本，随机种子 13 · 终端返回 0.0067",
-      "cond.docking": "128 个副本，随机种子 13 · 263 步窗口",
-      "cond.rendezvous": "128 个副本，随机种子 13 · 581 步窗口",
+      "cond.transfer": "128 个副本，随机种子 13 · 终端返回 0.769",
+      "cond.docking": "128 个副本，随机种子 13 · 288 步窗口",
+      "cond.rendezvous": "128 个副本，随机种子 13 · 608 步窗口",
       "baselines.hint": "左右滑动查看全部列 →",
       "baselines.note1": "同一任务内，成功率越高越好。跨任务之间这些数字不构成统一排名：环境、时间尺度与成功判据都不同。",
       "baselines.note2": "<b>版本说明。</b>旧笔记中的火箭 v1 瞬时成功率（82.8% / 84.1%）不能与 v2 停稳判据直接比较：v2 要求 40 Hz 采样下连续 2 秒满足触垫、低速与低角速率。",

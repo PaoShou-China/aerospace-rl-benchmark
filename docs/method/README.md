@@ -48,7 +48,7 @@ those 30 distinct controllers. `--baseline` keys are shown in backticks.
 | [baseline-quadx-se3.md](baseline-quadx-se3.md) | quadx | SE(3) geometric tracking control (Lee et al. 2010) with integral trim |
 | [baseline-quadx-track-kf-pid.md](baseline-quadx-track-kf-pid.md) | quadx_track | Constant-velocity Kalman filter + fixed-offset SE(3) tracking with a public timeout hold |
 | [baseline-fixedwing-l1-tecs.md](baseline-fixedwing-l1-tecs.md) | fixedwing | L1 lateral guidance (Park-Deyst-Howe 2004) + TECS longitudinal autopilot |
-| [baselines/variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py) (`QuadplaneSE3PusherBaseline`) | quadplane | Quad-rotor SE(3) geometric control for the whole waypoint task, pusher throttle closing the body-x ground-speed error (validated: 87.5% on 256 replicas / seed 7, 89.1%±3.1 over the four-seed protocol) |
+| [baselines/variants_quadplane.py](../../algorithms/baselines/variants_quadplane.py) (`QuadplaneSE3PusherBaseline`) | quadplane | Quad-rotor SE(3) geometric control for the whole waypoint task, pusher throttle closing the body-x ground-speed error (validated: 98.2%±0.5 on 128 replicas × seeds 7/13/21, 96.1% held-out) |
 | [baseline-rocket-pdg.md](baseline-rocket-pdg.md) | rocket | ZEM/ZEV powered-descent guidance, virtual-pad braking manifold, pulse servo |
 | [baseline-missile-apn.md](baseline-missile-apn.md) | missile | Augmented proportional navigation mapped to body-rate commands |
 | [baseline-satellite-cmg-pd.md](baseline-satellite-cmg-pd.md) | satellite | Quaternion PD + Schaub-Junkins damped pseudo-inverse CMG steering |

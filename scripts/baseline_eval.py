@@ -74,6 +74,14 @@ def main():
         help="controller variant from BASELINE_VARIANTS (default: the task's registered baseline)",
     )
     parser.add_argument(
+        "--domain-randomize",
+        choices=["off", "on", "default"],
+        default="off",
+        help="domain randomization for the evaluation plant: 'off' = nominal "
+        "plant (frozen benchmark contract, default), 'on'/'default' = the "
+        "env's built-in per-episode randomization (matched-condition runs)",
+    )
+    parser.add_argument(
         "--num-cmgs",
         type=int,
         choices=(4, 6),
@@ -95,6 +103,14 @@ def main():
     cfg_path = out / "config.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     env_kwargs = dict(cfg.get("env_kwargs") or {})
+    # Frozen benchmark contract: the published classical-baseline reference is
+    # the NOMINAL plant (no per-episode parameter randomization).  Matched-
+    # condition experiments (5-seed policy-vs-baseline) opt back in with
+    # ``--domain-randomize on``.
+    if args.domain_randomize == "off":
+        env_kwargs["domain_randomize"] = False
+    else:
+        env_kwargs.pop("domain_randomize", None)
     if args.num_cmgs is not None:
         if args.vehicle != "satellite":
             parser.error("--num-cmgs is only valid for the satellite task")

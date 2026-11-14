@@ -183,11 +183,18 @@ per-contact event still drives the settle reward.
 
 | Source / protocol | Result |
 |---|---|
-| `results/rocket/baseline.json` — official `scripts/baseline_eval.py rocket`, 128 envs, seed 13, GPU, 1200 env steps (one first episode per replica) | success rate **100%** (128/128, `ever_stable_2s`), mean episode return 903.47, `complete = true` |
-| `results/rocket/baselines/zem_zev_pdg_seed7.json` — dataset B, 256 envs, seed 7, 1200 env steps | success rate **100%**, mean episode return 907.31 |
-| `results/rocket/baselines/pd_landing_seed7.json` — dataset B, 256 envs, seed 7 | success rate 100%, mean episode return 22.34 |
-| `results/rocket/baselines/eguidance_seed7.json` — dataset B, 256 envs, seed 7 | success rate 34.4%, mean episode return −3332.01 |
+| `results/rocket/baseline.json` — official `scripts/baseline_eval.py rocket`, 128 envs, seed 13, GPU, 1216 env steps (one first episode per replica) | success rate **100%** (128/128, `ever_stable_2s`), mean episode return 900.2, `complete = true` |
+| `results/rocket/baselines/zem_zev_pdg_seed7.json` — dataset B, 128 envs, seed 7, 1216 env steps | success rate **100%**, mean episode return 900.15 |
+| `results/rocket/baselines/pd_landing_seed7.json` — dataset B, 128 envs, seed 7 | success rate 100%, mean episode return 7.27 |
+| `results/rocket/baselines/eguidance_seed7.json` — dataset B, 128 envs, seed 7 | success rate 39.1%, mean episode return −3304.8 |
 | `results/rocket/pdg_test_report.json`, scenarios A–E — `rocket_pdg_test.py`, 1024 replicas, 1250-step window, seed 7, GPU (harness artifact, **not shipped**) | scenario A (random upstream ICs): SR 0.4395; pad-touch rate 0.731; touch speed p10/p50/p90 = 0.077/0.282/1.382 m/s. B (corner ICs): SR 0.3363. C/D/E (nominal z 425 m; low-z 400 m; ±3 m/s lateral drift): 0.4785 / 0.4961 / 0.4717 |
+
+The 2026-11-12 retest initially measured **0%** for all three arms: the
+2026-11-05 contact-solver disable had been applied to every vehicle, so the
+booster detected the pad but received no contact impulse, sank through it and
+failed the settle gate. The rigid contact solver is now kept ON for the rocket
+in legacy mode (`plant.py`), which restores the settled touchdown
+(`touch_speed ≈ 0.001 m/s`) and the 100% record above.
 
 The historical 60 Hz record (1024 envs, 1800 steps, success 0.8281, return
 3968.2) predates both the 40 Hz policy switch and the 2 s settle metric; it is

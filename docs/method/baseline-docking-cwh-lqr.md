@@ -147,40 +147,48 @@ with saturated axes counted in `stat_sat`.
 ## 5. Measured performance
 
 All shipped records below use the `scripts/baseline_eval.py` accounting
-(first episode per replica, `env_kwargs = {}`). They are the only
-docking numbers that can be re-verified from the checkout; the older
-"1024 envs / seed 7" claim is withdrawn because no 1024-replica artifact
-exists.
+(first episode per replica, nominal plant). They are the only docking numbers
+that can be re-verified from the checkout; the older "1024 envs / seed 7"
+claim is withdrawn because no 1024-replica artifact exists.
+
+The default arm dropped to 0.4% on 2026-11-12 when the station gained a solid
+hull: aiming the centre at the origin pushes the 0.543 m docking nose through
+the port plane, and $w_{\mathrm{vel}}=3$ also braked too late for the
+0.02 m/s² authority. The fix holds the nose on the port plane
+(`docking_standoff`) and retunes $w_{\mathrm{vel}}$ to 15, restoring 100%.
 
 **Protocol dataset A** (`results/baseline_protocol/seed{7,13,21,101}/docking/baseline.json`,
 128 replicas per seed, 500-step horizon):
 
 | seed | success | successes / finished | mean episode return | env steps |
 |---|---:|---:|---:|---:|
-| 7 | 100% | 128 / 128 | 189.32 | 264 |
-| 13 | 100% | 128 / 128 | 189.65 | 263 |
-| 21 | 100% | 128 / 128 | 190.27 | 274 |
-| 101 (held-out) | 100% | 128 / 128 | 191.10 | 274 |
+| 7 | 100% | 128 / 128 | 190.16 | 288 |
+| 13 | 100% | 128 / 128 | 190.49 | 288 |
+| 21 | 100% | 128 / 128 | 191.13 | 288 |
+| 101 (held-out) | 100% | 128 / 128 | 191.95 | 288 |
 
-Pooled protocol seeds 7/13/21: **100% (384/384)**, mean return 189.75.
+Pooled protocol seeds 7/13/21: **100% (384/384)**, mean return 190.59.
 `complete = true` in every file.
 
 **Shipped single record.** `results/docking/baseline.json` is the seed-13
-protocol record: 128 replicas, seed 13, 263 env steps, **100% (128/128)**,
-mean episode return **189.65**, `complete = true`.
+protocol record: 128 replicas, seed 13, 288 env steps, **100% (128/128)**,
+mean episode return **190.49**, `complete = true`.
 
-**Dataset B** (`results/docking/baselines/*_seed7.json`, 256 replicas, seed 7):
+**Dataset B** (`results/docking/baselines/*_seed7.json`, 128 replicas, seed 7):
 
 | arm | CLI key | success | mean return | env steps |
 |---|---|---:|---:|---:|
-| `cwh_lqr` (default) | — | 100% (256/256) | 188.62 | 274 |
-| `cwh_pole_placement` | `pole_placement` | 100% (256/256) | 189.30 | 236 |
-| `zem_zev` | `zem_zev` | 100% (256/256) | 190.06 | 313 |
+| `cwh_lqr` (default) | — | 100% (128/128) | 190.16 | 288 |
+| `cwh_pole_placement` | `pole_placement` | 88.3% (113/128) | 166.22 | 192 |
+| `zem_zev` | `zem_zev` | 100% (128/128) | 190.77 | 320 |
 
 The three arms differ only in the terminal guidance law; all use the same
 `SpaceDockingEnv`, 1 m / 0.1 m/s capture tolerance and 200 m range bound,
-so the step-count spread (236–313) is the expected difference in
-time-to-capture, not a different task.
+so the step-count spread (192–320) is the expected difference in
+time-to-capture, not a different task. `pole_placement` has no terminal
+standoff layer, so it still drives the centre to the origin and 11.7% of its
+episodes push the nose into the station hull — the expected price of the plain
+pole-placement arm under the solid-body geometry, not a tuning failure.
 
 The frozen controller audit (`docs/evaluation_protocol.md`, §2) records
 the controller as fully successful across its scenario grid and frozen as

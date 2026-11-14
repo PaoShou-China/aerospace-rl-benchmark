@@ -329,16 +329,18 @@ def cmd_report(args):
         key=lambda r: (task_order.index(r["task"]) if r["task"] in task_order else 99, -r["mean"])
     )
 
+    n_envs = max((r.get("num_envs") or 0) for runs in cells.values() for r in runs) if cells else 0
     L = [
         "# 传统（非学习）基线完整测试报告",
         "",
         "## 测试口径",
         "",
-        "- 冻结评测协议：官方 benchmark 初始分布、静风、1024 并行环境、"
-        "每个并行副本只采信**首回合**（`FirstEpisodes`，与 `scripts/baseline_eval.py` 同一记账）。",
+        "- 冻结评测协议：官方 benchmark 初始分布、静风、**标称 plant（域随机化关闭）**、"
+        f"{n_envs or 'N'} 并行环境、每个并行副本只采信**首回合**"
+        "（`FirstEpisodes`，与 `scripts/baseline_eval.py` 同一记账）。",
         "- 每个任务 × 每个控制器在协议种子 {7, 13, 21} 各跑一次，另跑留出种子 101 一次；"
         "成功率 = `completed_successes / completed_episodes`。",
-        "- 95% 区间为 pooling 三个协议种子后的 Wilson 区间（样本量 ≈ 3×1024 回合）。",
+        "- 95% 区间为 pooling 三个协议种子后的 Wilson 区间（样本量 ≈ 3×副本数 回合）。",
         "- 训练侧 `env_kwargs`（如固定翼 Dryden 风）**不继承**：基线一律静风评测。",
         "",
         "## 总表（协议种子 7/13/21 均值，附留出种子 101）",

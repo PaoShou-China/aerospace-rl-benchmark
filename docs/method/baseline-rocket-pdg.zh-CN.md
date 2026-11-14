@@ -118,11 +118,13 @@ $$
 
 | 来源 / 协议 | 结果 |
 |---|---|
-| `results/rocket/baseline.json` —— 官方 `scripts/baseline_eval.py rocket`，128 env、seed 13、GPU、1200 env 步（每副本一个首回合） | 成功率 **100%**（128/128，`ever_stable_2s`），平均回合回报 903.47，`complete=true` |
-| `results/rocket/baselines/zem_zev_pdg_seed7.json` —— 数据集 B，256 env、seed 7、1200 env 步 | 成功率 **100%**，平均回合回报 907.31 |
-| `results/rocket/baselines/pd_landing_seed7.json` —— 数据集 B，256 env、seed 7 | 成功率 100%，平均回合回报 22.34 |
-| `results/rocket/baselines/eguidance_seed7.json` —— 数据集 B，256 env、seed 7 | 成功率 34.4%，平均回合回报 −3332.01 |
+| `results/rocket/baseline.json` —— 官方 `scripts/baseline_eval.py rocket`，128 env、seed 13、GPU、1216 env 步（每副本一个首回合） | 成功率 **100%**（128/128，`ever_stable_2s`），平均回合回报 900.2，`complete=true` |
+| `results/rocket/baselines/zem_zev_pdg_seed7.json` —— 数据集 B，128 env、seed 7、1216 env 步 | 成功率 **100%**，平均回合回报 900.15 |
+| `results/rocket/baselines/pd_landing_seed7.json` —— 数据集 B，128 env、seed 7 | 成功率 100%，平均回合回报 7.27 |
+| `results/rocket/baselines/eguidance_seed7.json` —— 数据集 B，128 env、seed 7 | 成功率 39.1%，平均回合回报 −3304.8 |
 | `results/rocket/pdg_test_report.json`，场景 A–E —— `rocket_pdg_test.py`，1024 副本、1250 步窗口、seed 7、GPU（harness 产物，**未发布**） | 场景 A（上游随机初态）：SR 0.4395；平台触地率 0.731；触地速度 p10/p50/p90 = 0.077/0.282/1.382 m/s。B（角点初态）：SR 0.3363。C/D/E（名义 z 425 m；低 z 400 m；±3 m/s 横向漂移）：0.4785 / 0.4961 / 0.4717 |
+
+2026-11-12 复测最初测得三个臂全部 **0%**：2026-11-05 的“禁用接触约束求解”被应用到了所有机型，助推器虽然检测到平台却得不到接触冲量，穿过平台后无法满足停稳判据。现在 legacy 模式下的火箭保持刚体接触求解器开启（`plant.py`），恢复了稳定触地（`touch_speed ≈ 0.001 m/s`）与上表的 100% 记录。
 
 历史 60 Hz 记录（1024 env、1800 步、成功 0.8281、回报 3968.2）早于 40 Hz 策略切换与 2 s 稳定指标；与当前行不可比，仅作历史保留。
 

@@ -173,18 +173,20 @@ Small-range sweeps only (all other gains fixed):
 ## 6. Measured performance
 
 **Shipped records (current checkout).** Dataset B (`results/fixedwing/baselines/*.json`,
-256 replicas / seed 7 / 1500-step window) and dataset A
+128 replicas × seeds 7/13/21/101, the full 3616-step window) and dataset A
 (`results/baseline_protocol/seed*/fixedwing/baseline.json`, 128 replicas ×
-seeds 7/13/21/101 / 3600-step window):
+seeds 7/13/21/101):
 
-| controller | dataset B success (completed first episodes) | dataset B OOB | dataset A mean (4 seeds) |
+| controller | dataset B mean (4 seeds) | dataset B OOB | dataset B held-out 101 |
 |---|---|---|---|
-| L1+TECS (`l1_tecs`) | 98.6% (216 finished / 256) | 2.5% | 87.0±3.2% |
-| PID cascade (`pid_cascade`) | 91.6% (179 / 256) | 10.1% | not in protocol dataset A |
+| L1+TECS (`l1_tecs`) | 87.0±3.2% | 2.2% | 90.6% |
+| PID cascade (`pid_cascade`) | 76.8±4.6% | 12.9% | 76.6% |
 
-Dataset B's 1500-step window right-censors the episode set, so its denominator
-is the number of completed first episodes, not 256; dataset A uses the full
-3600-step horizon and is the cross-method reference.
+The 2026-11-12 retest uses the full horizon, so no episode is right-censored;
+dataset A and dataset B now share the same window and replica count. The PID
+arm's 12.9% out-of-bounds rate is its dominant failure mode: the plain cascade
+has no distance-scheduled speed bleed, so high/far waypoints are chased at the
+16 m/s trim speed and the turn radius exceeds the 100 m sphere.
 
 **Held-out comparison (tuning-time harness, not shipped).** Harness
 `environments/fixedwing/eval_fixedwing_pid.py benchmark`,

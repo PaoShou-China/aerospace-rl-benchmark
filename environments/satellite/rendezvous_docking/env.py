@@ -75,6 +75,21 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
     progress_weight=100.      # progress-mode shaping scale
     viol_penalty=100.         # progress-mode one-time terminal violation cost
     brake_ref=None            # progress-mode reference decel [m/s^2]; resolved in __init__
+    # Solid-body geometry for docking / rendezvous. The benchmark's target is a
+    # POINT at the origin (success |p| < 1 m), so this models the physical
+    # station as a body that hangs BEHIND the docking port: the port sits on
+    # the origin and the hull is a cylinder extending backward along the
+    # approach axis (the chaser's spawn direction, refreshed each reset as
+    # ``port_dir``). That keeps the capture envelope reachable while making a
+    # trajectory that flies through the target a genuine collision.
+    #   _step_core tests the chaser's centre AND its docking nose (the nose
+    #   leads the centre toward the station by ``chaser_nose_offset``) against
+    #   the cylinder, so an overshoot cannot tunnel through unchecked.
+    # Defaults are None (no geometry); subclasses MUST override.
+    station_body_length = None   # [m] station extent behind the port plane
+    station_body_radius = None   # [m] station radial extent (core, not wings)
+    chaser_nose_offset  = None   # [m] centre -> docking nose, true scale
+    collision_tol       = 0.05   # [m] tolerated port-plane penetration
 
     PERTURBABLE_PARAMS = {"mass": 1.0, "f_max": 1.0, "isp": 1.0}
     # Literature: chemical (hydrazine monopropellant) docking thrusters.
@@ -127,6 +142,20 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         # progress-mode reference decel: 60% of the per-axis thrust authority,
         # matching the brake profile proven feasible by the scripted-guidance check
         self.brake_ref=.6*self.f_max/self.mass if self.brake_ref is None else self.brake_ref
+        # solid-body geometry (tensorize once so step() stays a plain tensor
+        # expression, CUDA-graph safe). The per-replica port axis is a buffer
+        # refreshed from the spawn direction on every reset.
+        self._solid = self.station_body_length is not None
+        if self._solid:
+            self._body_len = torch.tensor(
+                float(self.station_body_length), dtype=COMPUTE_DTYPE, device=d)
+            self._body_r = torch.tensor(
+                float(self.station_body_radius), dtype=COMPUTE_DTYPE, device=d)
+            self._nose = torch.tensor(
+                float(self.chaser_nose_offset), dtype=COMPUTE_DTYPE, device=d)
+            self._tol = torch.tensor(
+                float(self.collision_tol), dtype=COMPUTE_DTYPE, device=d)
+        self.port_dir = torch.zeros((num_envs, 3), device=d, dtype=COMPUTE_DTYPE)
         self.max_episode_length=self.max_steps+2
         self.num_actions=3
         self.clip_actions=1.
@@ -271,6 +300,27 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         self._observe(active)
 
         dist=self.p.norm(dim=-1);speed=self.v.norm(dim=-1);f_norm=thrust.norm(dim=-1)
+        # ---- hull collision ------------------------------------------------
+        # Port-plane model: the station body is a cylinder behind the docking
+        # port (origin) along the approach axis ``port_dir``. A point is inside
+        # the hull when it is behind the port plane (by more than the contact
+        # tolerance), still within the body length, and inside the radial
+        # extent. Both the chaser's centre and its docking nose are tested so a
+        # fast overshoot cannot tunnel through with its nose re-emerging on the
+        # far side. If this task declares no geometry, hull_collision is False.
+        hull_collision = False
+        if self._solid:
+            p_hat = self.p / self.p.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+            nose = self.p - self._nose * p_hat  # docking face leads the centre
+
+            def _in_hull(q):
+                al = (q * self.port_dir).sum(-1)  # + = in front of the port
+                rad = (q - al[:, None] * self.port_dir).norm(dim=-1)
+                return ((al < -self._tol) & (al > -self._body_len)
+                        & (rad < self._body_r))
+
+            hull_collision = _in_hull(self.p) | _in_hull(nose)
+        # ---------------------------------------------------------------------
         pos_norm=self.pos_norm if self.pos_norm is not None else self.d0
         if self.reward_mode=='progress':
             # telescoping shaping on the brake-distance-augmented range; the
@@ -290,6 +340,8 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         violation=(self.fuel>=self.fuel0)|(dist>self.range_fail)
         if self.keep_out is not None:
             violation=violation|(dist<self.keep_out)
+        if isinstance(hull_collision, torch.Tensor):
+            violation=violation|hull_collision
         # Termination priority (frozen 2026-10-22): a constraint violation on
         # the terminal step is a failure, never a success. This matters for
         # rendezvous because the 5 m keep-out sphere lies INSIDE the 10 m goal
@@ -364,6 +416,12 @@ class _CWHBase(BaseEnv, ResidualActionMixin):
         self.p.copy_(torch.where(mask[:,None],p0,self.p))
         self.v.copy_(torch.where(mask[:,None],v0,self.v))
         self.d0.copy_(torch.where(mask,p0.norm(dim=-1),self.d0))
+        # approach / port axis: the docking port faces the spawn direction, so
+        # the station body hangs behind the origin on the opposite side. This
+        # is what _step_core's port-plane hull test uses each episode.
+        if self._solid:
+            p_hat0 = p0 / p0.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+            self.port_dir.copy_(torch.where(mask[:, None], p_hat0, self.port_dir))
         self.fuel.masked_fill_(mask,0)
         self.count.masked_fill_(mask,0)
         self.terminated.masked_fill_(mask,False);self.truncated.masked_fill_(mask,False)
@@ -416,6 +474,16 @@ class SpaceDockingEnv(_CWHBase):
     # docking step for ANY controller, including the registered default. 0.
     # keeps the docking reward identical to the pre-regression benchmark.
     time_penalty=0.
+    # Solid-body geometry: the docking port sits at the origin and the station
+    # hangs behind it on the approach side (see _CWHBase). Values are the
+    # authored station mesh at its 1.5 m design scale (reverse of the 5x
+    # display magnification): body length 2.37 m behind the port, radial extent
+    # ~1.0 m (pressurised core + docking node; the thin solar wings are not
+    # part of the capture corridor), chaser nose 0.543 m ahead of centre.
+    station_body_length = 2.37
+    station_body_radius = 1.0
+    chaser_nose_offset  = 0.543
+    collision_tol       = 0.05
     # conventional controller: CWH-LQR terminal approach with range shield and
     # capture net (baselines.py; exact symplectic discretization of the plant)
     conventional_controller=DockingCWHLQRBaseline
@@ -452,6 +520,15 @@ class SpaceRendezvousEnv(_CWHBase):
     fuel0=4.                  # ~5.9 kg max over 1000 steps; same ~68% full-thrust rescaling
     keep_out=5.
     keep_out_penalty=10.
+    # Solid-body geometry: the docking port sits at the origin and the station
+    # hangs behind it on the approach side (see _CWHBase). Rendezvous chaser is
+    # 2x docking (k=7 vs 5, 3.0 vs 1.5 m design scale): body 4.73 m behind the
+    # port, radial extent 2.0 m, nose 1.086 m ahead of centre. keep_out=5 m
+    # already keeps the approach clear of the hull; this check is the backstop.
+    station_body_length = 4.73
+    station_body_radius = 2.0
+    chaser_nose_offset  = 1.086
+    collision_tol       = 0.05
     pos_norm=None   # per-episode d0
     vel_norm=1.
     reward_mode='progress'

@@ -145,11 +145,11 @@ Cumulative clipped-command fractions (total thrust, per-rotor, rate) are accumul
 | Protocol | Source | Result |
 |---|---|---|
 | Protocol dataset A (128 replicas × seeds 7/13/21/101, one first episode per replica) | `results/baseline_protocol/seed*/quadx/baseline.json` | seeds 100.0 / 100.0 / 99.2 / 100.0%; mean 99.7±0.5% over 384 episodes |
-| Protocol dataset B (256 replicas, seed 7) | `results/quadx/baselines/se3_geometric_seed7.json` | 100% success, mean episode return 72.86 |
-| Current shipped record (128 envs, seed 7, 800-step window) | `results/quadx/baseline.json` | 106/128 first episodes successful (82.8%), `complete = true` |
+| Protocol dataset B (128 replicas × 4 seeds) | `results/quadx/baselines/se3_geometric_seed*.json` | 99.7±0.5% mean, mean episode return 72.5 |
+| Current shipped record (128 envs, seed 13, 672-step window) | `results/quadx/baseline.json` | 128/128 first episodes successful (100%), `complete = true` |
 | Historical 32-env record (seed 7, 800-step window) | historical `baseline.json` | 29/32 first episodes successful (success rate 0.906), mean episode return 66.09 |
 
-The current shipped `results/quadx/baseline.json` is the 128-env / 82.8%
+The current shipped `results/quadx/baseline.json` is the 128-env / seed-13
 record; the 32-env row is the historical smoke-scale record. The 99.7% figure
 is the four-seed protocol dataset A (128 envs × seeds 7/13/21/101), not the
 single shipped record. Older 1024-env numbers (e.g. 1024/1024, return 70.91,

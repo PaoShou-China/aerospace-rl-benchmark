@@ -165,16 +165,12 @@ All values from `algorithms/baselines/fixedwing_autopilot.json` (config name `l1
 | Frozen-protocol tuning snapshot (harness `environments/fixedwing/eval_fixedwing_autopilot.py`: 1024 envs, 3700-step windows > 3600-step horizon; train seed 7, dev seeds 1000–1003, test seeds 2000–2003) | recorded 2026-10-22, after the documented 21.3% → 74.9% tuning iteration; **not a shipped artifact** | ≈ 74.6% train / 74.4% dev / 73.1% test |
 | Tuning record of the shipped config (`pitch_up_max_deg` 10 → 16 in the 2026-10-22 sweep) | comment field of `fixedwing_autopilot.json` | out-of-bounds 23.9% → 1.8% at 0.0 crash rate; 18° measured 94.9% vs 94.7% at 16° (16° kept for stall margin) |
 | Protocol dataset A (128 replicas × seeds 7/13/21/101, 3600-step window) | `results/baseline_protocol/seed*/fixedwing/baseline.json` | seeds 89.8 / 87.5 / 83.6 / 90.6%; mean 87.0±3.2% over 384 episodes |
-| Dataset B, 256 replicas / seed 7, 1500-step window | `results/fixedwing/baselines/l1_tecs_seed7.json` | 98.6% of 216 **completed first episodes** (not 256), mean return 230.09, `complete = false`; OOB 2.5% |
-| Shipped single record | `results/fixedwing/baseline.json` (128 replicas, seed 13, 1500-step window) | 97.0% of 99 completed first episodes, mean return 228.23, `complete = false` |
+| Dataset B, 128 replicas × seeds 7/13/21/101, full 3616-step window | `results/fixedwing/baselines/l1_tecs_seed*.json` | 87.0±3.2% mean, mean return 208.84, `complete = true`; OOB 2.2% |
+| Shipped single record | `results/fixedwing/baseline.json` (128 replicas, seed 13, 3616-step window) | 87.5% (112/128 first episodes), mean return 209.9, `complete = true` |
 
-The 1500-step records are **right-censored**: replicas that need more than 1500
-steps to finish their first episode are excluded from the success denominator
-(216/237/179 finished for `l1_tecs` / `nlgl_tecs` / `pid_cascade`), so their
-success rates are not directly comparable with the full-horizon dataset-A
-values. The `complete = false` flag records exactly that. Use dataset A for
-cross-method comparisons and treat the 1500-step rows as short-window
-controller rankings.
+The 2026-11-12 retest uses the full horizon for every cell, so the old
+1500-step right-censoring no longer applies; dataset A and dataset B share the
+same replica count and window.
 
 ## 6. Known limitations
 

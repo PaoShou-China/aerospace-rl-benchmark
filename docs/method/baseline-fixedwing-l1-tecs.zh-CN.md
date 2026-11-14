@@ -119,10 +119,10 @@ a_1=k_\theta(\theta^{\mathrm{cmd}}-\theta)-k_{d,\theta}(\omega_{b,y}-q_{\mathrm{
 | 冻结协议调参快照（harness `environments/fixedwing/eval_fixedwing_autopilot.py`：1024 env、3700 步窗口 > 3600 步时域；训练 seed 7，dev seeds 1000–1003，test seeds 2000–2003） | 2026-10-22 记录，在 21.3% → 74.9% 调参迭代之后；**非发布产物** | 约 74.6% 训练 / 74.4% dev / 73.1% test |
 | 发布配置的调参记录（2026-10-22 扫描中 `pitch_up_max_deg` 10 → 16） | `fixedwing_autopilot.json` 注释 | 出界 23.9% → 1.8%，坠毁率 0.0；18° 实测 94.9% vs 16° 94.7%（保留 16° 以留失速裕度） |
 | 协议数据集 A（128 副本 × seeds 7/13/21/101，3600 步窗口） | `results/baseline_protocol/seed*/fixedwing/baseline.json` | seeds 89.8 / 87.5 / 83.6 / 90.6%；384 回合均值 87.0±3.2% |
-| 数据集 B，256 副本 / seed 7，1500 步窗口 | `results/fixedwing/baselines/l1_tecs_seed7.json` | 216 个**完成首回合**中 98.6%（非 256），平均回报 230.09，`complete=false`；出界 2.5% |
-| 已发布单记录 | `results/fixedwing/baseline.json`（128 副本、seed 13、1500 步窗口） | 99 个完成首回合中 97.0%，平均回报 228.23，`complete=false` |
+| 数据集 B，128 副本 × seeds 7/13/21/101，完整 3616 步窗口 | `results/fixedwing/baselines/l1_tecs_seed*.json` | 均值 87.0±3.2%，平均回报 208.84，`complete=true`；出界 2.2% |
+| 已发布单记录 | `results/fixedwing/baseline.json`（128 副本、seed 13、3616 步窗口） | 87.5%（112/128 首回合），平均回报 209.9，`complete=true` |
 
-1500 步记录为**右删失**：首回合超过 1500 步未完成的副本被排除出成功分母（`l1_tecs` / `nlgl_tecs` / `pid_cascade` 分别 216/237/179 完成），故成功率不可直接与全时域数据集 A 比较；`complete=false` 正是记录这一点。跨方法比较用数据集 A，1500 步行视为短窗口控制器排名。
+2026-11-12 复测对每个单元使用完整时域，旧的 1500 步右删失不再适用；数据集 A/B 现在共享同一副本数与窗口。
 
 ## 6. 已知局限
 
