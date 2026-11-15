@@ -1,0 +1,133 @@
+{
+  "KXMR": {
+    "2018": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2018-01-01T00:00Z&ets=2019-01-01T00:00Z&format=comma",
+      "csv_sha256": "1a3a6541f684936b23366789e41444faf15bc7e4c61d3ac6afa2e454f018169e"
+    },
+    "2019": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2019-01-01T00:00Z&ets=2020-01-01T00:00Z&format=comma",
+      "csv_sha256": "76b5753eeab243895a1c280e5527001e1839abd35f4da84f8a095ab1ca95758c"
+    },
+    "2020": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2020-01-01T00:00Z&ets=2021-01-01T00:00Z&format=comma",
+      "csv_sha256": "29e7440d485a844de30f56506164ce73256d6bb3ff0b13970fe257ee78750a86"
+    },
+    "2021": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2021-01-01T00:00Z&ets=2022-01-01T00:00Z&format=comma",
+      "csv_sha256": "a03281bc2e8691b21d3d2125c82e72bc80913c8d67216456d8513f4abf4e515b"
+    },
+    "2022": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2022-01-01T00:00Z&ets=2023-01-01T00:00Z&format=comma",
+      "csv_sha256": "d80d4563c02c388e947269f64109320315092a88554ff9e0c2a8bf69ec78199c"
+    },
+    "2023": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2023-01-01T00:00Z&ets=2024-01-01T00:00Z&format=comma",
+      "csv_sha256": "233a8e7a079872e7079974583ddc6278ab492e9d98f40ce2718c7e974aa5d28b"
+    },
+    "2024": {
+      "url": "https://mesonet.agron.iastate.edu/cgi-bin/request/raob.py?station=KXMR&sts=2024-01-01T00:00Z&ets=2025-01-01T00:00Z&format=comma",
+      "csv_sha256": "f9b5ce63f00f433f5bbda5dcb7464617f93185b19b304c13f09b9aec63e70622"
+    }
+  },
+  "CPER": {
+    "2024-03-25": {
+      "utc_start": "2024-03-25 02:00:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-03-25/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-03-25.l0p.h5.gz",
+      "upper_wind": "KCYS VAD",
+      "sonic_sha256": "0ff88fdc3ede2d6476b80c62d3870330059f9680cde617012dae6596a6bc9329",
+      "radar_product": "CYS_NVW_2024_03_25_01_49_29"
+    },
+    "2024-04-06": {
+      "utc_start": "2024-04-06 18:54:45",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-04-06/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-04-06.l0p.h5.gz",
+      "upper_wind": "KCYS VAD",
+      "sonic_sha256": "76d6942a54472b15c4fd12cf5d6c7bf07648856e64a5366fc88dfd1f5edc72fd",
+      "radar_product": "CYS_NVW_2024_04_06_18_43_51"
+    },
+    "2024-04-15": {
+      "utc_start": "2024-04-15 22:05:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-04-15/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-04-15.l0p.h5.gz",
+      "upper_wind": "NOAA HRRR analysis",
+      "sonic_sha256": "3232c7eb02a0ca1b8e432d6affb677d478ea92b7468c08427431e4641d5ca1bf",
+      "analysis_utc": "2024-04-15T22:00:00+00:00"
+    },
+    "2024-04-30": {
+      "utc_start": "2024-04-30 14:31:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-04-30/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-04-30.l0p.h5.gz",
+      "upper_wind": "NOAA HRRR analysis",
+      "sonic_sha256": "87e052c7fcc7f7a1ef805517da5aeddb3f607e24f9a300c340ec0eff2af963aa",
+      "analysis_utc": "2024-04-30T14:00:00+00:00"
+    },
+    "2025-03-14": {
+      "utc_start": "2025-03-14 19:40:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2025-03-14/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2025-03-14.l0p.h5.gz",
+      "upper_wind": "NOAA HRRR analysis",
+      "sonic_sha256": "0aa8c539f06f5c13a990d669e6c39c05555f6f9cc72b1f0dccc49ef9ee8e2695",
+      "analysis_utc": "2025-03-14T19:00:00+00:00"
+    },
+    "2025-04-09": {
+      "utc_start": "2025-04-09 21:56:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2025-04-09/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2025-04-09.l0p.h5.gz",
+      "upper_wind": "NOAA HRRR analysis",
+      "sonic_sha256": "a2ce4c8c7c18a3bb8e3cc91f4efb7993ff0773f4fd761fde332db7e5f55293a8",
+      "analysis_utc": "2025-04-09T21:00:00+00:00"
+    },
+    "2025-04-21": {
+      "utc_start": "2025-04-21 21:11:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2025-04-21/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2025-04-21.l0p.h5.gz",
+      "upper_wind": "NOAA HRRR analysis",
+      "sonic_sha256": "f49f47f5bbd1701a717e2e812a1f652df06f3b775caba6ed2043111f0aa3d85c",
+      "analysis_utc": "2025-04-21T21:00:00+00:00"
+    },
+    "2025-05-14": {
+      "utc_start": "2025-05-14 21:04:00",
+      "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2025-05-14/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2025-05-14.l0p.h5.gz",
+      "upper_wind": "NOAA HRRR analysis",
+      "sonic_sha256": "74d0a27e86147360771e074a47f8b1dba5e0c63013f62381c62d86441e1437c5",
+      "analysis_utc": "2025-05-14T21:00:00+00:00"
+    }
+  },
+  "near_surface_calibration": {
+    "station": "NOAA USCRN Nunn 7 NNE (94074), 1.5 m",
+    "reference": "NEON CPER, 8.32 m",
+    "ratio": 0.6256773560234744,
+    "training_days": {
+      "2024-02-12": {
+        "uscrn_url": "https://mesonet.agron.iastate.edu/cgi-bin/request/uscrn.py?stations=94074&sts=2024-02-12T00%3A00%3A00%2B00%3A00&ets=2024-02-13T00%3A01%3A00%2B00%3A00&what=txt&delim=comma",
+        "uscrn_sha256": "5268301de746953235bb254e8476bf066800b0f525c5480d84791330c936e419",
+        "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-02-12/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-02-12.l0p.h5.gz",
+        "sonic_sha256": "bf4f403d1af8e48ffe0fdff20d34058f044bdc16a3e3f4fcbbefd97dfc9ff907"
+      },
+      "2024-02-26": {
+        "uscrn_url": "https://mesonet.agron.iastate.edu/cgi-bin/request/uscrn.py?stations=94074&sts=2024-02-26T00%3A00%3A00%2B00%3A00&ets=2024-02-27T00%3A01%3A00%2B00%3A00&what=txt&delim=comma",
+        "uscrn_sha256": "acd243a866a8a484e9ad2480ab1cbbce21201ed180fe5675e9e873190a193e5a",
+        "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-02-26/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-02-26.l0p.h5.gz",
+        "sonic_sha256": "1397bd7ee6676d14012cec5462dece4287a9c375b59f5601fd9ca53208857495"
+      },
+      "2024-03-02": {
+        "uscrn_url": "https://mesonet.agron.iastate.edu/cgi-bin/request/uscrn.py?stations=94074&sts=2024-03-02T00%3A00%3A00%2B00%3A00&ets=2024-03-03T00%3A01%3A00%2B00%3A00&what=txt&delim=comma",
+        "uscrn_sha256": "e8a60fcdd1bec93b86f642744f5d097689ea76fdea13fa8d5a196bc4e1d5a16f",
+        "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-03-02/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-03-02.l0p.h5.gz",
+        "sonic_sha256": "5546cf5a9041c4115d7f17cc0247271d8aabb18cf144c126a50a19320db894f6"
+      },
+      "2024-03-25": {
+        "uscrn_url": "https://mesonet.agron.iastate.edu/cgi-bin/request/uscrn.py?stations=94074&sts=2024-03-25T00%3A00%3A00%2B00%3A00&ets=2024-03-26T00%3A01%3A00%2B00%3A00&what=txt&delim=comma",
+        "uscrn_sha256": "da844df22eabb3535071fa041719a39d6de5096744a60380109d579f0ca65918",
+        "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-03-25/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-03-25.l0p.h5.gz",
+        "sonic_sha256": "0ff88fdc3ede2d6476b80c62d3870330059f9680cde617012dae6596a6bc9329"
+      },
+      "2024-04-15": {
+        "uscrn_url": "https://mesonet.agron.iastate.edu/cgi-bin/request/uscrn.py?stations=94074&sts=2024-04-15T00%3A00%3A00%2B00%3A00&ets=2024-04-16T00%3A01%3A00%2B00%3A00&what=txt&delim=comma",
+        "uscrn_sha256": "ac2570d4241ac528538de1bb575afb1772474e20cb425ebacd12efe28a69659b",
+        "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-04-15/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-04-15.l0p.h5.gz",
+        "sonic_sha256": "3232c7eb02a0ca1b8e432d6affb677d478ea92b7468c08427431e4641d5ca1bf"
+      },
+      "2024-04-30": {
+        "uscrn_url": "https://mesonet.agron.iastate.edu/cgi-bin/request/uscrn.py?stations=94074&sts=2024-04-30T00%3A00%3A00%2B00%3A00&ets=2024-05-01T00%3A01%3A00%2B00%3A00&what=txt&delim=comma",
+        "uscrn_sha256": "2aa026acc21ade8a6cedbedc4d36796b81256772c706c18d6f8e62b07ec729cd",
+        "sonic_url": "https://storage.googleapis.com/neon-sae-files/ods/dataproducts/IP0/2024-04-30/CPER/NEON.D10.CPER.IP0.00200.001.ecte.2024-04-30.l0p.h5.gz",
+        "sonic_sha256": "87e052c7fcc7f7a1ef805517da5aeddb3f607e24f9a300c340ec0eff2af963aa"
+      }
+    }
+  }
+}
