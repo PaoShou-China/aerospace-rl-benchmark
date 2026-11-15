@@ -1,0 +1,60 @@
+# Project-authored generic air-to-air missile parameters (NOT PyFlyt 0.29.0
+# upstream). Boost-coast propulsion: the plant fires the engine from the first
+# active physics step until burn_time elapses, then the missile coasts.
+#
+# fin_params x4 (cross tail at x=-1.3 m):
+#   chord 0.45 m, span 0.40 m -> aspect 0.89 (low-aspect-ratio control fin,
+#   lift-line slope far below 2*pi), full-span flap, 30 deg deflection limit,
+#   20 ms actuator lag (faster than the rocket finlet's 50 ms). Sized so a
+#   full fin pair pulls ~15 g at 600 m/s on top of the body normal force.
+
+fin_params:
+  Cl_alpha_2D: 3.0
+  chord: 0.45
+  span: 0.40
+  flap_to_chord: 1.0
+  eta: 1.0
+  alpha_0_base: 0.0
+  alpha_stall_P_base: 40.0
+  alpha_stall_N_base: -40.0
+  Cd_0: 0.02
+  deflection_limit: 35.0
+  tau: 0.02
+
+body_params:
+  drag_coef_x: 0.25
+  area_x: 0.0314
+  # slender-body normal force: F_lat = -0.5*rho*|v|*area_x*Cn_alpha*v_lat,
+  # applied at cp_offset_x (aft of the CG -> weathercock stability). This is
+  # the turning force AND the restoring moment; without it the tail fins
+  # alone cancel themselves at trim (control moment == restoring moment from
+  # the same surface) and the missile cannot pull lateral acceleration.
+  cn_alpha: 16.0
+  cp_offset_x: -0.45
+  # Cmq-style synthetic pitch/yaw damping: tau = -cmq_coef*|v|*omega_lat.
+  # A single-CP slender-body model carries no distributed rotational damping,
+  # which leaves the fin weathercock mode (~0.3 s period) essentially
+  # undamped; the explicit term restores a realistic damping ratio.
+  cmq_coef: 4.0
+
+boost_params:
+  max_thrust: 20000.0
+  burn_time: 4.0
+  booster_tau: 0.01
+  noise_ratio: 0.01
+
+control_params:
+  ang_vel:
+    # High kp on purpose: the strong weathercock spring makes the fin-cmd ->
+    # steady-turn-rate gain small (~0.2-0.3 rad/s per unit), so the rate loop
+    # needs enough gain to actually saturate the fins when the policy asks
+    # for full lateral authority.
+    kp: 5.0
+    ki: 0.0
+    kd: 0.0
+    lim: 1.0
+  # Roll differential gearing: roll inertia (0.75 kg m^2) is ~150x smaller
+  # than pitch/yaw, so undamped the roll loop gain exceeds the 120 Hz
+  # discrete-stability bound by ~50x. The gear scales the roll channel of the
+  # skid-to-turn mixer (equivalent to reduced differential deflection).
+  roll_gear: 0.01

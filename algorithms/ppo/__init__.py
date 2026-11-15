@@ -1,1 +1,1 @@
-"""PPO (rsl-rl) arm and its FlashSAC-trunk networks."""
+"""PPO (rsl-rl) arm: shared config builder in algorithms/train_utils.py."""

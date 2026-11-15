@@ -16,57 +16,67 @@ task; makes the PBRS return undiscounted and exactly telescoping over the
 166-step episode) and a disabled timeout value bootstrap inside the env
 (timeouts are true terminals). Shared PPO machinery lives in
 algorithms/train_utils.py.
-ALGORITHM / DIFFICULTY / ENV_KWARGS expose the shared switches: the
-algorithm arm ('ppo' | 'flash_sac') and the static difficulty knob:
-None = benchmark, float in [0, 1] = static difficulty (0 easiest,
-1 hardest = benchmark).
 """
+
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+_ROOT = Path(__file__).resolve().parents[3]  # repo root
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
-from environments.satellite.orbit_transfer import LowThrustTransferEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.satellite.orbit_transfer import LowThrustTransferEnv  # noqa: E402
 
-TASK = 'transfer'
+TASK = "transfer"
 NUM_ENVS = 1024
-UPDATES = 1000
+UPDATES = 500  # converges immediately (potential-based reward); 500 updates enough
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # resume from the newest model_*.pt / checkpoint.pt
-CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # resume from the newest model_*.pt / checkpoint.pt
+CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
+ALGORITHM = "ppo"
 
 # Task-specific deviations from the shared fair-comparison PPO configuration.
-# lr pinned to the proven recipe (2026-10-20, 1000-update verification run:
-# mean_reward 0.14->1.55, success 100% from update 31, final ckpt 100% / +20.6
-# km): KL-adaptive 3e-4 is healthy on this short 166-step task (lr stayed
-# 4e-4..3e-3, no floor slam, std 0.5->0.10), so neither the adaptive pathology
-# nor the fixed-1e-3 default was ever beaten here; both are untested at the
-# new [128,128] network scale.
 # Web-alignment (2026-10-21): values follow "RL for Low-Thrust Trajectory Design
 # of Interplanetary Missions" (arXiv:2008.08501): gamma 0.9999, lam 0.99,
-# lr 2.5e-4, entropy 4.75e-8, 30 epochs, clip 0.3, vf_coef 0.5. The paper
-# linearly decays lr (2.5e-4 -> 0) and clip (0.3 -> 0); rsl-rl only supports
-# fixed/adaptive schedules, so the constant start values are used here.
-PPO_OVERRIDES = {'gamma': 0.9999, 'lr_schedule': 'fixed', 'learning_rate': 2.5e-4,
-                 'lam': 0.99, 'entropy_coef': 4.75e-8, 'num_learning_epochs': 30,
-                 'clip_param': 0.3, 'value_loss_coef': 0.5}
-
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('transfer', DIFFICULTY)   # validated against environments/common/difficulty.py
+# lr 2.5e-4, entropy 4.75e-8, clip 0.2, vf_coef 0.5. 2026-11-03 5-seed
+# protocol: 10 learning epochs (shared convention) and the paper's lr decay
+# implemented as the warmup-cosine schedule 2.5e-4 -> 2.5e-5 (lr_cosine).
+PPO_OVERRIDES = {
+    "gamma": 0.9999,
+    "lr_schedule": "fixed",
+    "learning_rate": 2.5e-4,
+    "lr_cosine": True,
+    "learning_rate_end": 2.5e-5,
+    "lam": 0.99,
+    "entropy_coef": 4.75e-8,
+    "num_learning_epochs": 10,
+    "clip_param": 0.2,
+    "value_loss_coef": 0.5,
+}
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
-    run_training(TASK, LowThrustTransferEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN,
-                 algo=ALGORITHM, env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART,
-                 **PPO_OVERRIDES)
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        bc_warmstart=BC_WARMSTART,
+        **PPO_OVERRIDES,
+    )
+    kwargs.update(overrides)
+    run_training(TASK, LowThrustTransferEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()

@@ -10,53 +10,61 @@ Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_satellite.py`.
 Hyperparameters are identical across all per-task entries for fair
 comparison; shared PPO machinery lives in algorithms/train_utils.py.
-DIFFICULTY / ENV_KWARGS expose the static difficulty knob: None = benchmark,
-float in [0, 1] = static difficulty (0 easiest, 1 hardest = benchmark).
 """
+
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]  # repo root
-sys.path.insert(0, str(_ROOT))          # exposes environments.* and algorithms.*
+_ROOT = Path(__file__).resolve().parents[3]  # repo root
+sys.path.insert(0, str(_ROOT))  # exposes environments.* and algorithms.*
 
-from algorithms.train_utils import run_training
-from environments.common.difficulty import resolve_env_kwargs
-from environments.satellite.attitude_control import SatelliteAttitudeEnv
+from algorithms.train_utils import run_training  # noqa: E402
+from environments.satellite.attitude_control import SatelliteAttitudeEnv  # noqa: E402
 
-TASK = 'satellite'
+TASK = "satellite"
 NUM_ENVS = 1024
-UPDATES = 1000           # fair-comparison budget (matches the other 6 task entries)
+UPDATES = 500  # converges in ~650 episodes; 500 updates sufficient
 SEED = 7
-BACKEND = 'gpu'          # 'gpu' | 'cpu'
-RESUME = False           # pure-RL from scratch (warm-start protocol superseded)
-CLEAN = True             # wipe stale results/<task> artifacts before a fresh run
-ALGORITHM = 'ppo'        # 'ppo' (rsl-rl) | 'flash_sac' (algorithms/flashsac/flash_sac.py)
+BACKEND = "gpu"  # 'gpu' | 'cpu'
+RESUME = False  # pure-RL from scratch (warm-start protocol superseded)
+CLEAN = True  # wipe stale results/<task> artifacts before a fresh run
+ALGORITHM = "ppo"
 # 2026-10-22 warm-start refinement (run-9): the archived BC+DAgger checkpoint
 # (results/satellite, seed-7 1024-env run) re-evaluates at 94.8% deterministic
 # on the benchmark (results/satellite/eval.json) -- far above every pure-RL
-# from-scratch attempt (17.4% benchmark; curriculum run 5.5%, stalled at d=0.5,
+# from-scratch attempt (17.4% benchmark,
 # archived as results/satellite_rl_benchmark_20261022). Refine it with the
 # gate-proven run-8 recipe: sigma pinned 0.1, lr = 1.5e-4 * sigma (constant
 # mean-update drift K), obs normalizers frozen (the warm start fitted them),
-# 150 updates at benchmark difficulty.
+# 150 updates at the benchmark config.
+# NOTE (policy distribution): every sigma-pin / lr-sigma observation in this
+# file comes from the Gaussian-policy era. The current default is the bounded
+# BetaDistribution (`build_cfg(distribution="beta")`), which has no
+# `log_std_param`: `init_std` below is accepted but ignored, and the
+# `sigma_pin` / `lr_sigma_coupling` knobs require `distribution="gaussian"`.
 LEARNING_RATE = 3e-4
-INIT_STD = 1.0
+INIT_STD = 1.0  # inert under the default Beta policy; Gaussian-only knob
 # Pure-RL entry (arXiv:2505.00165 alignment): gamma 0.999 because 1200-step
 # episodes make 0.99 blind to the settle bonus; nsp 150 matches the paper's
-# 150-step rollout; 5 mini-batches mirror its ~32-sample minibatches.
-# The fixed schedule replaces SB3's KL-adaptive schedule (adaptive is proven
-# to clamp to 1e-5 on this task). lr/sigma coupling and obs-norm freezing are
-# warm-start-specific and removed.
-PPO_OVERRIDES = dict(gamma=0.999, num_steps_per_env=150, num_mini_batches=5,
-                     num_learning_epochs=40, entropy_coef=0.0, init_std=INIT_STD,
-                     clip_param=0.2)
+# 150-step rollout. 2026-11-03 5-seed protocol: 10 mini-batches, 10 learning
+# epochs (the 40-epoch recipe was a warm-start refinement; the from-scratch
+# benchmark arms use the shared 10-epoch convention).
+PPO_OVERRIDES = dict(
+    gamma=0.999,
+    num_steps_per_env=150,
+    num_mini_batches=10,
+    num_learning_epochs=10,
+    entropy_coef=0.0,
+    init_std=INIT_STD,
+    clip_param=0.2,
+)
 # 2026-10-20 ROOT-CAUSE FIX: all 7 prior runs failed because the telescoped
 # shaping sign was INVERTED (negative potential with Phi_prev - Phi subtraction):
 # approaching the target and braking were penalized, so PPO plateaued at
 # att_err~0.3-0.6 with <=5% success. env.py now uses the positive
 # distance-to-go potential (docking 'progress' convention) with the absolute
 # per-step state costs folded into the potential.
-LR_SCHEDULE = 'fixed'
+LR_SCHEDULE = "fixed"
 # Run 7 (2026-10-20): 100-update dose-response gates at 256 envs isolated the
 #   refinement-destroyer: the EXPLORATION SIGMA. At sigma=0.5 the in-rollout
 #   success collapses to 2-25% vs 50%+ greedy, so PPO's gradient chases
@@ -163,18 +171,30 @@ LR_SCHEDULE = 'fixed'
 # - gamma 0.999 (default 0.99): 1200-step episodes; at gamma=0.99 the settle-
 #   bonus value of capturing is discounted to ~5% by the slew phase
 #   (gamma^300), leaving no gradient toward capture.
-# Static difficulty (None = published benchmark, bit-for-bit; float in [0,1]
-# = 0 easiest, 1 hardest = benchmark). Curriculum learning was removed.
-DIFFICULTY = None
-ENV_KWARGS = resolve_env_kwargs('satellite', DIFFICULTY)   # validated against environments/common/difficulty.py
-
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
-if __name__ == '__main__':
-    run_training(TASK, SatelliteAttitudeEnv, num_envs=NUM_ENVS, updates=UPDATES, seed=SEED,
-                 backend=BACKEND, resume=RESUME, clean=CLEAN, algo=ALGORITHM,
-                 lr_schedule=LR_SCHEDULE, learning_rate=LEARNING_RATE,
-                 env_kwargs=ENV_KWARGS, bc_warmstart=BC_WARMSTART,
-                 **PPO_OVERRIDES)
+
+def main(**overrides):
+    """Run one training. Keyword overrides (seed / out_dir / bc_warmstart /
+    env_wrapper / ...) let the 5-seed orchestrator drive the same constants."""
+    kwargs = dict(
+        num_envs=NUM_ENVS,
+        updates=UPDATES,
+        seed=SEED,
+        backend=BACKEND,
+        resume=RESUME,
+        clean=CLEAN,
+        algo=ALGORITHM,
+        lr_schedule=LR_SCHEDULE,
+        learning_rate=LEARNING_RATE,
+        bc_warmstart=BC_WARMSTART,
+        **PPO_OVERRIDES,
+    )
+    kwargs.update(overrides)
+    run_training(TASK, SatelliteAttitudeEnv, **kwargs)
+
+
+if __name__ == "__main__":
+    main()
