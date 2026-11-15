@@ -241,6 +241,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         domain_randomize=None,
         warmup_iterations=None,
         aero="legacy",
+        measured_wind=None,
     ):
         """Initialize the RocketLanding environment.
 
@@ -255,6 +256,13 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
 
         if variation not in VARIATIONS:
             raise ValueError(variation)
+        if measured_wind is not None:
+            other_wind = steady_wind is not None or VARIATIONS[variation]["wind"] != (0.0, 0.0)
+            if benchmark_version != "v1" or other_wind:
+                raise ValueError(
+                    "Measured wind requires full-scale v1 with no added steady or variation wind"
+                )
+        self.measured_wind = measured_wind
         self.benchmark_version = benchmark_version
         self.f9_real = benchmark_version == "v1"
         # Both supported versions use a 40 Hz policy by default.
@@ -411,6 +419,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.benchmark_env_kwargs = dict(
             benchmark_version=benchmark_version, variation=variation, agent_hz=agent_hz
         )
+        if measured_wind is not None:
+            self.benchmark_env_kwargs.update(
+                measured_wind=measured_wind, dryden=dryden, severity=severity
+            )
         from pathlib import Path
         import hashlib
 
@@ -482,6 +494,17 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         and the fin/body aerodynamic terms evaluate v_air = v - wind.
         """
         self._wind = None
+        if self.measured_wind is not None:
+            from .measured_wind import measured_field
+
+            self._wind = measured_field(
+                self.measured_wind, n, self.device, seed, self.agent_hz, dryden, severity
+            )
+            self.plant.wind = torch.zeros((n, 3), device=self.device, dtype=COMPUTE_DTYPE)
+            self.cfg["wind"] = dict(
+                measured_wind=self.measured_wind, dryden=dryden, severity=severity
+            )
+            return
         if steady_wind is not None or dryden > 0.0:
             from environments.common.disturbances import WindDisturbance
 
@@ -916,6 +939,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         if self.plant.realistic:
             self.plant.sync_propellant_mass()
         self.obs_pad.masked_fill_(mask, 0)
+        if self.measured_wind is not None:
+            # A restarted lane must warm up with its new weather, before frame zero advances.
+            self._wind.reset(mask)
+            flow = self._wind.sample(spawn[:, 2])
+            self.plant.wind.copy_(torch.where(mask[:, None], flow, self.plant.wind))
         if nonempty:
             self.plant.warmup(mask, nonempty=True)
         self._observe(mask)
@@ -923,7 +951,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             self._sensor.reset(mask)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)
-        if self._wind is not None:
+        if self._wind is not None and self.measured_wind is None:
             self._wind.reset(mask)
         self._residual_reset(mask)
 
