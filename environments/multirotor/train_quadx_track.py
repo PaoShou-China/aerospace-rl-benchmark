@@ -46,9 +46,12 @@ INIT_STD = 1.0
 NUM_STEPS_PER_ENV = 100
 NUM_LEARNING_EPOCHS = 5
 
-# no wind, no hand-coded controller in the loop; BC warm start on
+# no wind, no hand-coded controller in the loop; BC warm start on.
 WIND = None
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# steps=None records one full 1200-step (30 s) episode: this task's success
+# criterion is evaluated over the whole episode, so the shared 512-step
+# default would only cover 43% of the expert trajectory.
+BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 # PPO performs NUM_STEPS_PER_ENV vectorized steps per update.
 UPDATES = TRAIN_ENV_STEPS // NUM_STEPS_PER_ENV

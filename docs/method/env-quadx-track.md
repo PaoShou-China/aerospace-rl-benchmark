@@ -220,7 +220,9 @@ The learned arm is the **unmodified repository PPO implementation**:
   no recurrent layer), a state-independent Beta policy (`BetaDistribution`, bounded and rescaled to
   $[-1,1]$), 100 vectorized steps per update, 5 epochs, 4 minibatches, fixed lr $3\times10^{-4}$,
   entropy $0.01$. The behavior-cloning warm start is enabled in the entry
-  (`BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`), and
+  (`BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`;
+  `steps=None` collects one full 1200-step expert episode, after which the
+  tracking-task stratified-uniform selector keeps the 512-pair budget), and
   `WIND = None` keeps the arm in calm air.
 
 It consumes the 25-D observation of Section 7 (current own state, current measurement, visibility

@@ -529,7 +529,12 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
 
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical rate-command bounds."""
-        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE)
+        # Guard against non-finite policy outputs: NaN.clamp == NaN, so a
+        # diverged actor can otherwise push NaN through the action pipeline
+        # into the motor solver and crash Genesis.
+        raw = torch.where(torch.isfinite(raw), raw, torch.zeros_like(raw))
+        raw = raw.clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     # ------------------------------------------------------------------ #

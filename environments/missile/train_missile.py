@@ -114,7 +114,10 @@ ENV_KWARGS = {"reward_variant": REWARD_VARIANT, "aero": "realistic"}
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
 # (300 epochs at seed 7 previously reached 0.62 greedy SR at d=0 -- the fit can be
 # brittle under PPO updates, so keep the standard 100-epoch recipe.)
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# steps=None records one full episode (env.max_steps = 900): the expert's
+# intercept takes 575-656 steps on average, so the shared 512-step default
+# would usually truncate just before the kill.
+BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 
 def main(**overrides):

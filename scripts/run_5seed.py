@@ -61,6 +61,23 @@ TRAIN_SEEDS = [11, 22, 33, 44, 55]
 EVAL_SEEDS = [1011, 1022, 1033, 1044, 1055]
 METHODS = ["ppo_scratch", "bc_ppo", "residual_ppo"]
 BC_RECIPE = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# Tasks whose expert episode outlasts the shared 512-step BC horizon. Their
+# rollouts must cover one full episode (steps=None -> env.max_steps), otherwise
+# the cloned data stops mid-trajectory (e.g. rocket only reaches 12.8 s of a
+# 60 s landing; fixedwing only the first 14% of its 3600-step route).
+# docking (500), satellite (~320) and transfer (166) still fit in 512 steps.
+BC_FULL_EPISODE_TASKS = {
+    "quadx", "quadx_track", "fixedwing", "quadplane", "rocket", "missile", "rendezvous",
+}
+
+
+def _bc_recipe(task):
+    """Shared BC recipe with a per-task collection horizon override."""
+    if task in BC_FULL_EPISODE_TASKS:
+        return dict(BC_RECIPE, steps=None)
+    return BC_RECIPE
+
+
 RESIDUAL_RHO = 0.05
 BACKEND = "gpu"
 OUT_ROOT = _ROOT / "results" / "5seed"
@@ -134,30 +151,40 @@ def _subprocess_train_job(job):
     if method == "ppo_scratch":
         bc_src = "None"
     elif method == "bc_ppo":
+        from algorithms.warmstart.bc_warmstart import BC_DEFAULTS, bc_recipe_matches
+
+        recipe = _bc_recipe(task)
+        expected = {**BC_DEFAULTS, **recipe}
+        if ckpt.exists() and not bc_recipe_matches(str(ckpt), task, expected):
+            # Recipe changed (e.g. full-episode collection + informative
+            # subset): the cached initialization no longer matches.
+            _log(f"STALE {task}/seed_{seed}: BC recipe changed, refitting")
+            ckpt.unlink(missing_ok=True)
+            Path(str(ckpt) + ".recipe.json").unlink(missing_ok=True)
         if not ckpt.exists():
             _log(f"BC    {task}/seed_{seed}: fitting shared BC initialization")
-            bc_init_path = OUT_ROOT / "_tmp_bc_init.py"
+            bc_init_path = OUT_ROOT / f"_tmp_bc_init_{task}_{seed}.py"
             bc_init_path.write_text(
                 bc_init_template(seed, str(bc_dir), str(ckpt), task)
             )
             proc = subprocess.run(
                 [sys.executable, str(bc_init_path)], cwd=_ROOT,
-                capture_output=True, text=True, timeout=900
+                capture_output=True, text=True, timeout=3600
             )
             bc_init_path.unlink(missing_ok=True)
             if proc.returncode != 0:
                 _log(f"FAIL  bc_shared {task}/seed_{seed}\n{proc.stderr[-4000:]}")
                 raise RuntimeError("BC init failed")
         bc_src = (
-            "{'steps': %d, 'epochs': %d, 'batch_size': %d, 'lr': %g,\n"
+            "{'steps': %r, 'epochs': %d, 'batch_size': %d, 'lr': %g,\n"
             "               'fit_critic': %s, 'checkpoint': %r}" %
-            (BC_RECIPE["steps"], BC_RECIPE["epochs"], BC_RECIPE["batch_size"],
-             BC_RECIPE["lr"], BC_RECIPE["fit_critic"], str(ckpt))
+            (recipe["steps"], recipe["epochs"], recipe["batch_size"],
+             recipe["lr"], recipe["fit_critic"], str(ckpt))
         )
 
     _log(f"START {task}/{method}/seed_{seed}")
     t0 = time.perf_counter()
-    runner_path = OUT_ROOT / "_tmp_runner.py"
+    runner_path = OUT_ROOT / f"_tmp_runner_{task}_{method}_{seed}.py"
     runner_path.write_text(
         runner_template(
             task=task, method=method, seed=seed, out=str(out),
@@ -185,6 +212,7 @@ def _subprocess_train_job(job):
 # temp-script template helpers
 # --------------------------------------------------------------------------- #
 def bc_init_template(seed, out_dir, save_checkpoint, task):
+    recipe = _bc_recipe(task)
     return (
         "import sys; sys.path.insert(0, %r)\n"
         "from %s import main\n"
@@ -195,7 +223,7 @@ def bc_init_template(seed, out_dir, save_checkpoint, task):
         "    clean=True,\n"
         "    performance=True,\n"
         "    bc_warmstart={\n"
-        "        'steps': %d,\n"
+        "        'steps': %r,\n"
         "        'epochs': %d,\n"
         "        'batch_size': %d,\n"
         "        'lr': %g,\n"
@@ -207,8 +235,8 @@ def bc_init_template(seed, out_dir, save_checkpoint, task):
             TRAIN_MODULES[task],
             seed,
             out_dir,
-            BC_RECIPE["steps"], BC_RECIPE["epochs"], BC_RECIPE["batch_size"],
-            BC_RECIPE["lr"], BC_RECIPE["fit_critic"],
+            recipe["steps"], recipe["epochs"], recipe["batch_size"],
+            recipe["lr"], recipe["fit_critic"],
             save_checkpoint,
         )
     )

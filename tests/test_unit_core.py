@@ -20,9 +20,16 @@ import torch
 from algorithms.train_utils import _warmup_cosine_decay, build_cfg
 from algorithms.warmstart.bc_warmstart import (
     BC_DEFAULTS,
+    bc_recipe_matches,
     delta_action_targets,
     phase_weights,
+    resolve_bc_select,
     returns_to_go,
+    returns_to_go_flat,
+    save_bc_recipe,
+    select_informative_indices_flat,
+    select_informative_indices_rollout,
+    select_informative_pairs,
 )
 from environments.common.domain_randomization import (
     apply_domain_randomization,
@@ -349,6 +356,174 @@ class TestBcHelpers:
         obs = torch.randn(5, 3)
         w = phase_weights(obs, {"near": 10.0, "weight": 3.0, "normalize": False})
         assert (w == 3.0).all()
+
+    def test_informative_selection_budget_coverage_and_terminal(self):
+        torch.manual_seed(0)
+        T, N, D, A = 100, 2, 4, 3
+        # constant trajectory -> only the terminal-window bonus is non-zero,
+        # so the retained terminal step is deterministic rather than a tie.
+        obs = torch.zeros(T, N, D)
+        acts = torch.zeros(T, N, A)
+        rews = torch.randn(T, N)
+        dones = torch.zeros(T, N, dtype=torch.bool)
+        dones[99, 0] = True
+        dones[59, 1] = True
+        returns = torch.arange(T, dtype=torch.float32).view(T, 1).repeat(1, N)
+        o, a, r, d, ret = select_informative_pairs(
+            obs, acts, rews, dones, returns, budget=20, segments=4
+        )
+        assert o.shape == (20, N, D) and a.shape == (20, N, A)
+        assert r.shape == (20, N) and d.shape == (20, N) and ret.shape == (20, N)
+        # stratified: five kept steps in every quarter of the horizon
+        idx = torch.sort((ret[:, 0] / 1.0).long()).values
+        assert [int((idx // 25 == q).sum()) for q in range(4)] == [5, 5, 5, 5]
+        # every episode's terminal step is retained
+        assert 99 in set(ret[:, 0].long().tolist())
+        assert 59 in set(ret[:, 1].long().tolist())
+
+    def test_informative_selection_prefers_action_changepoints(self):
+        T, N, D, A = 50, 1, 2, 1
+        obs = torch.zeros(T, N, D)
+        acts = torch.zeros(T, N, A)
+        acts[30:] = 1.0  # single action changepoint at t=30
+        rews = torch.zeros(T, N)
+        dones = torch.zeros(T, N, dtype=torch.bool)
+        returns = torch.arange(T, dtype=torch.float32).view(T, 1)
+        _, _, _, _, ret = select_informative_pairs(
+            obs, acts, rews, dones, returns,
+            budget=5, segments=1, method='tss', neighbor=2
+        )
+        # the changepoint and its +/-2 neighbour cluster carry all the score
+        assert set(ret[:, 0].long().tolist()) <= set(range(28, 33))
+
+    def test_informative_selection_uniform_ablation_covers_each_phase(self):
+        T, N = 100, 2
+        obs, acts = torch.randn(T, N, 4), torch.randn(T, N, 2)
+        rews, dones = torch.randn(T, N), torch.zeros(T, N, dtype=torch.bool)
+        returns = torch.arange(T, dtype=torch.float32).view(T, 1).repeat(1, N)
+        _, _, _, _, ret = select_informative_pairs(
+            obs, acts, rews, dones, returns,
+            budget=10, segments=2, method='uniform'
+        )
+        idx = ret[:, 0].long()
+        assert idx.shape == (10,)
+        assert (idx < 50).sum() == 5 and (idx >= 50).sum() == 5
+
+    def test_informative_selection_noop_when_budget_covers_horizon(self):
+        T, N = 40, 3
+        obs, acts = torch.randn(T, N, 5), torch.randn(T, N, 2)
+        rews, dones = torch.randn(T, N), torch.zeros(T, N, dtype=torch.bool)
+        out = select_informative_pairs(obs, acts, rews, dones, None, budget=T, segments=8)
+        for got, want in zip(out[:4], (obs, acts, rews, dones)):
+            assert got is want
+        assert out[4] is None
+
+    def test_flat_selection_respects_episode_boundaries(self):
+        # two contiguous episodes: 3 rows and 4 rows
+        episode_id = torch.tensor([0, 0, 0, 1, 1, 1, 1])
+        obs = torch.zeros(7, 2)
+        acts = torch.zeros(7, 1)
+        dones = torch.zeros(7, dtype=torch.bool)
+        dones[2] = True
+        dones[6] = True
+        keep = select_informative_indices_flat(
+            obs, acts, dones, episode_id, budget=2, segments=1
+        )
+        assert keep is not None and keep.numel() == 4
+        assert (keep < 3).sum() == 2 and (keep >= 3).sum() == 2
+        assert select_informative_indices_flat(
+            obs, acts, dones, episode_id, budget=10, segments=1
+        ) is None
+
+    def test_returns_to_go_flat_matches_boundary_aware_rollout(self):
+        gamma = 0.9
+        rews = torch.tensor([1.0, 1.0, 1.0, 2.0, 2.0, 2.0])
+        dones = torch.tensor([0, 0, 1, 0, 0, 1], dtype=torch.bool)
+        terminated = torch.tensor([0, 0, 1, 0, 0, 0], dtype=torch.bool)
+        episode_id = torch.tensor([0, 0, 0, 1, 1, 1])
+        out, valid = returns_to_go_flat(rews, dones, terminated, episode_id, gamma)
+        ref, ref_valid = returns_to_go(
+            rews[:, None], dones[:, None], gamma,
+            terminated=terminated[:, None], truncated=dones[:, None] & ~terminated[:, None],
+        )
+        assert torch.allclose(out, ref[:, 0])
+        assert (valid == ref_valid[:, 0]).all()
+        # success episode: every step valid; timeout episode: tail invalid
+        assert valid[:3].all() and not valid[3:].any()
+
+    def test_returns_to_go_flat_long_horizon_precision(self):
+        gamma, L = 0.999, 500
+        rews = torch.ones(L)
+        dones = torch.zeros(L, dtype=torch.bool)
+        dones[-1] = True
+        terminated = torch.zeros(L, dtype=torch.bool)
+        terminated[-1] = True
+        episode_id = torch.zeros(L, dtype=torch.long)
+        out, valid = returns_to_go_flat(rews, dones, terminated, episode_id, gamma)
+        ref, ref_valid = returns_to_go(
+            rews[:, None], dones[:, None], gamma,
+            terminated=terminated[:, None], truncated=dones[:, None] & ~terminated[:, None])
+        assert torch.allclose(out, ref[:, 0], rtol=1e-4, atol=1e-4)
+        assert (valid == ref_valid[:, 0]).all() and valid.all()
+
+    def test_selection_rejects_inconsistent_shapes(self):
+        with pytest.raises(ValueError):
+            select_informative_pairs(
+                torch.zeros(5, 2, 3), torch.zeros(5, 2, 1),
+                torch.zeros(5, 2), torch.zeros(4, 2, dtype=torch.bool),
+            )
+
+    def test_failure_filter_is_disabled_for_rare_expert_success(self):
+        # 1 success out of 40 episode ends -> below the 10% safety floor, so no
+        # episode may be dropped (prevents a broken expert from wiping the data)
+        T, N = 40, 4
+        obs, acts = torch.zeros(T, N, 3), torch.zeros(T, N, 1)
+        dones = torch.zeros(T, N, dtype=torch.bool)
+        dones[3::4] = True
+        success = torch.zeros(T, N, dtype=torch.bool)
+        success[3, 0] = True
+        t_idx, n_idx = select_informative_indices_rollout(
+            obs, acts, dones, success=success,
+            budget=20, segments=2, method='uniform', drop_failed=True,
+        )
+        assert t_idx.numel() == 20 * N
+        assert set(n_idx.tolist()) == set(range(N))
+
+    def test_rollout_selection_is_episode_aware_and_drops_failures(self):
+        T, N = 12, 2
+        obs, acts = torch.zeros(T, N, 3), torch.zeros(T, N, 1)
+        dones = torch.zeros(T, N, dtype=torch.bool)
+        dones[3, 0] = dones[7, 0] = dones[11, 0] = True
+        dones[11, 1] = True
+        success = torch.zeros(T, N, dtype=torch.bool)
+        success[7, 0] = success[11, 0] = success[11, 1] = True  # ep0 of replica 0 fails
+        terminated = torch.zeros(T, N, dtype=torch.bool)
+        t_idx, n_idx = select_informative_indices_rollout(
+            obs, acts, dones, terminated=terminated, success=success,
+            budget=6, segments=2, method='uniform',
+        )
+        # failed first episode (rows 0..3) of replica 0 is dropped
+        assert (t_idx[n_idx == 0] >= 4).all()
+        # budget is per replica
+        assert int((n_idx == 0).sum()) == 6 and int((n_idx == 1).sum()) == 6
+        assert t_idx.shape == n_idx.shape
+
+    def test_resolve_bc_select_uses_task_methods_and_explicit_override(self):
+        assert resolve_bc_select('rocket', {})['method'] == 'tss'
+        assert resolve_bc_select('quadx_track', {})['method'] == 'uniform'
+        assert resolve_bc_select('rocket', {'method': 'uniform'})['method'] == 'uniform'
+        assert resolve_bc_select('rocket', None) is None
+
+    def test_bc_recipe_fingerprint_invalidates_changed_recipe(self, tmp_path):
+        ckpt = tmp_path / 'bc_checkpoint.pt'
+        ckpt.write_bytes(b'stub')
+        cfg = {**BC_DEFAULTS, 'steps': None}
+        assert not bc_recipe_matches(str(ckpt), 'rocket', cfg)  # no sidecar yet
+        save_bc_recipe(str(ckpt), 'rocket', cfg)
+        assert bc_recipe_matches(str(ckpt), 'rocket', cfg)
+        changed = {**cfg, 'select': {**cfg['select'], 'budget': 256}}
+        assert not bc_recipe_matches(str(ckpt), 'rocket', changed)
+        assert not bc_recipe_matches(str(ckpt), 'missile', cfg)
 
 
 # --------------------------------------------------------------------------- #

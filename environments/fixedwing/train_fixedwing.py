@@ -76,7 +76,10 @@ WIND = dict(steady_wind=None, dryden=0.3, severity="moderate", aero="realistic")
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# steps=None records one full episode (env.max_steps = 3600): the expert flies
+# the complete waypoint route, so the shared 512-step default would capture
+# only the first 14% of the trajectory.
+BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 
 def main(**overrides):

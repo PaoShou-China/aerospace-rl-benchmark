@@ -25,7 +25,9 @@ from environments import ENV_REGISTRY  # noqa: E402
 
 def _run(task, algo_arm, updates, num_envs, out_root):
     out = out_root / f"{task}_{algo_arm}"
-    bc = {"steps": 512, "epochs": 100} if algo_arm == "bc" else None
+    # steps=None -> one full episode horizon (env.max_steps); the historical
+    # fixed 512 truncated long expert episodes (e.g. fixedwing's 3600 steps).
+    bc = {"steps": None, "epochs": 100} if algo_arm == "bc" else None
     t0 = time.time()
     run_training(
         task,

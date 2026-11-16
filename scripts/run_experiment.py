@@ -42,6 +42,21 @@ EVAL_SEEDS = [1011, 1022, 1033, 1044, 1055]
 METHODS = ["ppo_scratch", "bc_ppo", "residual_ppo"]
 
 BC_RECIPE = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# Tasks whose expert episode outlasts the shared 512-step BC horizon. Their
+# rollouts must cover one full episode (steps=None -> env.max_steps).
+# docking (500), satellite (~320) and transfer (166) still fit in 512 steps.
+BC_FULL_EPISODE_TASKS = {
+    "quadx", "quadx_track", "fixedwing", "quadplane", "rocket", "missile", "rendezvous",
+}
+
+
+def _bc_recipe(task):
+    """共享 BC 配方，仅对长回合任务覆盖采集步数。"""
+    if task in BC_FULL_EPISODE_TASKS:
+        return dict(BC_RECIPE, steps=None)
+    return BC_RECIPE
+
+
 RESIDUAL_RHO = 0.05
 BACKEND = "gpu"
 
@@ -75,10 +90,27 @@ def log(msg):
 # --------------------------------------------------------------------------- #
 # 训练阶段
 # --------------------------------------------------------------------------- #
-def _train_one(job, attempts=2):
+def _proc_error(proc):
+    """失败原因：优先 stderr 最后一行，其次信号名（段错误时 stderr 往往为空）。"""
+    if proc is None:
+        return "subprocess failed to start"
+    lines = [s for s in (proc.stderr or "").splitlines() if s.strip()]
+    if lines:
+        return lines[-1]
+    if proc.returncode < 0:
+        try:
+            import signal as _signal
+            return f"killed by {_signal.Signals(-proc.returncode).name}"
+        except ValueError:
+            return f"killed by signal {-proc.returncode}"
+    return f"exit code {proc.returncode}"
+
+
+def _train_one(job, attempts=3):
     """跑一次 (task, method, seed) 训练，子进程隔离防止 Genesis 崩溃传染。
 
-    失败自动重试一次：Genesis 偶发的中途崩溃（NaN/求解器异常）重跑通常可恢复。
+    失败自动重试：Genesis 偶发的中途崩溃（NaN/求解器异常）重跑通常可恢复。
+    attempts=3 + 30s 延迟，覆盖间歇性的 26s 段错误（连续两次同点崩溃的概率低）。
     """
     task, method, seed = job
     out = OUT_ROOT / task / method / f"seed_{seed}"
@@ -95,14 +127,22 @@ def _train_one(job, attempts=2):
     ckpt = bc_dir / "bc_checkpoint.pt"
     bc_src = "None"
     if method == "bc_ppo":
+        from algorithms.warmstart.bc_warmstart import BC_DEFAULTS, bc_recipe_matches
+
+        recipe = _bc_recipe(task)
+        expected = {**BC_DEFAULTS, **recipe}
+        if ckpt.exists() and not bc_recipe_matches(str(ckpt), task, expected):
+            log(f"STALE {task}/seed_{seed}: BC recipe changed, refitting")
+            ckpt.unlink(missing_ok=True)
+            (bc_dir / (ckpt.name + ".recipe.json")).unlink(missing_ok=True)
         if not ckpt.exists():
             log(f"BC    {task}/seed_{seed}")
             _run_bc_init(task, seed, bc_dir, ckpt)
         bc_src = (
-            "{'steps': %d, 'epochs': %d, 'batch_size': %d, 'lr': %g,"
+            "{'steps': %r, 'epochs': %d, 'batch_size': %d, 'lr': %g,"
             " 'fit_critic': %s, 'checkpoint': %r}"
-            % (BC_RECIPE["steps"], BC_RECIPE["epochs"], BC_RECIPE["batch_size"],
-               BC_RECIPE["lr"], BC_RECIPE["fit_critic"], str(ckpt))
+            % (recipe["steps"], recipe["epochs"], recipe["batch_size"],
+               recipe["lr"], recipe["fit_critic"], str(ckpt))
         )
 
     # 写临时 runner 脚本（每次尝试重写），避免 python -c 的引号嵌套问题
@@ -120,14 +160,13 @@ def _train_one(job, attempts=2):
         if proc.returncode == 0:
             break
         if attempt < attempts:
-            err = proc.stderr.splitlines()[-1] if proc.stderr else "unknown"
+            err = _proc_error(proc)
             log(f"RETRY {task}/{method}/seed_{seed} (第{attempt}次失败: {err[:100]})")
+            time.sleep(30)  # 给 GPU/Genesis 状态一个冷却窗口，降低连续崩溃概率
 
     elapsed = time.perf_counter() - t0
-    if proc.returncode != 0:
-        # 取 stderr 最后一条非空行作为原因
-        lines = [s for s in (proc.stderr or "").splitlines() if s.strip()]
-        err = lines[-1] if lines else "unknown"
+    if proc is None or proc.returncode != 0:
+        err = _proc_error(proc)
         log(f"FAIL  {task}/{method}/seed_{seed} ({elapsed:.0f}s) {err[:150]}")
     else:
         log(f"DONE  {task}/{method}/seed_{seed} ({elapsed:.0f}s)")
@@ -141,7 +180,7 @@ def _run_bc_init(task, seed, bc_dir, ckpt):
     script.write_text(_bc_init_template(task, seed, str(bc_dir), str(ckpt)))
     proc = subprocess.run(
         [sys.executable, str(script)], cwd=_ROOT,
-        capture_output=True, text=True, timeout=900,
+        capture_output=True, text=True, timeout=3600,
     )
     script.unlink(missing_ok=True)
     if proc.returncode != 0:
@@ -150,6 +189,7 @@ def _run_bc_init(task, seed, bc_dir, ckpt):
 
 def _bc_init_template(task, seed, bc_dir, ckpt):
     """BC 初始化：调用训练模块的 main(updates=0)，只跑 BC 预热并保存 checkpoint。"""
+    recipe = _bc_recipe(task)
     return (
         "import sys; sys.path.insert(0, %r)\n"
         "from %s import main\n"
@@ -160,14 +200,14 @@ def _bc_init_template(task, seed, bc_dir, ckpt):
         "    clean=True,\n"
         "    performance=True,\n"
         "    bc_warmstart={\n"
-        "        'steps': %d, 'epochs': %d, 'batch_size': %d, 'lr': %g,\n"
+        "        'steps': %r, 'epochs': %d, 'batch_size': %d, 'lr': %g,\n"
         "        'fit_critic': %s, 'save_checkpoint': %r,\n"
         "    },\n"
         ")\n"
         % (
             str(_ROOT), TRAIN_MODULES[task], seed, bc_dir,
-            BC_RECIPE["steps"], BC_RECIPE["epochs"], BC_RECIPE["batch_size"],
-            BC_RECIPE["lr"], BC_RECIPE["fit_critic"], ckpt,
+            recipe["steps"], recipe["epochs"], recipe["batch_size"],
+            recipe["lr"], recipe["fit_critic"], ckpt,
         )
     )
 

@@ -161,7 +161,7 @@ $\kappa_t\in\{0,1\}$ 为坠毁/出界。跟踪项仅在可见时支付；丢失�
 
 ## 13. RL 训练协议（PPO）
 
-学习臂为**未修改的仓库 PPO 实现**：`rsl_rl` `OnPolicyRunner` + rsl-rl `MLPModel` actor-critic（2×128 tanh，无循环层），状态无关 Beta 策略（`BetaDistribution`，有界并缩放到 $[-1,1]$），每次更新 100 向量化步、5 epochs、4 minibatches、固定 lr $3\times10^{-4}$、熵 0.01。入口启用行为克隆热启动（`BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`），`WIND=None` 保持静风。
+学习臂为**未修改的仓库 PPO 实现**：`rsl_rl` `OnPolicyRunner` + rsl-rl `MLPModel` actor-critic（2×128 tanh，无循环层），状态无关 Beta 策略（`BetaDistribution`，有界并缩放到 $[-1,1]$），每次更新 100 向量化步、5 epochs、4 minibatches、固定 lr $3\times10^{-4}$、熵 0.01。入口启用行为克隆热启动（`BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`；`steps=None` 采集一整回 1200 步专家数据，随后跟踪类任务的分层均匀筛选器保留 512 对预算），`WIND=None` 保持静风。
 
 它消费第 7 节 25 维观测（当前自身状态、当前测量、可见标志；不可见时测量为 0）、同一 4 维动作接口、同一奖励、同一 reset 分布与同一评测场景。
 
