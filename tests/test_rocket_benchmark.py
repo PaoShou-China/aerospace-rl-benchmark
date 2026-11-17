@@ -145,24 +145,36 @@ class ProtocolTests(unittest.TestCase):
             [[0.0, 0.0, 400.0], [0.0, 0.0, 400.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
             dtype=torch.float64,
         )
+        previous_p = torch.tensor(
+            [[0.0, 0.0, 410.0], [0.0, 0.0, 410.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+            dtype=torch.float64,
+        )
         vel_z = torch.tensor([-100.0, -40.0, -2.5, -0.5], dtype=torch.float64)
+        previous_vel_z = torch.tensor([-41.0, -40.0, -2.5, -0.5], dtype=torch.float64)
         newly_fatal = torch.tensor([True, False, True, False])
+        zeros = torch.zeros(4, 3, dtype=torch.float64)
         _, comps = rocket_shaping(
             cfg,
             p,
-            p,
+            previous_p,
             vel_z,
-            vel_z,
-            torch.zeros(4, 3, dtype=torch.float64),
-            torch.zeros(4, 3, dtype=torch.float64),
+            previous_vel_z,
+            zeros,
+            zeros,
+            zeros,
+            zeros,
             torch.zeros(4, dtype=torch.bool),
             torch.zeros(4, dtype=torch.float64),
             torch.zeros(4, dtype=torch.bool),
             newly_fatal,
         )
         self.assertEqual(set(comps), set(REWARD_KEYS))
+        # corridor is a potential difference: Phi(now) - Phi(prev) per env.
+        # Row 0: v_allow(400)=40.5 (excess 59.5), v_allow(410)=40.9969
+        # (excess 0.0031) -> -0.5 * 59.4969.
         torch.testing.assert_close(
-            comps["corridor"], torch.tensor([-29.75, 0.0, 0.0, 0.0], dtype=torch.float64)
+            comps["corridor"],
+            torch.tensor([-29.74845675, 0.0, 0.0, 0.0], dtype=torch.float64),
         )
         torch.testing.assert_close(
             comps["fatal"], torch.tensor([-500.0, 0.0, -500.0, 0.0], dtype=torch.float64)
@@ -171,17 +183,84 @@ class ProtocolTests(unittest.TestCase):
         _, next_comps = rocket_shaping(
             cfg,
             p,
-            p,
+            previous_p,
             vel_z,
-            vel_z,
-            torch.zeros(4, 3, dtype=torch.float64),
-            torch.zeros(4, 3, dtype=torch.float64),
+            previous_vel_z,
+            zeros,
+            zeros,
+            zeros,
+            zeros,
             torch.zeros(4, dtype=torch.bool),
             torch.zeros(4, dtype=torch.float64),
             torch.zeros(4, dtype=torch.bool),
             torch.zeros(4, dtype=torch.bool),
         )
         self.assertEqual(next_comps["fatal"].abs().sum().item(), 0.0)
+
+    def test_aux_potential_terms_telescope(self):
+        from environments.rocket.env import _aux_potential, rocket_shaping
+
+        cfg = dict(
+            hover=0.0,
+            hold=0.005,
+            lateral=0.0,
+            descent=0.0,
+            decel=0.1,
+            yaw=0.5,
+            tilt=0.5,
+            contact_base=0.0,
+            contact_vel=0.0,
+            success=0.0,
+            corridor=0.5,
+            corridor_accel=2.0,
+            corridor_v0=0.5,
+            fatal=0.0,
+        )
+        # (p, vel_z, rpy, body_omega) along a synthetic three-step descent.
+        states = [
+            (
+                torch.tensor([[3.0, 0.0, 300.0]], dtype=torch.float64),
+                torch.tensor([-60.0], dtype=torch.float64),
+                torch.tensor([[0.10, -0.05, 0.20]], dtype=torch.float64),
+                torch.tensor([[0.0, 0.0, 0.30]], dtype=torch.float64),
+            ),
+            (
+                torch.tensor([[2.0, 1.0, 250.0]], dtype=torch.float64),
+                torch.tensor([-70.0], dtype=torch.float64),
+                torch.tensor([[-0.05, 0.02, 0.10]], dtype=torch.float64),
+                torch.tensor([[0.0, 0.0, -0.20]], dtype=torch.float64),
+            ),
+            (
+                torch.tensor([[1.0, 1.5, 180.0]], dtype=torch.float64),
+                torch.tensor([-40.0], dtype=torch.float64),
+                torch.tensor([[0.01, 0.0, -0.05]], dtype=torch.float64),
+                torch.tensor([[0.0, 0.0, 0.05]], dtype=torch.float64),
+            ),
+        ]
+        keys = ("hold", "decel", "corridor", "attitude")
+        accumulated = {k: torch.zeros((), dtype=torch.float64) for k in keys}
+        for prev, cur in zip(states[:-1], states[1:]):
+            _, comps = rocket_shaping(
+                cfg,
+                cur[0],
+                prev[0],
+                cur[1],
+                prev[1],
+                cur[2],
+                prev[2],
+                cur[3],
+                prev[3],
+                torch.zeros(1, dtype=torch.bool),
+                torch.zeros(1, dtype=torch.float64),
+                torch.zeros(1, dtype=torch.bool),
+                torch.zeros(1, dtype=torch.bool),
+            )
+            for k in keys:
+                accumulated[k] += comps[k].sum()
+        phi_start = _aux_potential(cfg, *states[0])
+        phi_end = _aux_potential(cfg, *states[-1])
+        total = sum(accumulated.values())
+        torch.testing.assert_close(total, (phi_end - phi_start).sum())
 
     def test_f9_real_tank_mass_inertia_and_flow(self):
         import yaml

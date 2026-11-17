@@ -770,6 +770,9 @@ class Falcon9Env:
         active = ~(self.terminated | self.truncated)
         pos_s = self.vehicle.get_pos().clone()
         vel_s = self.vehicle.get_vel().clone()
+        quat_s = self.vehicle.get_quat().clone()
+        ang_s = self.vehicle.get_ang().clone()
+        w_body_s = rotate_world_to_body(quat_s, ang_s)
         # contact_pad tracks "had ANY contact in this policy step" (for shaping)
         self.contact_pad.fill_(False)
         # contact_vz_first tracks "vz at first contact in THIS policy step"
@@ -851,7 +854,9 @@ class Falcon9Env:
             pos_e,
             vel_e[:, 2],
             vel_s[:, 2],
+            quat_s,
             quat_e,
+            w_body_s,
             w_body,
             self.contact_pad,
             self.contact_vz_first,

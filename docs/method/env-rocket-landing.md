@@ -124,32 +124,35 @@ One dense reward per **policy** step, computed from whole-step state deltas
 
 \begin{align}
 r_{\text{hover}} &= -0.3, \tag{1a}\\
-r_{\text{hold}} &= \frac{0.005}{\lVert p_{xy}\rVert + 0.1}\ \le 0.05, \tag{1b}\\
-r_{\text{lateral}} &= 10\,\big(\lVert p_{xy}^{-}\rVert - \lVert p_{xy}\rVert\big), \tag{1c}\\
-r_{\text{descent}} &= 0.1\,(z^{-} - z), \tag{1d}\\
-r_{\text{decel}} &= 0.1\,(\Delta v_z + 1)\,e^{-\max(z,0)}\,\sigma(v_z),
-\quad \sigma(v_z) = \begin{cases}+1 & v_z < 0\\ -1 & \text{otherwise,}\end{cases} \tag{1e}\\
-r_{\text{attitude}} &= -0.5\,|\omega_{b,z}| - 0.5\,\sqrt{\phi^{2}+\theta^{2}}, \tag{1f}\\
-r_{\text{contact}} &= \mathbb{1}[\text{any pad contact}]\cdot\big(0.5 - 1.0\,|v_{z,c}|\big), \tag{1g}\\
-r_{\text{corridor}} &= -0.5\,\mathrm{relu}\big(-v_z - (0.5 + \sqrt{2\cdot 2\,z})\big), \tag{1h}\\
-r_{\text{success}} &= 5000\cdot\mathbb{1}[\text{first settle this step}], \tag{1i}\\
-r_{\text{fatal}} &= -500\cdot\mathbb{1}[\text{new terminal transition}], \tag{1j}
+\Phi_{\text{aux}}(s) &= \frac{0.005}{\lVert p_{xy}\rVert + 0.1}
+ - 0.1\,e^{-\max(z,0)}\,|v_z|
+ - 10\,|\omega_{b,z}| - 10\,\sqrt{\phi^{2}+\theta^{2}}
+ - 8\,\mathrm{relu}\big(-v_z - (0.5 + \sqrt{2\cdot 2\,z})\big), \tag{1b}\\
+r_{\text{hold}} + r_{\text{decel}} + r_{\text{attitude}} + r_{\text{corridor}}
+ &= \Phi_{\text{aux}}(s) - \Phi_{\text{aux}}(s^{-}), \tag{1c}\\
+r_{\text{lateral}} &= 10\,\big(\lVert p_{xy}^{-}\rVert - \lVert p_{xy}\rVert\big), \tag{1d}\\
+r_{\text{descent}} &= 0.1\,(z^{-} - z), \tag{1e}\\
+r_{\text{contact}} &= \mathbb{1}[\text{any pad contact}]\cdot\big(0.5 - 1.0\,|v_{z,c}|\big), \tag{1f}\\
+r_{\text{success}} &= 5000\cdot\mathbb{1}[\text{first settle this step}], \tag{1g}\\
+r_{\text{fatal}} &= -500\cdot\mathbb{1}[\text{new terminal transition}], \tag{1h}
 \end{align}
 
-where $(\cdot)^{-}$ denotes the policy-step start, $\Delta v_z$ the whole-step
-change in vertical velocity, and $v_{z,c}$ the world descent speed at the first
-contact inner step. The total is $r = \sum_k r_k$; per-component sums are
-accumulated into `reward_components` and reported as `rew_*` metrics. Design
-rationale (discounted-return analysis at $\gamma = 0.995$): the success bonus
-satisfies $B = 5000 \gg \gamma c/(1-\gamma) \approx 70$ for the maximum
-sustainable per-step contact stream $c$, so delaying a reachable success is
-never profitable; the corridor (1h) bounds the descent speed by the
-conservative feasible profile $v_{\text{allow}}(z)$ and the one-shot fatal cost
-(1j) makes a crash-dive return negative instead of letting it escape the
-remaining hover cost; the hold term is capped
-at 0.05 per step, below the 0.3 hover cost, so station-keeping cannot be farmed
-either. All coefficients are constructor-overridable via the `reward` dict and
-recorded into `cfg` / `run.json` for the evolution sweep arms.
+where $(\cdot)^{-}$ denotes the policy-step start, $s^{-}$ its full state, and
+$v_{z,c}$ the world descent speed at the first contact inner step. The
+auxiliary terms are potential-based: their episode sum telescopes to
+$\Phi_{\text{aux}}(s_T) - \Phi_{\text{aux}}(s_0)$. The total is
+$r = \sum_k r_k$; per-component sums are accumulated into `reward_components`
+and reported as `rew_*` metrics. Design rationale (discounted-return analysis
+at $\gamma = 0.995$): the success bonus satisfies
+$B = 5000 \gg \gamma c/(1-\gamma) \approx 70$ for the maximum sustainable
+per-step contact stream $c$, so delaying a reachable success is never
+profitable; the corridor term in $\Phi_{\text{aux}}$ bounds the descent speed
+by the conservative feasible profile $v_{\text{allow}}(z)$ and the one-shot
+fatal cost (1h) makes a crash-dive return negative instead of letting it escape
+the remaining hover cost; the hold term is a potential, so sustained
+station-keeping cannot farm a per-step stream. All coefficients are
+constructor-overridable via the `reward` dict and recorded into `cfg` /
+`run.json` for the evolution sweep arms.
 
 ## 7. Success, termination, and truncation
 
@@ -235,7 +238,8 @@ mask of Section 7.
 | `num_actions` / obs dim | 7 / 30 |
 | `HOVER_COST` / `HOLD_COEF` | 0.3 / 0.005 |
 | `LATERAL_COEF` / `DESCENT_COEF` / `DECEL_COEF` | 10.0 / 0.1 / 0.1 |
-| `YAW_COEF` / `TILT_COEF` | 0.5 / 0.5 |
+| `YAW_COEF` / `TILT_COEF` | 10 / 10 (potential, calibrated 2026-11-17) |
+| `CORRIDOR_COEF` | 8 (potential; worst-case range ~500) |
 | `CONTACT_BASE` / `CONTACT_VEL_COEF` / `SUCCESS_BONUS` | 0.5 / 1.0 / 5000.0 |
 | `ic_xy_half` / `ic_z_min` / `ic_euler_half` | 20 m / 400 m (span 50) / 0.3 rad |
 | min / max thrust; gimbal range | 2966.7 / 7607.0 N; $\pm5^{\circ}$ |

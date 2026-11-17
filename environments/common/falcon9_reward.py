@@ -31,6 +31,10 @@ Why these numbers?
 The reward function is called ONCE per POLICY step (50 Hz), using state
 snapshots at the START and END of the 10 physics substeps. Contact info
 is accumulated inside the substep loop.
+
+The state-only auxiliary terms (hold, decel, attitude) are potential-based:
+each component is Phi(s_t) - Phi(s_{t-1}), so their episode sum telescopes.
+Hover is a constant time pressure; contact/success are events.
 """
 
 from __future__ import annotations
@@ -134,7 +138,9 @@ def falcon9_shaping(
     pos_now: Tensor,
     vel_z_now: Tensor,
     vel_z_prev: Tensor,
+    quat_prev: Tensor,
     quat_now: Tensor,
+    body_omega_prev: Tensor,
     body_omega_now: Tensor,
     contact_pad: Tensor,
     contact_vz: Tensor,
@@ -149,7 +155,9 @@ def falcon9_shaping(
         pos_now:  (N, 3) world position at END of policy step
         vel_z_now: (N,) world z velocity at step end (m/s)
         vel_z_prev: (N,) world z velocity at step start (m/s)
+        quat_prev: (N, 4) wxyz world quaternion at step start
         quat_now: (N, 4) wxyz world quaternion at step end
+        body_omega_prev: (N, 3) body-frame angular rate at step start (rad/s)
         body_omega_now: (N, 3) body-frame angular rate at step end (rad/s)
         contact_pad: (N,) bool — any pad contact during this policy step
         contact_vz: (N,) world descent speed at FIRST pad contact substep (m/s)
@@ -157,29 +165,30 @@ def falcon9_shaping(
 
     Returns:
         total reward (N,), component dict with per-key (N,) tensors
+
+    The auxiliary terms (hold, decel, attitude) are potential-based: each
+    component is Phi(s_t) - Phi(s_{t-1}), so their episode sum telescopes.
+    Hover is a constant time pressure; contact/success are events.
     """
     dxy_prev = pos_prev[:, :2].norm(dim=-1)
     dxy_now = pos_now[:, :2].norm(dim=-1)
     dz = pos_prev[:, 2] - pos_now[:, 2]  # positive = descending
-    dvz = vel_z_now - vel_z_prev
 
-    z_clamped = pos_now[:, 2].clamp_min(0.0)
-    vz_sign = torch.where(vel_z_now < 0, 1.0, -1.0)  # vz<0 descending → +1
-    decel = (dvz + 1.0) * torch.exp(-z_clamped) * vz_sign
+    z_now = pos_now[:, 2].clamp_min(0.0)
+    z_prev = pos_prev[:, 2].clamp_min(0.0)
 
-    tilt = _body_tilt_from_quat(quat_now)
-    yaw_abs = body_omega_now[:, 2].abs()  # body-frame z = vehicle axis; yaw rate
-    # body_omega: body-frame, so components are roll, pitch, yaw — standard
-    # body omega convention gives [ω_roll, ω_pitch, ω_yaw] if x=right, y=forward, z=up
-    # Falcon 9 uses body z up (vehicle axis), so yaw = ω_z
+    tilt_now = _body_tilt_from_quat(quat_now)
+    tilt_prev = _body_tilt_from_quat(quat_prev)
 
     comps = {
         "hover": torch.full_like(dxy_now, -cfg["hover"]),
-        "hold": cfg["hold"] / (dxy_now + 0.1),
+        "hold": cfg["hold"] * (1.0 / (dxy_now + 0.1) - 1.0 / (dxy_prev + 0.1)),
         "lateral": cfg["lateral"] * (dxy_prev - dxy_now),
         "descent": cfg["descent"] * dz,
-        "decel": cfg["decel"] * decel,
-        "attitude": (-cfg["yaw"] * yaw_abs - cfg["tilt"] * tilt),
+        "decel": -cfg["decel"]
+        * (torch.exp(-z_now) * vel_z_now.abs() - torch.exp(-z_prev) * vel_z_prev.abs()),
+        "attitude": -cfg["yaw"] * (body_omega_now[:, 2].abs() - body_omega_prev[:, 2].abs())
+        - cfg["tilt"] * (tilt_now - tilt_prev),
         "contact": torch.where(
             contact_pad,
             cfg["contact_base"] - cfg["contact_vel"] * contact_vz.abs(),

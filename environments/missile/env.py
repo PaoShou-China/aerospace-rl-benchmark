@@ -36,8 +36,9 @@ decision):
 
 Reward (per inner step, only while active):
   +0.01 * (d_prev - d)          telescoping closing-progress potential
-  +0.01 * (v_hat . r_hat)       velocity/LOS alignment (dense PN-consistent
-                                guidance shaping; the from-scratch signal)
+  +Delta[0.01 * (v_hat . r_hat)] velocity/LOS alignment potential difference
+                                (dense PN-consistent guidance shaping; the
+                                from-scratch signal)
   +100 on kill (once)
   -10 * min(d_min / 500 m, 1) on unrecoverable miss (once)
 The guidance term is selectable via the `reward_variant` ctor kwarg (default
@@ -127,6 +128,21 @@ def _zem(r, v_rel):
     return (r - along * v_rel).norm(dim=-1)
 
 
+def _align_potential(p, v, r_w, gate_radius=None):
+    """Potential of the velocity/LOS alignment guidance term.
+
+    Returns K_ALIGN * (v_hat . r_hat), optionally gated to the terminal
+    range where the correction pays off. The shaping reward is the stepwise
+    decrease of this potential (Phi_t - Phi_{t-1}).
+    """
+    v_hat = v / v.norm(dim=-1, keepdim=True).clamp_min(1.0)
+    r_hat = r_w / r_w.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+    phi = K_ALIGN * (v_hat * r_hat).sum(-1)
+    if gate_radius is not None:
+        phi = phi * (r_w.norm(dim=-1) < gate_radius).to(phi.dtype)
+    return phi
+
+
 OMEGA_MAX = 6.0  # roll-rate command limit [rad/s]
 OMEGA_LAT = 1.0  # pitch/yaw rate command limit [rad/s]. Raised 0.5 -> 1.0 on
 # 2026-10-24 for vanilla-PPO learnability: the steady
@@ -205,11 +221,11 @@ V_T = 250.0  # target speed [m/s]
 V_M0 = 250.0  # missile launch speed [m/s]
 Z_MID = 4000.0  # engagement altitude [m]
 K_PROG = 0.01  # closing-progress gain per metre
-K_ALIGN = 0.01  # velocity/LOS alignment gain (dense PN-shaped guidance signal).
-# Halved 0.02 -> 0.01 on 2026-10-28 (run 1 diagnosis): the
-# lead-aim ballistic policy already maxes this term (~8.7/ep,
-# constant across all training phases), so at 0.02 it inflated
-# the do-nothing return and diluted the kill differential.
+K_ALIGN = 20.0  # alignment potential gain (velocity/LOS guidance signal).
+# Potential-based since 2026-11-17: the reward is
+# Phi_align(s_t)-Phi_align(s_{t-1}) with Phi_align = K_ALIGN*(v_hat . r_hat).
+# Calibrated 0.01 -> 20.0 to restore the previous gradient order; the potential
+# range stays 20 (< KILL_BONUS/4).
 K_ZEM = 10.0  # zero-effort-miss shaping gain (2026-10-29, 'zem' variant).
 # NOT the default: measured against APN vs the zero policy the
 # instantaneous ZEM barely moves along a ballistic trajectory
@@ -413,6 +429,7 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         self.dist = zeros(num_envs)  # current missile-target range
         self.dist_prev = zeros(num_envs)  # range at the previous inner-step boundary
         self.zem_prev = zeros(num_envs)  # zero-effort miss at the previous boundary
+        self.align_prev = zeros(num_envs)  # alignment potential at the previous boundary
         self.target_pos = zeros(num_envs, 3)
         self.target_vel = zeros(num_envs, 3)
         self.seeker_lock = torch.ones(num_envs, device=self.device, dtype=torch.bool)
@@ -683,6 +700,16 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         """One control step: target motion, physics substeps, observation, reward."""
         active = ~(self.terminated | self.truncated)
         self.dist_prev.copy_(torch.where(active, self.dist, self.dist_prev))
+        if self.reward_variant != "zem":
+            p0, _, v0, _ = self.plant.state()
+            gate = ZEM_GATE if self.reward_variant == "align_gated" else None
+            self.align_prev.copy_(
+                torch.where(
+                    active,
+                    _align_potential(p0, v0, self.target_pos - p0, gate),
+                    self.align_prev,
+                )
+            )
         self.plant.clear_contacts()
         self.plant.controller(self.action, active)
         kill_ev = torch.zeros_like(active)
@@ -786,9 +813,10 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         # No effort term: it drove commands to zero and opposed the terminal
         # corrections that produce kills. The terminal miss cost grades
         # near-misses by their closest approach instead.
-        # 'graded_terminal' shapes on velocity/LOS alignment, which the lead
-        # aim already maxes out; 'zem' shapes on the zero-effort miss, whose
-        # stepwise decrease telescopes to the miss-distance improvement.
+        # 'graded_terminal' shapes on the velocity/LOS alignment potential
+        # difference, which the lead aim already nearly maxes out; 'zem' shapes
+        # on the zero-effort miss, whose stepwise decrease telescopes to the
+        # miss-distance improvement.
         progress = K_PROG * (self.dist_prev - self.dist)
         if self.reward_variant == "zem":
             zem = _zem(r_w, v_rel)
@@ -796,11 +824,8 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
             guide = K_ZEM * inside * (self.zem_prev - zem) / ZEM_REF
             self.zem_prev.copy_(torch.where(active, zem, self.zem_prev))
         else:
-            v_hat = v / v.norm(dim=-1, keepdim=True).clamp_min(1.0)
-            r_hat = r_w / r2.clamp_min(1e-6).sqrt()[:, None]
-            guide = K_ALIGN * (v_hat * r_hat).sum(-1)
-            if self.reward_variant == "align_gated":
-                guide = guide * (self.dist < ZEM_GATE).to(guide.dtype)
+            gate = ZEM_GATE if self.reward_variant == "align_gated" else None
+            guide = _align_potential(p, v, r_w, gate) - self.align_prev
         # terminal events pay once per episode: `complete`/`miss_flag` are
         # sticky within the episode, while `active` is recomputed per inner
         # step (an episode that killed on inner step 1 is still "active" on
@@ -1082,6 +1107,14 @@ class MissileInterceptEnv(BaseEnv, ResidualActionMixin):
         if self.reward_variant == "zem":
             self.zem_prev.copy_(
                 sel(_zem(self.target_pos - p_new, self.target_vel - v_new), self.zem_prev)
+            )
+        else:
+            gate = ZEM_GATE if self.reward_variant == "align_gated" else None
+            self.align_prev.copy_(
+                sel(
+                    _align_potential(p_new, v_new, self.target_pos - p_new, gate),
+                    self.align_prev,
+                )
             )
         self.min_distance.copy_(sel(torch.full_like(dist, 1e9), self.min_distance))
         self.count.masked_fill_(mask, 0)

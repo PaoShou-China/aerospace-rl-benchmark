@@ -185,15 +185,17 @@ components matching the `reward_components` keys:
 
 \begin{align}
 r_{\text{progress}} &= 0.01\,(d^{-} - d) && \text{telescoping closing progress}, \tag{2a}\\
-r_{\text{align}} &= 0.01\,(\hat v\cdot \hat r) && \text{velocity/LOS alignment}, \tag{2b}\\
+r_{\text{align}} &= \Phi_{\text{align}}(s) - \Phi_{\text{align}}(s^{-}),
+\quad \Phi_{\text{align}} = 20\,(\hat v\cdot \hat r) && \text{alignment potential difference}, \tag{2b}\\
 r_{\text{kill}} &= +100 && \text{once, on kill}, \tag{2c}\\
 r_{\text{miss}} &= -10\min(d_{\min}/500\,\text{m},1) && \text{once, on unrecoverable miss}. \tag{2d}
 \end{align}
 
-with $d^{-}$ the range at the previous inner-step boundary. The alignment term
-is the dense, PN-consistent guidance shaping: potential-like and locally
-computable, and unlike a penalty on $\lVert\lambda\rVert$ it cannot be gamed
-by flying away from the target.
+with $d^{-}$ the range and $s^{-}$ the state at the previous inner-step boundary.
+The alignment term is the dense, PN-consistent guidance shaping, expressed as a
+potential difference: it is locally computable and, unlike a penalty on
+$\lVert\lambda\rVert$, cannot be gamed by flying away from the target. Its
+episode sum telescopes to the terminal alignment potential.
 
 ## 8. Success, termination, and truncation
 
@@ -292,7 +294,7 @@ Section 8.
 | `KILL_RADIUS` | 15.0 m |
 | `R_SPAWN` / `CONE` / `A_LAT` / `F_WEAVE` | 2500 m / 37.5° / 7.5 g / 0.75 Hz |
 | `V_T` / `V_M0` / `Z_MID` | 250 / 250 m/s / 4000 m |
-| `K_PROG` / `K_ALIGN` | 0.01 / 0.01 |
+| `K_PROG` / `K_ALIGN` | 0.01 / 20 (alignment potential, calibrated 2026-11-17) |
 | `KILL_BONUS` / `MISS_PENALTY` / `MISS_REF` / `TGO_SCALE` | +100 / −10 / 500 m / 0.8 |
 | mass / boost thrust / burn time | 150 kg / 20 000 N / 4.0 s |
 | `vel_clamp` | 1200 m/s, 40 rad/s |
