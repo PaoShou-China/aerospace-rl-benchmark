@@ -2190,10 +2190,10 @@ class TensorPlant:
                     self.rocket_variation.sample(mask)
 
     def warmup(self, mask, iterations=None, nonempty=None):
-        """Settling warmup with zero command on the masked slots (upstream: 10 steps).
+        """Settling warmup with zero command on the masked slots.
 
-        ``iterations`` defaults to ``self.warmup_iterations`` (1; the upstream
-        value is 10, pass ``warmup_iterations=10`` to restore it).
+        ``iterations`` defaults to ``self.warmup_iterations`` (10, the upstream
+        PyFlyt value; see the measured 10/1/0 ablation in ``__init__``).
         ``nonempty`` lets a caller that already knows whether ``mask`` selects
         any replica skip the host read below.
         """
