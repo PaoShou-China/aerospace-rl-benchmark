@@ -151,7 +151,7 @@ def as_env_mask(env, mask):
     return bool_mask
 
 
-def stage_domain_randomization(env, randomize_spec, seed, counter):
+def stage_domain_randomization(env, randomize_spec, seed, counter, *, replica_rng=None, mask=None):
     """Host half of :func:`apply_domain_randomization`: draw this reset's scales.
 
     The scales come from the seeded CPU generator exactly as before and are
@@ -162,7 +162,15 @@ def stage_domain_randomization(env, randomize_spec, seed, counter):
     staged = getattr(env, "_dr_staged", None)
     if staged is None:
         staged = env._dr_staged = {}
-    for name, value in sample_scales(spec, env.num_envs, env.device, seed, counter).items():
+    if replica_rng is None:
+        values = sample_scales(spec, env.num_envs, env.device, seed, counter)
+    else:
+        draws = replica_rng.uniform(len(spec), mask)
+        values = {
+            name: low + (high - low) * draws[:, j]
+            for j, (name, (low, high)) in enumerate(spec.items())
+        }
+    for name, value in values.items():
         if name not in env.PERTURBABLE_PARAMS:
             raise KeyError(f"{type(env).__name__}: unknown perturbable param {name!r}")
         current = staged.get(name)

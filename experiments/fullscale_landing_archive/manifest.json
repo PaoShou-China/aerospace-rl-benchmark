@@ -1,0 +1,45 @@
+{
+  "kind": "curated recovered aggregate records; not a reproduction",
+  "removed_fields": [
+    "bc_cutoff",
+    "collection_cutoff",
+    "deadline_epoch",
+    "device",
+    "freeze_epoch",
+    "ppo_cutoff",
+    "previous_deadline_epoch",
+    "previous_training_cutoff_epoch",
+    "start_epoch",
+    "training_cutoff_epoch"
+  ],
+  "files": {
+    "plan.json": {
+      "original_sha256": "ad9acb95982904b90a248e83fe01e68379fd94f9ad5745b782669f1aa86e22b5",
+      "curated_sha256": "d74aafaafd26c8bb7e239f8f844b453b63c2b2901d0cf3fc8a7598801331ecbd"
+    },
+    "results.json": {
+      "original_sha256": "4dbeb953baab041644cd90a3d812613a00af3fe91a15d31a6b92652e4ee9c1eb",
+      "curated_sha256": "1ba27b1918868f1641a64bdbab7e4836919f0888c59c44bdc584a911b2ed758d"
+    },
+    "scaling_plan.json": {
+      "original_sha256": "dda2ebdd52cba67cb2b08517ba92ee6daf304a58055cd43da765c62e4fc602f0",
+      "curated_sha256": "ddaf1dd8f83880fe3eec7385649c1633ac140aeea2a90ff02a4b84672bbbbdd2"
+    },
+    "scaling_choice.json": {
+      "original_sha256": "e2b449e7e8b31fdccfe91cc0e925edce2a57a3f4a2603da150a1f6031393aab5",
+      "curated_sha256": "b569ab37c721d31093ad0b0b11b24bcc2b41279e600bfb3df254be06d1d22ba6"
+    },
+    "scaling_freeze.json": {
+      "original_sha256": "21d637546d9fa82fb72ac9586bf85fa67241831bd251150bbac1f2d3cebd883b",
+      "curated_sha256": "21d637546d9fa82fb72ac9586bf85fa67241831bd251150bbac1f2d3cebd883b"
+    },
+    "scaling_final_choice.json": {
+      "original_sha256": "4043b8078e4de9cca9e1fa6a2190787eaf7c176e3f184fbe23f37720de62b5c6",
+      "curated_sha256": "4043b8078e4de9cca9e1fa6a2190787eaf7c176e3f184fbe23f37720de62b5c6"
+    },
+    "scaling_results.json": {
+      "original_sha256": "cb31bf701116b2857a520d9486dfa3b5eb6dd8c33e5387b205877b056aefe448",
+      "curated_sha256": "cb31bf701116b2857a520d9486dfa3b5eb6dd8c33e5387b205877b056aefe448"
+    }
+  }
+}

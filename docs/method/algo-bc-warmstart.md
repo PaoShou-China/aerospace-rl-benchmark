@@ -32,9 +32,10 @@ trajectory. Expert actions are validated on collection: shape $(N, A)$ and devic
 env, and the first step must be finite and respect the env's action bound
 (`|a| ≤ clip_actions + 1e-6`, bound default $1$); violations raise immediately. The collector
 returns device-resident tensors $\mathrm{obs}\,(T,N,d_{\mathrm{obs}})$,
-$\mathrm{act}\,(T,N,A)$ (float32), $\mathrm{rew}\,(T,N)$ and $\mathrm{done}\,(T,N)$ (bool, marking
-the env auto-reset at that step). A task whose env declares no `conventional_controller` raises
-`RuntimeError`.
+$\mathrm{act}\,(T,N,A)$ (float32), $\mathrm{rew}\,(T,N)$, $\mathrm{done}\,(T,N)$ (bool, marking
+the env auto-reset at that step), plus $\mathrm{terminated}\,(T,N)$ and $\mathrm{success}\,(T,N)$
+masks used by the curation step. `steps=None` rolls one full episode horizon
+(`env.max_steps`). A task whose env declares no `conventional_controller` raises `RuntimeError`.
 
 ## 3. Fitting
 
@@ -52,8 +53,11 @@ is regressed onto the empirical $\gamma$-discounted returns-to-go of the same ro
 G_t = r_t + \gamma\,(1-d_t)\,G_{t+1},\qquad
 L_{\mathrm{critic}} = \frac1{|\mathcal B|}\sum_{i\in\mathcal B}\big(V_\phi(s_i) - G_i\big)^2, \tag{3}
 \end{equation}
-computed by a backward recursion whose accumulator is cut at every episode boundary (`returns_to_go`),
-with a second Adam over the critic's parameters. Both models' empirical input normalizers are
+computed by a boundary-aware backward recursion (`returns_to_go`): the accumulator is cut at every
+episode boundary, success (recorded by the env as a truncation) and task violations are treated as
+true terminals with zero terminal value, and plain timeout tails are marked invalid and excluded
+from the critic unless a bootstrap value is supplied. A second Adam optimizes the critic's
+parameters. Both models' empirical input normalizers are
 refit on the BC data with `update_normalization()` per batch, mirroring what PPO's own update path
 does, so the warm start also calibrates the input whitening to the expert's state distribution. The
 exploration standard deviation is deliberately untouched: it is PPO's exploration knob, not a BC
@@ -80,31 +84,65 @@ collection steps are not counted among PPO's interaction steps).
 
 `BC_DEFAULTS`: `steps=512` vectorized env steps of expert data, `epochs=100` supervised epochs,
 `batch_size=8192`, `lr=10^{-3}` (a separate Adam over the actor's — and critic's — parameters),
-`gamma=None` ($\to$ the PPO config's $\gamma$), `fit_critic=True`. At the standard $N=1024$
-replicas this yields $M = 512\times1024 = 524{,}288$ supervised pairs, 64 mini-batches per epoch
-and $100\times64 = 6400$ gradient steps per network. The per-task train entries currently ship
-with `BC_WARMSTART=None` (warm start disabled); enabling it requires only a dict, e.g.
-`bc_warmstart={}` for the shared defaults. BC inherits the frozen expert's ceiling — the audited
+`gamma=None` ($\to$ the PPO config's $\gamma$), `fit_critic=True`. `steps=None` collects one full
+episode horizon from the env (`env.max_steps`); tasks whose expert episode outlasts 512 steps
+(quadx, quadx_track, fixedwing, quadplane, rocket, missile, rendezvous) use it so the expert data
+covers the complete trajectory instead of only its first seconds. Because most of a long episode is
+low-information steady flight, `select` keeps only the most informative transitions, following the
+demonstration-curation literature: episodes are located per replica (from the done mask) and each
+episode is split into 8 equal phases (broad coverage matters more than difficulty alone — *Less is
+More: On Data Redundancy in VLA Training*), with the per-replica budget distributed across its
+episodes and phases. Terminal-type tasks (rocket, missile, docking, rendezvous) rank steps by the
+Temporal Surprise Score (TSS, the magnitude of the expert's action change — *Less is More*; action
+changepoints are the keyframes of *Keyframe-Focused Visual Imitation Learning*), max-pooled over ±2
+temporal neighbours so keyframes stay dense clusters; tracking/cruise tasks (quadx, quadx_track,
+fixedwing, quadplane, satellite, transfer) use stratified-uniform coverage, because the redundancy
+study finds broad coverage beats difficulty ranking there. A bonus on the steps just before a *true*
+episode end (success or task violation, not timeouts) keeps the precision-critical terminal approach
+dense (cf. *ESPADA*). Failed expert episodes are dropped by default (`drop_failed=True`, falling back
+to keeping everything when a split has no success), as the curation literature recommends removing
+suboptimal demonstrations; a safety floor disables filtering when fewer than 10% of episode ends
+succeeded, so a near-zero-success expert cannot wipe the dataset. Critic targets are computed on the FULL trajectory first and gathered with
+the same indices, so selection never biases the return-to-go. Set `select=None` to train on every
+collected step; `method='uniform'` / `'tss'` explicitly overrides the per-task choice. The dataset-fit
+branch (`bc_warmstart['dataset']`, used by the controller-prior study's `collect_bc.py` /
+`collect_dagger.py` → `train_arm.py` pipeline) applies the same per-episode selection through
+`select_informative_indices_flat` and computes boundary-aware targets with the vectorised
+`returns_to_go_flat`; the episode-disjoint train/val split is preserved. `bc_val_fraction>0` withholds
+that fraction of replicas as a BC validation set (monitoring only — the protocol forbids early
+stopping) so curation variants can be compared on held-out expert actions via
+`scripts/bc_selection_ablation.py`. At the standard $N=1024$
+replicas this yields at most $M = 512\times1024 = 524{,}288$ supervised pairs, 64 mini-batches per
+epoch and $100\times64 = 6400$ gradient steps per network. The per-task train entries ship with the
+curated warm start enabled (`BC_WARMSTART` with `steps=None` for long-horizon tasks). Cached shared
+BC checkpoints carry a recipe fingerprint (`BC_RECIPE_VERSION` + resolved selector) and are refitted
+automatically when the curation recipe changes. BC inherits the frozen expert's ceiling — the audited
 controller success rates are 100% on quadx/docking/rendezvous/transfer/satellite, $\sim$75% on
 fixedwing and $\sim$84% on rocket — so warm-started arms are reported alongside the expert success
 rate.
 
 ## 6. Documented limitation: rocket
 
-BC warm start is known to fail on the rocket-landing task. The rocket's PDG expert ends its
-suicide burn with a terminal bang-bang pulse servo profile, and MSE regression averages that
+BC warm start is known to be structurally hard on the rocket-landing task. The rocket's PDG expert
+ends its suicide burn with a terminal bang-bang pulse servo profile, and MSE regression averages that
 switching structure away: the distilled policy emits the time-average of the thrust command instead
 of the pulse, which is not executable closed-loop. Measured 2026-10-24 in the reward-evolution
 harness (`environments/rocket/evolve_reward.py`, generation g1): all BC arms finished at 0% success
-with a measured BC closed-loop success rate of 0% and zero pad touches. Generation g2 therefore
-drops BC entirely (arms suffixed `_nb`, training from the zero-init do-nothing policy), and
-`train_rocket.py` ships with `BC_WARMSTART=None`. This is a structural limitation of
-MSE-distilling a near-bang-bang expert, not a defect of the other tasks' smooth experts.
+with a measured BC closed-loop success rate of 0% and zero pad touches. The curation recipe now
+records the full 60 s episode and emphasises the ignition/landing-burn changepoints (`method='tss'`
+for rocket), but this does not remove the bang-bang regression limit; treat warm-started rocket arms
+as an empirical question and check them with `scripts/bc_selection_ablation.py` / closed-loop eval,
+not as a guaranteed gain. `evolve_reward.py` can still disable BC per arm (`_nb` suffix). This is a
+limitation of MSE-distilling a near-bang-bang expert, not a defect of the other tasks' smooth
+experts.
 
 ## 7. Implementation
 
-- File: `algorithms/warmstart/bc_warmstart.py` (`collect_expert`, `returns_to_go`,
-  `fit_behavior_cloning`, `BC_DEFAULTS`); wiring in `algorithms/train_utils.py:run_training`.
+- File: `algorithms/warmstart/bc_warmstart.py` (`collect_expert`, `returns_to_go` /
+  `returns_to_go_flat`, `select_informative_pairs` / `..._indices_flat` /
+  `..._indices_rollout`, `fit_behavior_cloning`, recipe fingerprint + sidecar);
+  wiring in `algorithms/train_utils.py:run_training`; curation ablation in
+  `scripts/bc_selection_ablation.py`.
 
 | Constant | Value |
 |---|---|
@@ -128,3 +166,11 @@ MSE-distilling a near-bang-bang expert, not a defect of the other tasks' smooth 
   for Mars Landing," JGCD — the PDG family of the rocket expert referenced in Section 6.
 - Schulman, J. et al. (2017), "Proximal Policy Optimization Algorithms," arXiv:1707.06347 — the
   RL stage that refines the warm start.
+- Wen, C. et al. (2021), "Keyframe-Focused Visual Imitation Learning," ICML — upweighting expert
+  action changepoints; basis for the keyframe/TSS ranking.
+- "Less is More: On Data Redundancy in VLA Training," OpenReview — temporal surprise score and the
+  finding that broad coverage can beat difficulty-based frame selection.
+- "ESPADA: Execution Speedup via Semantics Aware Demonstration Data Downsampling for Imitation
+  Learning," arXiv:2512.07371 — preserving precision-critical phases while dropping transit frames.
+- "SCIZOR: A Self-Supervised Approach to Data Curation for Large-Scale Imitation Learning,"
+  OpenReview — removing suboptimal and redundant demonstrations (basis for `drop_failed`).

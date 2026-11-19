@@ -1,0 +1,13 @@
+{
+  "scope": "CPU Genesis software integration only",
+  "new_transitions_requested": 16,
+  "remote_gpu_connected": false,
+  "performance_evaluation_run": false,
+  "landing_success_rate": null,
+  "status": "passed",
+  "new_transitions_completed": 16,
+  "completed_updates": 1,
+  "checkpoint_saved": true,
+  "historical_transitions": 6225920,
+  "wall_seconds": 102.29600264499999
+}

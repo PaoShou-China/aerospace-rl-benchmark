@@ -183,3 +183,4 @@ available in git history.
   `env_kwargs` from `config.json`); rocket reward is v5; rocket 84.1% is v1
   instantaneous, not v2; baseline sample sizes are 128 (protocol) / 256
   (variants), not 1024; sigma-pin mechanism retired (default Beta policy).
+- **2026-11-14 — Full-scale Falcon 9 landing (v1).** The primary score now uses `terminal_stable_2s` to measure final recovery. The vehicle must be settled on the pad throughout the final two seconds. A later crash counts as failure. Complete historical cohorts with a terminal count support aggregate rescoring. Individual episode labels require a replay.

@@ -18,6 +18,7 @@ class RocketIntegrationTests(unittest.TestCase):
                 obs, _, _, _, _ = env.step(action)
             self.assertTrue(torch.isfinite(obs["policy"]).all())
             self.assertEqual(env.cfg["benchmark"]["version"], "v2")
+            self.assertEqual(env.cfg["benchmark"]["primary_metric"], "ever_stable_2s")
         finally:
             env.close()
         env = RocketLandingEnv(2, "cpu", 23000007, variation="shifted", dryden=0.3)
@@ -44,7 +45,7 @@ class RocketIntegrationTests(unittest.TestCase):
             # Default domain randomization does not touch dry mass, so the
             # total must be exactly nominal dry mass + residual propellant.
             torch.testing.assert_close(
-                masses.to(torch.float64), 25600.0 + propellant, rtol=1e-3, atol=0.2
+                masses.to(torch.float64), 25600.0 + propellant.to(torch.float64), rtol=1e-3, atol=0.2
             )
             fuel_before = env.plant.fuel.clone()
             env.reset_idx(torch.tensor([True, False], device=env.device))

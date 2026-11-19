@@ -131,7 +131,7 @@
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="7.17 0 0.0"/>
+      <origin rpy="0 0 0" xyz="7.17 0 -3.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
@@ -152,7 +152,7 @@
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="0 7.17 0.0"/>
+      <origin rpy="0 0 0" xyz="0 7.17 -3.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
@@ -173,7 +173,7 @@
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="-7.17 0 0.0"/>
+      <origin rpy="0 0 0" xyz="-7.17 0 -3.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>
@@ -194,7 +194,7 @@
       <geometry><box size="0.3 0.3 5.0"/></geometry>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="0 -7.17 0.0"/>
+      <origin rpy="0 0 0" xyz="0 -7.17 -3.0"/>
       <geometry><sphere radius="0.5"/></geometry>
     </collision>
     <inertial>

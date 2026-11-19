@@ -1,0 +1,21 @@
+{
+  "successes": {
+    "ppo_11": 0,
+    "ppo_22": 0,
+    "ppo_33": 0,
+    "ppo_44": 0,
+    "scaled_ppo_11": 0,
+    "scaled_ppo_22": 0,
+    "scaled_ppo_33": 0,
+    "scaled_ppo_44": 0
+  },
+  "n_per_model": 1024,
+  "matched_update": 64,
+  "paired_difference": 0.0,
+  "crossed_seed_bootstrap_95": [
+    0.0,
+    0.0
+  ],
+  "complete": true,
+  "utc": "2026-11-16T00:39:08+00:00"
+}

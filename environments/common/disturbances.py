@@ -406,6 +406,10 @@ class WindDisturbance:
         return steady * scale[:, None]
 
     # -- public API ----------------------------------------------------------
+    def initial_wind(self, altitude):
+        """Wind at rest of the turbulence filter, without advancing its stream."""
+        return self._steady_at(altitude)
+
     def reset(self, env_ids=None):
         """Zero the filter states for (re)started replicas."""
         if self.model == "first_order":

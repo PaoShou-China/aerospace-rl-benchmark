@@ -1,0 +1,68 @@
+{
+  "checked_at_unix": 1792763778.4082942,
+  "status": {
+    "status": "completed",
+    "wall_seconds": 784.8530386649072,
+    "completed_cohorts": 4,
+    "planned_cohorts": 4,
+    "evaluation_summary": {
+      "denominator": 512,
+      "episodes_finished": 512,
+      "incomplete_episodes": 0,
+      "successes": 428,
+      "success_rate": 0.8359375,
+      "wilson_95_interval": [
+        0.8013798695270152,
+        0.8654916936591729
+      ],
+      "point_estimate_at_least_99_percent": false,
+      "wilson_lower_at_least_99_percent": false,
+      "complete_evaluation": true,
+      "failure_counts": {
+        "fatal_collision": 84
+      },
+      "final_settled_successes": 3,
+      "final_settled_rate": 0.005859375,
+      "final_settled_wilson_95_interval": [
+        0.0019946757921860923,
+        0.017083780683944113
+      ],
+      "success_then_failure": 214
+    }
+  },
+  "baseline_summary": {
+    "denominator": 512,
+    "episodes_finished": 512,
+    "incomplete_episodes": 0,
+    "successes": 419,
+    "success_rate": 0.818359375,
+    "wilson_95_interval": [
+      0.78263299633789,
+      0.8493441245885558
+    ],
+    "point_estimate_at_least_99_percent": false,
+    "wilson_lower_at_least_99_percent": false,
+    "complete_evaluation": true,
+    "failure_counts": {
+      "fatal_collision": 93
+    },
+    "final_settled_successes": 0,
+    "final_settled_rate": 0,
+    "final_settled_wilson_95_interval": [
+      0,
+      0.007446975722882739
+    ],
+    "success_then_failure": 201
+  },
+  "baseline_kind": "GPU DAgger epoch_160 initialization policy; not the original PPO training run",
+  "paired_comparison": {
+    "same_sample_ids": true,
+    "same_initial_states": true,
+    "gained_success": 79,
+    "lost_success": 70,
+    "both_success": 349,
+    "both_failure": 14
+  },
+  "delta_percentage_points": 1.7578125,
+  "checkpoint_sha256": "e8df5fae67071eadf474037e9b9237013185a47be78a6e47f5feb7e220933489"
+}

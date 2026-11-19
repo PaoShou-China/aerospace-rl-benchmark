@@ -66,7 +66,7 @@ __all__ = [
 ]
 
 
-def make(task, num_envs=64, backend="cpu", seed=7, **kwargs):
+def make(task, num_envs=64, backend="cpu", seed=7, *, civil_profile=None, **kwargs):
     """Construct a registered task environment.
 
     Parameters
@@ -75,6 +75,8 @@ def make(task, num_envs=64, backend="cpu", seed=7, **kwargs):
         One of the keys in :data:`ENV_REGISTRY`.
     num_envs, backend, seed
         The shared constructor prefix accepted by every environment.
+    civil_profile : str, optional
+        Opt-in civilian stress profile; its settings override task kwargs.
     **kwargs
         Task-specific constructor arguments (e.g. ``benchmark_version`` for
         ``rocket``, ``num_cmgs`` for ``satellite``).  Unknown kwargs raise
@@ -92,4 +94,13 @@ def make(task, num_envs=64, backend="cpu", seed=7, **kwargs):
     env_cls, defaults = ENV_REGISTRY[task]
     merged = dict(defaults)
     merged.update(kwargs)
-    return env_cls(num_envs=num_envs, backend=backend, seed=seed, **merged)
+    if civil_profile is not None:
+        from .civil_scenarios import scenario_kwargs
+
+        merged.update(scenario_kwargs(task, civil_profile, seed))
+    env = env_cls(num_envs=num_envs, backend=backend, seed=seed, **merged)
+    if civil_profile == "navigation_outage":
+        from .navigation_hold import NavigationHold
+
+        return NavigationHold(env, task, seed)
+    return env

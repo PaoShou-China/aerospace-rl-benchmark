@@ -10,6 +10,7 @@ replicas.
 
 from pathlib import Path
 import math
+import sys
 import torch
 import yaml
 from .atmosphere import P0, RHO0, drag_factor, isa
@@ -20,6 +21,10 @@ from .aerodynamics import LiftingSurfaceBatch
 # written into every run config so results remain attributable even though
 # the preset itself is not a frozen asset.
 REALISM_VERSION = "1.8"
+
+# Per-call attempts allowed when the rigid solver reports a NaN divergence
+# (see ``TensorPlant._step_scene``).  The budget resets on every call.
+_NAN_RETRY_MAX = 10
 
 # Project-authored realistic-mode settings.  The upstream PyFlyt YAML assets
 # are SHA-256 frozen, so new aerodynamic coefficients live here instead of in
@@ -403,6 +408,18 @@ class TensorPlant:
         # 1 whenever the state is already inside the cap, so nominal trajectories
         # (hover |v|<2 m/s, |w|<10 rad/s) are untouched.
         self.vel_clamp = None if vel_clamp is None else (float(vel_clamp[0]), float(vel_clamp[1]))
+        # Per-link force/torque magnitude clamp for the pre-apply safety net.
+        # Set well above each vehicle's physical maximum so nominal operation
+        # is untouched; only catches numerical blow-ups that would NaN the
+        # rigid solver.  Rocket (Falcon-9-class booster ~7.6e6 N) gets the
+        # largest bound.
+        self._force_clamp = {
+            "quadx": 1e3,
+            "fixedwing": 1e4,
+            "quadplane": 1e4,
+            "missile": 1e5,
+            "rocket": 1e7,
+        }.get(vehicle, 1e5)
         # Reset warmup length in "Aviary steps" (upstream value: 10).  Every
         # iteration advances the WHOLE scene ``physics_per_control`` times, so a
         # single-replica reset costs the same as a full reset regardless of the
@@ -434,7 +451,7 @@ class TensorPlant:
         c = self._geometry
         c._num_envs = n
         c.resetSimulation()
-        self.ground_id = c.loadURDF("plane.urdf", useFixedBase=True)
+        self.ground_id = c.loadURDF("plane.urdf", useFixedBase=True, globalScaling=11 if vehicle == "rocket" and rocket_benchmark == "v1" else 1)
         model = {
             "quadx": "cf2x",
             "fixedwing": "fixedwing",
@@ -766,7 +783,8 @@ class TensorPlant:
                 from .rocket_benchmark import RocketVariation, VARIATION_SEED_OFFSET
 
                 self.rocket_variation = RocketVariation(
-                    n, d, TensorRandom(n, d, seed + VARIATION_SEED_OFFSET), rocket_variation
+                    n, d, TensorRandom(n, d, seed + VARIATION_SEED_OFFSET), rocket_variation,
+                    nominal_actuator=self.params["booster_params"] if self.f9_real else None,
                 )
             elif vehicle == "missile":
                 self.pid = TensorRatePID(
@@ -1286,60 +1304,195 @@ class TensorPlant:
         self.pad_contact.zero_()
 
     def _step_scene(self):
-        """One Genesis scene.step, with Genesis-rigid-solver NaN recovery.
+        """One ``scene.step``, recovering from rigid-solver NaN divergence.
 
-        ``genesis.rigid_solver.check_errno`` raises ``GenesisException`` when
-        the rigid solver's ``_errno`` bitmap contains overflow/nan flags.
-        This happens after thousands of batched steps on quadx/quadplane --
-        PPO-excited extreme states push the solver's internal buffers to
-        non-finite values.
+        ``check_errno`` raises when the solver's ``_errno`` bitmap carries
+        overflow/NaN flags, which PPO-excited states can trigger after
+        thousands of batched steps.  Recovery runs per call, not cumulatively:
 
-        Primary fix (``environments/common/original_backend``):
-        ``disable_constraint=True`` (legacy only) skips contact-force
-        resolution; realistic tasks enable the constraint solver so contacts
-        exchange impulses instead of only setting a flag.
+        * attempt 1 -- clear errno, zero external forces, zero non-finite
+          solver state, put every replica at the spawn pose;
+        * attempt >= 2 -- additionally ``scene.reset()``, which rewrites the
+          constraint/collider internals the in-place sanitizer cannot reach.
 
-        Defensive fallback here: clear stale ``_errno`` bitmasks, sanitize any
-        non-finite states back to the safe spawn pose, and retry once.  We do
-        NOT call ``self.warmup`` -- warmup itself routes through ``physics_step
-        → _step_scene``, so a recovery warmup just re-enters this method and
-        crashes again on the same corrupted solver state.
+        ``self.warmup`` is deliberately not used: it routes back through
+        ``physics_step → _step_scene`` and re-enters the corrupted solver.
         """
         try:
             self.scene.step(update_visualizer=False, refresh_visualizer=False)
         except gs.GenesisException:
-            count = getattr(self, "nan_recoveries", 0) + 1
-            self.nan_recoveries = count
-            self._state_cache = None
-            # clear stale _errno bitmasks on every rigid solver
-            try:
-                for solver in self.scene.sim._solvers:
-                    err = getattr(solver, "_errno", None)
-                    if err is not None and hasattr(err, "zero_"):
-                        err.zero_()
-                    elif err is not None:
-                        err[:] = 0
-            except Exception:
-                pass
-            # sanitize non-finite states back to the safe spawn pose so the
-            # retry does not feed NaN positions/velocities back to the solver.
+            for count in range(1, _NAN_RETRY_MAX + 1):
+                self._state_cache = None
+                self._clear_solver_errno()
+                # The extreme wrenches were already pushed to the solver via
+                # ``apply_links_external_wrench``; zero them (and the motor
+                # buffers) or the retry re-applies the same forces.
+                self._zero_applied_forces()
+                self._sanitize_nan_state()
+                # Every replica goes to the spawn pose: a replica that *looks*
+                # healthy can still carry corrupted derived buffers.
+                try:
+                    p, q, v, w = self.state()
+                    safe_p = torch.zeros_like(p)
+                    safe_p[:, 2] = 1.0
+                    self.set_state(safe_p, self._spawn_quat(q),
+                                   torch.zeros_like(v), torch.zeros_like(w))
+                    self._reset_forward_flags()
+                except Exception:
+                    pass
+                if count >= 2:
+                    try:
+                        self.scene.reset()
+                        self._state_cache = None
+                        self._reset_forward_flags()
+                    except Exception:
+                        pass
+                try:
+                    self.scene.step(update_visualizer=False, refresh_visualizer=False)
+                    # Rare-event observability: a silent recovery would hide a
+                    # protocol-level problem (e.g. changed physics rate).
+                    print(
+                        f"[plant] Genesis NaN recovered after {count} attempt(s)"
+                        + (" (full scene reset)" if count >= 2 else ""),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    break
+                except gs.GenesisException:
+                    continue
+            else:
+                raise
+
+    def _clear_solver_errno(self):
+        """Zero out stale ``_errno`` bitmasks on every rigid solver."""
+        try:
+            for solver in self.scene.sim._solvers:
+                err = getattr(solver, "_errno", None)
+                if err is not None and hasattr(err, "zero_"):
+                    err.zero_()
+                elif err is not None:
+                    err[:] = 0
+        except Exception:
+            pass
+
+    def _reset_forward_flags(self):
+        """Force the solver to recompute cached forward kinematics/inertia.
+
+        ``set_state`` sets the solver's ``_is_forward_*_updated`` flags, which
+        make ``func_step_1`` skip the cartesian-space and forward-velocity
+        passes; after a corrupted step the cached ``cinr_*`` may be stale.
+        """
+        solver = getattr(self.scene.sim, "rigid_solver", None)
+        if solver is not None:
+            solver._is_forward_pos_updated = False
+            solver._is_forward_vel_updated = False
+
+    def _spawn_quat(self, q):
+        """Cached identity quaternion matching ``q``'s shape/device."""
+        buf = getattr(self, "_spawn_quat_buf", None)
+        if buf is None or buf.shape[0] != q.shape[0]:
+            buf = torch.zeros_like(q)
+            buf[:, 0] = 1.0
+            self._spawn_quat_buf = buf
+        return buf
+
+    def _zero_applied_forces(self):
+        """Zero the applied wrench, derived solver forces and motor state.
+
+        Called from the NaN-recovery loop in :meth:`_step_scene`.  The forces
+        computed by ``_physics_step`` were already pushed to the drone via
+        ``apply_links_external_wrench``; without clearing them the retry step
+        re-applies the same extreme forces and diverges again.  Zeroing the
+        motor buffers also prevents the *next* ``_physics_step`` from
+        regenerating the same thrust from stale state.
+        """
+        self._wrench.zero_()
+        # ``apply_links_external_wrench`` ACCUMULATES (``cfrc -= force``), so
+        # passing zeros is a no-op: the extreme forces are still queued on the
+        # solver.  Genesis only clears them at the END of a successful step,
+        # which the failing step never reached, so clear them explicitly.
+        solver = getattr(self.scene.sim, "rigid_solver", None)
+        if solver is not None and hasattr(solver, "clear_external_force"):
+            solver.clear_external_force()
+        # The failed step also left NaN in derived force/acceleration buffers
+        # (``qf_bias``, ``cfrc_vel/ang``, ``acc``, ``vel_next`` ...) that
+        # ``set_state`` does not touch.
+        self._sanitize_dyn_state(solver)
+        self.throttle.zero_()
+        if getattr(self, "pwm", None) is not None:
+            self.pwm.zero_()
+
+    def _sanitize_dyn_state(self, solver):
+        """Zero every non-finite buffer in the rigid solver's state.
+
+        A failed ``scene.step`` leaves NaN in derived quantities (bias forces,
+        total link forces, accelerations, next-step velocity, next-step
+        position).  These are not touched by ``set_state`` and, if the solver
+        reuses them instead of recomputing, the retry step diverges again.
+        Zerocopy lets us write zeros directly into the underlying storage.
+
+        Covers ``dyn_state`` (links/dofs/constraints/...) and ``rigid_info``
+        (``qpos_next`` is the buffer that triggers ``INVALID_ACC_NAN`` in
+        ``func_copy_next_to_curr``).
+        """
+        if solver is None:
+            return
+        from genesis.utils.misc import qd_to_torch
+        # ``rigid_info`` is a sibling of ``dyn_state`` on the solver (not a
+        # child), so it must be listed explicitly.
+        for attr in ("dyn_state", "rigid_info"):
+            container = getattr(solver, attr, None)
+            if container is None:
+                continue
+            for name in dir(container):
+                if name.startswith("_"):
+                    continue
+                buf = getattr(container, name, None)
+                if buf is None:
+                    continue
+                try:
+                    t = qd_to_torch(buf, copy=False)
+                    if torch.is_tensor(t) and t.numel() > 0 and not torch.isfinite(t).all():
+                        t.zero_()
+                except Exception:
+                    pass
+
+    def _sanitize_nan_state(self):
+        """Reset non-finite body states back to the spawn pose (graph-safe).
+
+        ``scene.step()`` can leave non-finite body states without raising
+        ``GenesisException`` (silent solver divergence).  This runs after
+        every step to prevent NaN from propagating into observations.
+
+        Graph-safety contract: no host synchronisation and no data-dependent
+        control flow, so a CUDA graph can record it; tensor allocations come
+        from ``torch.where`` and are served by the graph's memory pool.
+        """
+        try:
+            p, q, v, w = self.state()
+        except gs.GenesisException:
+            # state() may call check_errno and raise when the solver's errno
+            # bitmap has overflow/nan flags from the step we just ran.  Clear
+            # the bitmap so the next step does not re-raise, then sanitize.
+            self._clear_solver_errno()
             try:
                 p, q, v, w = self.state()
-                bad = ~torch.isfinite(p).all(-1) | ~torch.isfinite(v).all(-1) | ~torch.isfinite(w).all(-1)
-                if bad.any():
-                    safe_p = p.clone()
-                    safe_p[bad] = 0.0
-                    safe_p[bad, 2] = 1.0  # spawn altitude
-                    safe_q = q.clone()
-                    safe_q[bad] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device, dtype=COMPUTE_DTYPE)
-                    safe_v = torch.zeros_like(v)
-                    safe_w = torch.zeros_like(w)
-                    self.set_state(safe_p, safe_q, safe_v, safe_w)
             except Exception:
-                pass
-            if count > 10:
-                raise
-            self.scene.step(update_visualizer=False, refresh_visualizer=False)
+                return
+        try:
+            bad = (~torch.isfinite(p).all(-1)
+                   | ~torch.isfinite(q).all(-1)
+                   | ~torch.isfinite(v).all(-1)
+                   | ~torch.isfinite(w).all(-1))
+            safe_p = torch.where(bad[:, None], torch.zeros_like(p), p)
+            safe_p[:, 2] = torch.where(bad, torch.ones_like(bad, dtype=p.dtype),
+                                       safe_p[:, 2])
+            safe_q = torch.where(bad[:, None], self._spawn_quat(q), q)
+            safe_v = torch.where(bad[:, None], torch.zeros_like(v), v)
+            safe_w = torch.where(bad[:, None], torch.zeros_like(w), w)
+            self.set_state(safe_p, safe_q, safe_v, safe_w)
+        except Exception:
+            pass
 
     def _battery_thrust_factor(self):
         """Thrust multiplier ``(V/V_nom)^2`` from the pack's loaded voltage.
@@ -1824,10 +1977,15 @@ class TensorPlant:
                 throttle = (
                     throttle * (1 + b["noise_ratio"] * self.rng.normal(mask, 0.0)) * (self.fuel > 0)
                 )
-                self.throttle[:, 0].copy_(torch.where(mask, throttle, self.throttle[:, 0]))
                 total_fuel = (
                     self.params["propellant_params"]["total_fuel"] if self.f9_real else b["total_fuel"]
                 )
+                if self.f9_real:
+                    # Integrate only the impulse the remaining propellant can supply.
+                    full_flow_per_tick = b["max_fuel_rate"] * self.physics_dt
+                    available_fraction = self.fuel * total_fuel / full_flow_per_tick
+                    throttle = torch.minimum(throttle, available_fraction)
+                self.throttle[:, 0].copy_(torch.where(mask, throttle, self.throttle[:, 0]))
                 fuel = (
                     self.fuel
                     - self.throttle[:, 0] * b["max_fuel_rate"] / total_fuel * self.physics_dt
@@ -1857,6 +2015,17 @@ class TensorPlant:
             self._update_battery(mask)
         force *= mask[:, None, None]
         torque *= mask[:, None, None]
+        # Sanitize the wrench BEFORE it reaches the solver:
+        # ``apply_links_external_wrench`` accumulates straight into the
+        # solver's ``cfrc_applied`` buffers, so cleaning ``self._wrench``
+        # afterwards is too late.  Non-finite components are zeroed and the
+        # per-link magnitude is bounded (well above the physical maximum, so
+        # nominal flight is untouched) to keep the acceleration finite.
+        self._wrench.mul_(torch.isfinite(self._wrench).all(dim=-1, keepdim=True))
+        fmag = self.force.norm(dim=-1, keepdim=True).clamp_min(self._force_clamp)
+        self.force.mul_(self._force_clamp / fmag)
+        tmag = self.torque.norm(dim=-1, keepdim=True).clamp_min(self._force_clamp)
+        self.torque.mul_(self._force_clamp / tmag)
         qlinks = self.drone.get_links_quat().to(COMPUTE_DTYPE)
         # force and torque share the same link quaternions and now also one
         # buffer: rotate the (n, links, 2, 3) view in a single batched call.
@@ -1890,6 +2059,16 @@ class TensorPlant:
             self.target.set_dofs_velocity(
                 torch.cat((tv, inverse_rotate(tq, tw)), -1).to(gs.tc_float)
             )
+        # A NaN throttle/pwm would re-inject NaN forces on the next substep.
+        self.throttle.copy_(
+            torch.where(torch.isfinite(self.throttle), self.throttle,
+                        torch.zeros_like(self.throttle))
+        )
+        if getattr(self, "pwm", None) is not None:
+            self.pwm.copy_(
+                torch.where(torch.isfinite(self.pwm), self.pwm,
+                            torch.zeros_like(self.pwm))
+            )
         self._step_scene()
         self._state_cache = None
         if sample_contacts:
@@ -1906,6 +2085,11 @@ class TensorPlant:
             self.ground_contact |= ground & mask
             self.pad_contact |= pad & mask
             self.last_contact.copy_(torch.where(mask, ground | pad, self.last_contact))
+        # Silent-NaN guard (graph-safe: no host control flow, pre-allocated
+        # buffers).  It must run AFTER the contact query: ``set_state`` below
+        # rewrites the body pose through the Genesis setters, which invalidate
+        # the contact cache that ``get_contacts`` reads.
+        self._sanitize_nan_state()
         # Keep inactive replicas paused during early termination and reset warmup.
         # The caller's ``restore`` flag is computed once per control step from the
         # whole-step activity mask.  When it is False every replica is active and
@@ -2012,10 +2196,10 @@ class TensorPlant:
                     self.rocket_variation.sample(mask)
 
     def warmup(self, mask, iterations=None, nonempty=None):
-        """Settling warmup with zero command on the masked slots (upstream: 10 steps).
+        """Settling warmup with zero command on the masked slots.
 
-        ``iterations`` defaults to ``self.warmup_iterations`` (1; the upstream
-        value is 10, pass ``warmup_iterations=10`` to restore it).
+        ``iterations`` defaults to ``self.warmup_iterations`` (10, the upstream
+        PyFlyt value; see the measured 10/1/0 ablation in ``__init__``).
         ``nonempty`` lets a caller that already knows whether ``mask`` selects
         any replica skip the host read below.
         """

@@ -1,0 +1,448 @@
+{
+  "evidence_class": "offline one-step replay of retained real transitions",
+  "new_real_interactions": 0,
+  "new_training_updates": 0,
+  "source_sha256": "e163ea2c4875577a88970c3419d056fc8e560eae1d2c08b3e86a3c39c9b3e60b",
+  "source_policy": {
+    "controller": "pdg_oracle_wind"
+  },
+  "cohort_seed": 15000007,
+  "episodes": 128,
+  "contact_episodes": 114,
+  "pre_contact_measured_angular_rate": {
+    "n": 114,
+    "nonfinite": 0,
+    "median": 0.005195430479943752,
+    "p95": 0.1646854937076568,
+    "maximum": 0.30814000964164734
+  },
+  "truth_mapping_clipped_episodes": {
+    "thrust_per_mass_gain": 0,
+    "fin_aerodynamic_gain": 0,
+    "engine_lag_gain": 53,
+    "gimbal_lag_gain": 52,
+    "gimbal_x_bias": 0,
+    "gimbal_y_bias": 0,
+    "wind_world_x": 0,
+    "wind_world_y": 0,
+    "wind_world_z": 0
+  },
+  "replay": {
+    "reference": {
+      "pre_contact": {
+        "samples": 912,
+        "errors": {
+          "position_m": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.0005123360786228456,
+            "p95": 0.0019762313057418014,
+            "maximum": 0.004147043772000384
+          },
+          "velocity_m_s": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.03911847860942287,
+            "p95": 0.16180820344345642,
+            "maximum": 0.35029799654295607
+          },
+          "attitude_rad": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.0002051662415551676,
+            "p95": 0.00021683135806955115,
+            "maximum": 0.004923828810082473
+          },
+          "angular_rate_rad_s": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.0004991483384761671,
+            "p95": 0.04833278832810841,
+            "maximum": 0.6914778076956508
+          },
+          "actuator_normalized": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.01813588855455822,
+            "p95": 0.1272626195087929,
+            "maximum": 0.16286456424588838
+          }
+        },
+        "angular_threshold_disagreements": {
+          "0.02": {
+            "false_clear": 13,
+            "false_alarm": 37
+          },
+          "0.3": {
+            "false_clear": 1,
+            "false_alarm": 8
+          },
+          "0.35": {
+            "false_clear": 0,
+            "false_alarm": 4
+          }
+        },
+        "predicted_angular_rate": {
+          "n": 912,
+          "nonfinite": 0,
+          "median": 0.002771299392367848,
+          "p95": 0.040176703938944486,
+          "maximum": 0.6916321067776672
+        },
+        "measured_angular_rate": {
+          "n": 912,
+          "nonfinite": 0,
+          "median": 0.0027383955878109087,
+          "p95": 0.015238158802992799,
+          "maximum": 0.30814001399559815
+        }
+      },
+      "contact_crossing": {
+        "samples": 114,
+        "errors": {
+          "position_m": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.004213227688248928,
+            "p95": 0.010457630870909236,
+            "maximum": 0.011456800990500627
+          },
+          "velocity_m_s": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.09416907736956012,
+            "p95": 0.29214212944916224,
+            "maximum": 0.3567417462422874
+          },
+          "attitude_rad": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.0007072674773316838,
+            "p95": 0.005345263328669501,
+            "maximum": 0.009256927600052058
+          },
+          "angular_rate_rad_s": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.033040299904855505,
+            "p95": 0.27022347827264886,
+            "maximum": 0.5180077571813434
+          },
+          "actuator_normalized": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.020240408000621213,
+            "p95": 0.13067700768453097,
+            "maximum": 0.2899408277918575
+          }
+        },
+        "angular_threshold_disagreements": {
+          "0.02": {
+            "false_clear": 21,
+            "false_alarm": 0
+          },
+          "0.3": {
+            "false_clear": 4,
+            "false_alarm": 3
+          },
+          "0.35": {
+            "false_clear": 3,
+            "false_alarm": 1
+          }
+        },
+        "predicted_angular_rate": {
+          "n": 114,
+          "nonfinite": 0,
+          "median": 0.039048657239273914,
+          "p95": 0.26960175889974175,
+          "maximum": 0.43292539515464973
+        },
+        "measured_angular_rate": {
+          "n": 114,
+          "nonfinite": 0,
+          "median": 0.05850946507946358,
+          "p95": 0.2688290401560932,
+          "maximum": 0.37298951584463286
+        }
+      },
+      "post_contact": {
+        "samples": 887,
+        "errors": {
+          "position_m": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.0023140125418451567,
+            "p95": 0.0037470513268166913,
+            "maximum": 0.009187404649592413
+          },
+          "velocity_m_s": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.10021358009091229,
+            "p95": 0.16865888339997756,
+            "maximum": 0.35122485032338246
+          },
+          "attitude_rad": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.00026998156904625584,
+            "p95": 0.0009246838726426021,
+            "maximum": 0.007431594268590577
+          },
+          "angular_rate_rad_s": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.014429570938707434,
+            "p95": 0.07115441867387343,
+            "maximum": 0.38174876376347916
+          },
+          "actuator_normalized": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.00016342647418048583,
+            "p95": 0.05421739669054506,
+            "maximum": 0.3264467096295597
+          }
+        },
+        "angular_threshold_disagreements": {
+          "0.02": {
+            "false_clear": 32,
+            "false_alarm": 44
+          },
+          "0.3": {
+            "false_clear": 8,
+            "false_alarm": 1
+          },
+          "0.35": {
+            "false_clear": 2,
+            "false_alarm": 0
+          }
+        },
+        "predicted_angular_rate": {
+          "n": 887,
+          "nonfinite": 0,
+          "median": 0.051431126379043984,
+          "p95": 0.22640384657655985,
+          "maximum": 0.3785656639263968
+        },
+        "measured_angular_rate": {
+          "n": 887,
+          "nonfinite": 0,
+          "median": 0.05310293624881993,
+          "p95": 0.2573679946543177,
+          "maximum": 0.45777164482974414
+        }
+      }
+    },
+    "truth_mapped_diagnostic": {
+      "pre_contact": {
+        "samples": 912,
+        "errors": {
+          "position_m": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.00023976062376650887,
+            "p95": 0.0014591640889371202,
+            "maximum": 0.0046460647560010605
+          },
+          "velocity_m_s": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.01135062618782566,
+            "p95": 0.09295935244421356,
+            "maximum": 0.4437909320325866
+          },
+          "attitude_rad": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.00020489221937345192,
+            "p95": 0.00020887934596275384,
+            "maximum": 0.005697724440570111
+          },
+          "angular_rate_rad_s": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 5.098459991981578e-05,
+            "p95": 0.03775178836704428,
+            "maximum": 0.6763697889756162
+          },
+          "actuator_normalized": {
+            "n": 912,
+            "nonfinite": 0,
+            "median": 0.008132395373765856,
+            "p95": 0.027015859759286515,
+            "maximum": 0.05871643361170116
+          }
+        },
+        "angular_threshold_disagreements": {
+          "0.02": {
+            "false_clear": 9,
+            "false_alarm": 31
+          },
+          "0.3": {
+            "false_clear": 1,
+            "false_alarm": 7
+          },
+          "0.35": {
+            "false_clear": 0,
+            "false_alarm": 4
+          }
+        },
+        "predicted_angular_rate": {
+          "n": 912,
+          "nonfinite": 0,
+          "median": 0.0030377942080092274,
+          "p95": 0.02732730534572755,
+          "maximum": 0.6765283691736257
+        },
+        "measured_angular_rate": {
+          "n": 912,
+          "nonfinite": 0,
+          "median": 0.0027383955878109087,
+          "p95": 0.015238158802992799,
+          "maximum": 0.30814001399559815
+        }
+      },
+      "contact_crossing": {
+        "samples": 114,
+        "errors": {
+          "position_m": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.004124891013251454,
+            "p95": 0.010817960011213382,
+            "maximum": 0.012815276475806521
+          },
+          "velocity_m_s": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.09922457173187345,
+            "p95": 0.3183308531615584,
+            "maximum": 0.41713927582303506
+          },
+          "attitude_rad": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.0007145328700638006,
+            "p95": 0.005352958650704817,
+            "maximum": 0.009310646544791393
+          },
+          "angular_rate_rad_s": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.030749592320585804,
+            "p95": 0.2525508538880489,
+            "maximum": 0.5096357784066833
+          },
+          "actuator_normalized": {
+            "n": 114,
+            "nonfinite": 0,
+            "median": 0.010827469302590598,
+            "p95": 0.03629212380080373,
+            "maximum": 0.05323140138253457
+          }
+        },
+        "angular_threshold_disagreements": {
+          "0.02": {
+            "false_clear": 20,
+            "false_alarm": 0
+          },
+          "0.3": {
+            "false_clear": 4,
+            "false_alarm": 4
+          },
+          "0.35": {
+            "false_clear": 3,
+            "false_alarm": 1
+          }
+        },
+        "predicted_angular_rate": {
+          "n": 114,
+          "nonfinite": 0,
+          "median": 0.038116735706936154,
+          "p95": 0.2686516332537983,
+          "maximum": 0.4537731249939181
+        },
+        "measured_angular_rate": {
+          "n": 114,
+          "nonfinite": 0,
+          "median": 0.05850946507946358,
+          "p95": 0.2688290401560932,
+          "maximum": 0.37298951584463286
+        }
+      },
+      "post_contact": {
+        "samples": 887,
+        "errors": {
+          "position_m": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.00230891782649455,
+            "p95": 0.003734701997985343,
+            "maximum": 0.009229379236612998
+          },
+          "velocity_m_s": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.09567099491831994,
+            "p95": 0.16803539935194908,
+            "maximum": 0.350536653914312
+          },
+          "attitude_rad": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.00026825532338270745,
+            "p95": 0.0009188117464731286,
+            "maximum": 0.00741672959658404
+          },
+          "angular_rate_rad_s": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 0.013775224249947158,
+            "p95": 0.07092060434243935,
+            "maximum": 0.38418904072116167
+          },
+          "actuator_normalized": {
+            "n": 887,
+            "nonfinite": 0,
+            "median": 4.875779799273783e-05,
+            "p95": 0.01603559104759144,
+            "maximum": 0.090177960595058
+          }
+        },
+        "angular_threshold_disagreements": {
+          "0.02": {
+            "false_clear": 32,
+            "false_alarm": 45
+          },
+          "0.3": {
+            "false_clear": 8,
+            "false_alarm": 1
+          },
+          "0.35": {
+            "false_clear": 2,
+            "false_alarm": 0
+          }
+        },
+        "predicted_angular_rate": {
+          "n": 887,
+          "nonfinite": 0,
+          "median": 0.05173623158120977,
+          "p95": 0.23018679835474756,
+          "maximum": 0.3787402973586563
+        },
+        "measured_angular_rate": {
+          "n": 887,
+          "nonfinite": 0,
+          "median": 0.05310293624881993,
+          "p95": 0.2573679946543177,
+          "maximum": 0.45777164482974414
+        }
+      }
+    }
+  },
+  "interpretation": "Reference and truth-mapped diagnostics initialize from measured states. No online-belief replay or new candidate performance is inferred. Contact-crossing next states include impulses; pre-contact observation is separately indexed.",
+  "model_gate": "requires comparison against angular-rate resolution and contact error; not passed by position accuracy alone",
+  "wall_seconds": 0.12531391601078212,
+  "torch_version": "2.11.0"
+}

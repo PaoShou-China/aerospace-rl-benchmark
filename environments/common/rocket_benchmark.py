@@ -47,10 +47,14 @@ class RocketVariation:
     device-resident tensor of shape ``(n, ...)`` and is sampled from a
     per-replica uniform stream provided by the caller's RNG.
     """
-    def __init__(self, n, device, rng, preset):
+    def __init__(self, n, device, rng, preset, *, nominal_actuator=None):
         if preset not in VARIATIONS:
             raise ValueError(f"Unknown rocket variation: {preset}")
-        self.ranges = VARIATIONS[preset]
+        self.ranges = dict(VARIATIONS[preset])
+        if nominal_actuator is not None and preset == "nominal":
+            for name in ("booster_tau", "gimbal_tau"):
+                value = float(nominal_actuator[name])
+                self.ranges[name] = (value, value)
         self.rng = rng
         one = torch.ones(n, device=device, dtype=COMPUTE_DTYPE)
         self.thrust = one.clone()

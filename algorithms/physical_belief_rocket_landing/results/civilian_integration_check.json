@@ -1,0 +1,17 @@
+{
+  "source_commit": "a6b1973",
+  "base_commit": "2346cae",
+  "checks": {
+    "dependency_free_package_tests": "4 passed",
+    "compileall": "passed",
+    "safe_checkpoint_load": "3 passed, torch 2.11.0+cpu, weights_only=True",
+    "checkpoint_zip_payload_comparison": "all non-data.pkl members byte-identical to source commit",
+    "current_main_rocket_benchmark": "blocked: ModuleNotFoundError tensordict"
+  },
+  "not_run": [
+    "GPU training",
+    "frozen full evaluation",
+    "current-main actor rollout"
+  ],
+  "scope": "civilian packaging only; historical results unchanged"
+}

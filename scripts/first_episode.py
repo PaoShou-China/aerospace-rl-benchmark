@@ -5,6 +5,8 @@ import torch
 
 class FirstEpisodes:
     def __init__(self, env):
+        benchmark = (getattr(env, "cfg", None) or {}).get("benchmark") or {}
+        self.require_complete_score = benchmark.get("primary_metric") == "terminal_stable_2s"
         self.seen = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
         self.ep0 = env.completed_episodes.clone()
         self.ok0 = env.completed_successes.clone()
@@ -50,6 +52,8 @@ class FirstEpisodes:
         success_flags = self.success.to(torch.float32).cpu().tolist()
         returns = self.returns.cpu().tolist()
         n = sum(seen)
+        complete = all(seen)
+        scored = n > 0 and (complete or not self.require_complete_score)
         metrics = {k: v.cpu().tolist() for k, v in self.metrics.items()}
         # Per-replica rows are kept lean: only success flag and episode return.
         # The full per-metric breakdown is reported as the aggregate metric_counts
@@ -59,18 +63,18 @@ class FirstEpisodes:
             dict(
                 replica=i,
                 complete=seen[i],
-                success=bool(success_flags[i]),
+                success=bool(success_flags[i]) if seen[i] or not self.require_complete_score else None,
                 episode_return=returns[i],
             )
             for i in range(len(seen))
         ]
         return dict(
             protocol="first_episode_per_replica",
-            complete=all(seen),
+            complete=complete,
             episodes_finished=n,
             episodes_expected=len(seen),
             successes=int(sum(success_flags)),
-            success_rate=sum(success_flags) / n if n else None,
+            success_rate=sum(success_flags) / n if scored else None,
             mean_episode_return=(sum(returns) / n) if n else None,
             metric_counts={k: sum(v) for k, v in metrics.items()},
             global_metric_counts={k: float(v.cpu()) for k, v in self.global_metrics.items()},

@@ -131,7 +131,10 @@ UPDATES = 2000  # ppo_scratch fails (1% SR); give maximum budget
 # (env.py) must bootstrap from scratch on their own.
 # 2026-10-30: re-enabled by user request ("每个环境都加上 IL warm start") -- shared
 # defaults restored across all train entries.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# steps=None records one full episode (env.max_steps = 1000): the expert
+# closes the rendezvous in 581-649 steps on average, so the shared 512-step
+# default would truncate before the terminal approach.
+BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 
 # 2026-10-29: training-only spawn easing as a local subclass, kept for the

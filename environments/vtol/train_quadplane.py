@@ -73,7 +73,10 @@ from algorithms.baselines.variants_quadplane import QuadplaneSE3PusherBaseline  
 
 QuadplaneWaypointsEnv.conventional_controller = QuadplaneSE3PusherBaseline
 
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# steps=None records one full episode (env.max_steps = 1200) instead of the
+# shared 512-step default: the expert needs the whole 30 s to fly the four
+# waypoints, so 512 would truncate before the final capture.
+BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 
 def main(**overrides):

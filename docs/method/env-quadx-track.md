@@ -144,16 +144,24 @@ With the reference point $\bar p = (p_{t,x}+\delta_x,\;p_{t,y}+\delta_y,\;\textt
 $\delta=(1.5,0)$ m and altitude 6 m, per policy step:
 
 $$
+\Phi_{\text{aux}}(s) = -2\,\lVert p_{xy}-\bar p_{xy}\rVert
+      - 0.4\,(z-\texttt{ALT\_REF})^2,
+$$
+
+$$
 r_t = 0.10\,y_t - 0.10\,(1-y_t)
-      - 0.05\,\lVert p_{xy}-\bar p_{xy}\rVert\,y_t
-      - 0.01\,(z-\texttt{ALT\_REF})^2
+      + \Phi_{\text{aux}}(s_t) - \Phi_{\text{aux}}(s_{t-1})
       - 0.002\,\lVert\bar a_t\rVert^2
       - 10\,\kappa_t ,
 $$
 
-where $\kappa_t\in\{0,1\}$ is a crash/out-of-bounds event. The tracking term is paid only while visible:
-when the target is lost, the only signal is the $-0.10$ loss penalty. The reward is an environment-side
-quantity; it is not an observation channel, and no target state is exposed to a controller through it.
+where $\kappa_t\in\{0,1\}$ is a crash/out-of-bounds event. The reference-offset
+and altitude terms are potential-based, so their episode sum telescopes to
+$\Phi_{\text{aux}}(s_T)-\Phi_{\text{aux}}(s_0)$; the potential is not gated on
+visibility (visibility is the task's primary per-step signal). The visibility
+bonus/loss is paid every step and the action/crash terms are unchanged. The
+reward is an environment-side quantity; it is not an observation channel, and
+no target state is exposed to a controller through it.
 
 ## 9. Termination, truncation, success
 
@@ -209,7 +217,7 @@ completed episodes and report them under `task_metrics`.
 | target speed / turn rate / segments | 0.4–1.2 m/s; 0.3–1.0 rad/s; 12 segments of 2–5 s |
 | target area / vehicle bounds | 15 m / 30 m |
 | success visible fraction | 0.85 |
-| reward weights | +0.10 visible, −0.10 lost, −0.05/m track, −0.01/m² altitude, −0.002 action², −10 crash |
+| reward weights | +0.10 visible, −0.10 lost; potential: −2/m track, −0.4/m² altitude; −0.002 action²; −10 crash |
 | `vel_clamp` | 15 m/s, 30 rad/s |
 
 ## 13. RL training protocol (PPO)
@@ -220,7 +228,9 @@ The learned arm is the **unmodified repository PPO implementation**:
   no recurrent layer), a state-independent Beta policy (`BetaDistribution`, bounded and rescaled to
   $[-1,1]$), 100 vectorized steps per update, 5 epochs, 4 minibatches, fixed lr $3\times10^{-4}$,
   entropy $0.01$. The behavior-cloning warm start is enabled in the entry
-  (`BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`), and
+  (`BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`;
+  `steps=None` collects one full 1200-step expert episode, after which the
+  tracking-task stratified-uniform selector keeps the 512-pair budget), and
   `WIND = None` keeps the arm in calm air.
 
 It consumes the 25-D observation of Section 7 (current own state, current measurement, visibility

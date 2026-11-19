@@ -120,8 +120,9 @@ UAV_COLLISION_RADIUS = 0.08
 # ---- reward -----------------------------------------------------------------
 VIS_BONUS = 0.10
 LOST_PENALTY = 0.10
-TRACK_GAIN = 0.05
-ALT_GAIN = 0.01
+TRACK_GAIN = 2.0  # potential weight on the reference-offset error (2026-11-17
+# calibration; restores the old per-step gradient order, range ~28).
+ALT_GAIN = 0.4  # potential weight on the altitude error (same calibration)
 ACTION_GAIN = 0.002
 CRASH_PENALTY = 10.0
 SUCCESS_VISIBLE_FRACTION = 0.85
@@ -227,7 +228,8 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
     bounds_radius = BOUNDS_RADIUS
 
     def __init__(self, num_envs=64, backend="cpu", seed=7, residual=False,
-                 param_mismatch=None, domain_randomize=None, warmup_iterations=None):
+                 param_mismatch=None, domain_randomize=None, warmup_iterations=None,
+                 camera_sigma_m=POS_NOISE_STD):
         """Initialize the QuadX tracking environment.
 
         Construct the Genesis-backed quadrotor plant at 40 Hz agent / 120 Hz
@@ -237,6 +239,9 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         """
         if num_envs < 1:
             raise ValueError("n must be positive")
+        self.camera_sigma_m = float(camera_sigma_m)
+        if not math.isfinite(self.camera_sigma_m) or self.camera_sigma_m < 0:
+            raise ValueError("camera_sigma_m must be a finite nonnegative distance")
         self.num_envs = num_envs
         self.task_cfg = {
             "vehicle": "quadx",
@@ -245,6 +250,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
             "backend": backend,
             "implementation": "fully_tensorized",
             "task_defaults": "AerospaceRL quadx-track v1",
+            "camera_sigma_m": self.camera_sigma_m,
         }
         self.clip_actions = 1.0
 
@@ -279,6 +285,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
 
         self.action = zeros(num_envs, self.num_actions)
         self.reward = zeros(num_envs)
+        self._phi_start = zeros(num_envs)
         self.count = torch.zeros(num_envs, device=d, dtype=torch.long)
         self.terminated = torch.zeros(num_envs, device=d, dtype=torch.bool)
         self.truncated = self.terminated.clone()
@@ -372,7 +379,12 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
     # ------------------------------------------------------------------ #
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical action bounds."""
-        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE)
+        # Guard against non-finite policy outputs: NaN.clamp == NaN, so a
+        # diverged actor can otherwise push NaN through the action pipeline
+        # into the motor solver and crash Genesis.
+        raw = torch.where(torch.isfinite(raw), raw, torch.zeros_like(raw))
+        raw = raw.clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     # ------------------------------------------------------------------ #
@@ -435,7 +447,7 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         occ = _occluded(p, tp)
         vis = mask & in_fov & in_range & ~occ
         noise = (
-            torch.stack([self.sensor_rng.normal(vis, 0.0) for _ in range(3)], -1) * POS_NOISE_STD
+            torch.stack([self.sensor_rng.normal(vis, 0.0) for _ in range(3)], -1) * self.camera_sigma_m
         )
         rel_meas = torch.where(vis[:, None], tp + noise - p, torch.zeros_like(rel))
         return vis, in_fov, in_range, occ, rel_meas
@@ -552,12 +564,25 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         self._update_observation()
         return self.get_observations(), self.rew_buf, term_out, trunc_out, self.extras
 
+    def _aux_potential(self, p):
+        """State potential of the auxiliary tracking/altitude terms.
+
+        The visibility bonus stays a per-step task reward; the reference-offset
+        and altitude errors are potential-based, so their episode sum
+        telescopes to Phi(s_T) - Phi(s_0).
+        """
+        ref_err = ((self.target_pos[:, :2] + self.ref_offset) - p[:, :2]).norm(dim=-1)
+        alt_err = p[:, 2] - ALT_REF
+        return -TRACK_GAIN * ref_err - ALT_GAIN * alt_err * alt_err
+
     def _step_begin(self, actions):
         """Map the action, advance the target and open the step's accumulators."""
         physical = self._scale_actions(actions)
         self.action.copy_(physical)
         self._active0.copy_(~(self.terminated | self.truncated))
         self._advance_target(self._active0)
+        p0, _, _, _ = self.plant.state()
+        self._phi_start.copy_(self._aux_potential(p0))
         self.count += 1
         self._crash.zero_()
 
@@ -593,14 +618,12 @@ class QuadXTrackEnv(BaseEnv, ResidualActionMixin):
         self._build_observation(self._active0, rel_meas, vis)
         p, _, v, _ = self.plant.state()
         ref_err = ((self.target_pos[:, :2] + self.ref_offset) - p[:, :2]).norm(dim=-1)
-        alt_err = p[:, 2] - ALT_REF
         self.reward.copy_(
             torch.where(
                 self._active0,
                 VIS_BONUS * vis.to(COMPUTE_DTYPE)
                 - LOST_PENALTY * (~vis).to(COMPUTE_DTYPE)
-                - TRACK_GAIN * ref_err * vis.to(COMPUTE_DTYPE)
-                - ALT_GAIN * alt_err * alt_err
+                + (self._aux_potential(p) - self._phi_start)
                 - ACTION_GAIN * self.action.square().sum(-1)
                 - CRASH_PENALTY * self._crash.to(COMPUTE_DTYPE),
                 torch.zeros_like(self.reward),

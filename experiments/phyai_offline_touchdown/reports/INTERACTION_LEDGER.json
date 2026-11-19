@@ -1,0 +1,9 @@
+{
+  "task": "offline-first-package-20261029",
+  "new_real_interactions": 0,
+  "new_training_optimizer_updates": 0,
+  "model_computations": "one-step recorded-action replay, local decoder/projection tests and timing",
+  "historical_data_sha256": "e163ea2c4875577a88970c3419d056fc8e560eae1d2c08b3e86a3c39c9b3e60b",
+  "historical_collection_interactions": 153600,
+  "historical_not_charged_again": true
+}

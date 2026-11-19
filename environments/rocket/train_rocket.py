@@ -2,7 +2,8 @@
 
 F9-class booster with gimballed main engine and grid fins on the Genesis
 rigid-body engine: soft landing on the pad -- contact with |v| < 0.02 m/s,
-|omega| < 0.02 rad/s and tilt < 0.1 rad -- within 1200 policy steps (30 s).
+|omega| < 0.02 rad/s and tilt < 0.1 rad. The shipped v1 (real-scale Falcon 9)
+horizon is 60 s = 2400 policy steps at 40 Hz; v2 uses 30 s = 1200 steps.
 
 Self-contained entry: every run parameter is hard-coded below, no CLI
 arguments. Edit the constants and run `python train_rocket.py`.
@@ -133,7 +134,11 @@ INIT_STD = _JsonStd([0.05, 0.05, 0.05, 0.2, 0.2, 0.05, 0.05])
 
 # BC warm start (algorithms/warmstart/bc_warmstart.py): pretrain the actor/critic on the
 # conventional controller (driven directly by the BC collector) before PPO. None = off.
-BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# steps=None collects one full episode horizon instead of the shared 512-step
+# default: at 40 Hz that default only reaches 12.8 s, while the v1 (Falcon 9,
+# 60 s) / v2 (30 s) episodes need 2400 / 1200 steps to include the final
+# descent, landing burn and touchdown the warm start is supposed to teach.
+BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
 
 
 def main(**overrides):

@@ -100,7 +100,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
     }
 
     def __init__(self, num_envs=64, backend="cpu", seed=7, residual=False,
-                 param_mismatch=None, domain_randomize=None):
+                 param_mismatch=None, domain_randomize=None, eclipse_thrust_fraction=1.0):
         """Initialize the LowThrustTransfer environment.
 
         Set two-body constants, Keplerian initial orbit, thrust/mass/ISP,
@@ -111,6 +111,9 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
             raise ValueError("n must be positive")
         if backend not in ("cpu", "gpu"):
             raise ValueError(backend)
+        self.eclipse_thrust_fraction = float(eclipse_thrust_fraction)
+        if not 0 <= self.eclipse_thrust_fraction <= 1:
+            raise ValueError("eclipse_thrust_fraction must lie in [0,1]")
         self.num_envs = num_envs
         self.task_cfg = {
             "vehicle": "transfer",
@@ -135,6 +138,10 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.ecc0 = 0.15
         self.inc0 = math.pi / 3
         self.raan0 = 2 * math.pi / 3
+        # Fixed in-plane Sun for the optional solar-electric eclipse challenge.
+        self.sun_direction = torch.tensor((math.cos(self.raan0), math.sin(self.raan0), 0.),
+                                          device=d, dtype=COMPUTE_DTYPE)
+        self.task_cfg["eclipse_thrust_fraction"] = self.eclipse_thrust_fraction
         self.argp0 = 4 * math.pi / 3
         self.dt = 300.0  # control step [s]
         self.substeps = 30  # 10 s RK4 substeps per control step
@@ -157,6 +164,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.r = torch.zeros((num_envs, 3), device=d, dtype=COMPUTE_DTYPE)
         self.v = torch.zeros_like(self.r)
         self.m = torch.full((num_envs,), self.mass0, device=d, dtype=COMPUTE_DTYPE)
+        self.propellant_used = torch.zeros_like(self.m)
         self.ra0 = torch.zeros(num_envs, device=d, dtype=COMPUTE_DTYPE)
         self.rp0 = torch.zeros_like(self.ra0)
         self._phi = torch.zeros(
@@ -256,6 +264,13 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         d = torch.zeros_like(s)
         d[:, :3] = v
         f_max = self.f_max if torch.is_tensor(self.f_max) else torch.as_tensor(self.f_max, device=s.device, dtype=s.dtype)
+        if self.eclipse_thrust_fraction < 1:
+            # Cylindrical umbra, sampled at every RK4 stage. The same actual
+            # thrust drives both acceleration and propellant consumption.
+            along_sun = (r * self.sun_direction).sum(-1)
+            axis_distance2 = (r - along_sun[:, None] * self.sun_direction).square().sum(-1)
+            in_umbra = (along_sun < 0) & (axis_distance2 < 6.378137e6 ** 2)
+            f_max = f_max * torch.where(in_umbra, self.eclipse_thrust_fraction, 1.)
         d[:, 3:6] = (
             -self.mu * r / r.norm(dim=-1, keepdim=True) ** 3 + f_max.view(-1, 1) * action / m[:, None]
         )
@@ -267,12 +282,20 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         """RK4 the [r,v,m] state under constant thrust for one control step."""
         s = torch.cat((self.r, self.v, self.m[:, None]), -1)
         h = self.dt / self.substeps
+        consumed = self.propellant_used.clone()
         for _ in range(self.substeps):
             k1 = self._deriv(s, action)
             k2 = self._deriv(s + h * 0.5 * k1, action)
             k3 = self._deriv(s + h * 0.5 * k2, action)
             k4 = self._deriv(s + h * k3, action)
-            s = torch.where(mask[:, None], s + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4), s)
+            delta = h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+            # A weak-thrust substep can burn less than one float32 ULP of wet
+            # mass. Integrate propellant on its own scale before reconstructing
+            # the wet mass, including for partially shadowed RK4 steps.
+            consumed = torch.where(mask, consumed - delta[:, 6], consumed)
+            s = torch.where(mask[:, None], s + delta, s)
+            s[:, 6] = torch.where(mask, self.mass0 - consumed, s[:, 6])
+        self.propellant_used.copy_(consumed)
         self.r.copy_(s[:, :3])
         self.v.copy_(s[:, 3:6])
         self.m.copy_(s[:, 6])
@@ -348,7 +371,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         # reward functional and is zero at every reset, so the per-step reward
         # F = Phi(s') - Phi(s) sums over an episode to exactly the terminal R
         # (gamma = 1.0, fixed horizon) while crediting each step immediately.
-        phi = 1.0e-4 * (-(ra - self.ra0).abs() + (rp - self.rp0) + 2.0e5 * (self.m - self.mass0))
+        phi = 1.0e-4 * (-(ra - self.ra0).abs() + (rp - self.rp0) - 2.0e5 * self.propellant_used)
         dense = torch.where(active, phi - self._phi, self.reward)
         # Defensive terminations (unreachable at the reference 10 mN thrust):
         # impact below the WGS84 equatorial radius, escape (non-positive
@@ -381,7 +404,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         n_done = done.sum().clamp_min(1)
         drp_km = torch.where(done, (rp - self.rp0) * 1e-3, 0.0)
         dra_km = torch.where(done, (ra - self.ra0).abs() * 1e-3, 0.0)
-        dm_kg = torch.where(done, self.mass0 - self.m, 0.0)
+        dm_kg = torch.where(done, self.propellant_used, 0.0)
         self.completed_metrics["perigee_raise_km"] += drp_km
         self.completed_metrics["apo_drift_km"] += dra_km
         self.completed_metrics["propellant_kg"] += dm_kg
@@ -429,6 +452,7 @@ class LowThrustTransferEnv(BaseEnv, ResidualActionMixin):
         self.v.copy_(torch.where(mask[:, None], v0, self.v))
         mass0 = self.mass0 if torch.is_tensor(self.mass0) else torch.full_like(self.m, self.mass0)
         self.m.copy_(torch.where(mask, mass0, self.m))
+        self.propellant_used.masked_fill_(mask, 0.)
         ra, rp = self._radii(self.r, self.v, self.mu)
         self.ra0.copy_(torch.where(mask, ra, self.ra0))
         self.rp0.copy_(torch.where(mask, rp, self.rp0))

@@ -31,6 +31,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+from scripts.landing_score import evaluation_rate, reusable_evaluation, rocket_version, terminal_count  # noqa: E402
+
 import torch  # noqa: E402
 
 from scripts.baseline_eval import ENVS  # noqa: E402
@@ -179,7 +181,7 @@ def cmd_run(args):
     for i, (task, label, variant, seed, d) in enumerate(mine, 1):
         tag = f"seed{seed}" + (f"_d{d:g}" if d is not None else "")
         dest = args.out_root / task / "baselines" / f"{label}_{tag}.json"
-        if dest.exists() and not args.force:
+        if not args.force and reusable_evaluation(task, dest, expected_version="v2"):
             print(f"[{i}/{len(mine)}] skip (exists) {task}/{label}/{tag}", flush=True)
             continue
         t0 = time.perf_counter()
@@ -221,6 +223,12 @@ def _cells(out_root):
     cells = {}
     for path in sorted(out_root.glob("*/baselines/*.json")):
         data = json.loads(path.read_text())
+        if data.get("task") == "rocket" and rocket_version(data) == "v1":
+            count = terminal_count(data)
+            if count is None:
+                continue
+            data["successes"] = count
+            data["success_rate"] = evaluation_rate("rocket", data)
         cells.setdefault((data["task"], data["controller"]), []).append(data)
     return cells
 

@@ -11,6 +11,7 @@ Runs the full method matrix on the 10 registered tasks:
     eval seeds   1011 1022 1033 1044 1055
     layout       results/5seed/<task>/<method>/seed_<s>/
                  results/5seed/<task>/bc_shared/seed_<s>/bc_checkpoint.pt
+                 Rocket BC adds bc_recipe_2/ before seed_<s> for the revised datasets.
                  results/5seed/<task>/baselines/<variant>/seed_<s>/
 
 Phases (default --phase all runs them in order):
@@ -45,6 +46,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+from scripts.landing_score import benchmark_method_dir, reusable_evaluation  # noqa: E402
+
 TASKS = [
     "quadx",
     "quadx_track",
@@ -61,6 +64,25 @@ TRAIN_SEEDS = [11, 22, 33, 44, 55]
 EVAL_SEEDS = [1011, 1022, 1033, 1044, 1055]
 METHODS = ["ppo_scratch", "bc_ppo", "residual_ppo"]
 BC_RECIPE = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)
+# Tasks whose expert episode outlasts the shared 512-step BC horizon. Their
+# rollouts must cover one full episode (steps=None -> env.max_steps), otherwise
+# the cloned data stops mid-trajectory (e.g. rocket only reaches 12.8 s of a
+# 60 s landing; fixedwing only the first 14% of its 3600-step route).
+# docking (500), satellite (~320) and transfer (166) still fit in 512 steps.
+BC_FULL_EPISODE_TASKS = {
+    "quadx", "quadx_track", "fixedwing", "quadplane", "rocket", "missile", "rendezvous",
+}
+
+
+def _bc_recipe(task):
+    """Shared BC recipe with a per-task collection horizon override."""
+    if task == "rocket":
+        return dict(BC_RECIPE, steps=None, select=None, collection="first_complete_episode")
+    if task in BC_FULL_EPISODE_TASKS:
+        return dict(BC_RECIPE, steps=None)
+    return BC_RECIPE
+
+
 RESIDUAL_RHO = 0.05
 BACKEND = "gpu"
 OUT_ROOT = _ROOT / "results" / "5seed"
@@ -93,25 +115,6 @@ def _log(msg):
 # --------------------------------------------------------------------------- #
 # train jobs
 # --------------------------------------------------------------------------- #
-def _load_retries():
-    if RETRY_QUEUE.exists():
-        try:
-            return json.loads(RETRY_QUEUE.read_text())
-        except (OSError, json.JSONDecodeError):
-            return []
-    return []
-
-
-def _save_retries(retries):
-    RETRY_QUEUE.write_text(json.dumps(retries, indent=2))
-
-
-def _retry_job(job):
-    """Re-run a failed training job. ``job`` is (task, method, seed) and we
-    trust run_training(..., clean=True) to wipe the old directory."""
-    return _train_job(job)
-
-
 def _subprocess_train_job(job):
     """Run one (task, method, seed) training run as a fully-isolated Python
     subprocess. Genesis C++-level exceptions (the rigid solver's nan check)
@@ -122,42 +125,52 @@ def _subprocess_train_job(job):
     latter's quoting/f-string nesting is a bottomless pit of SyntaxErrors;
     temp files give us plain, verifiable Python."""
     task, method, seed = job
-    out = OUT_ROOT / task / method / f"seed_{seed}"
+    out = benchmark_method_dir(OUT_ROOT / task, method) / f"seed_{seed}"
     if (out / "run.json").exists():
         _log(f"SKIP  {task}/{method}/seed_{seed} (run.json exists)")
         return
     out.mkdir(parents=True, exist_ok=True)
 
-    bc_dir = OUT_ROOT / task / "bc_shared" / f"seed_{seed}"
+    bc_dir = benchmark_method_dir(OUT_ROOT / task, "bc_shared") / f"seed_{seed}"
     ckpt = bc_dir / "bc_checkpoint.pt"
     bc_src = "None"
     if method == "ppo_scratch":
         bc_src = "None"
     elif method == "bc_ppo":
-        if not ckpt.exists():
+        from algorithms.warmstart.bc_warmstart import BC_DEFAULTS, bc_recipe_matches
+
+        recipe = _bc_recipe(task)
+        expected = {**BC_DEFAULTS, **recipe}
+        if ckpt.exists() and not bc_recipe_matches(str(ckpt), task, expected):
+            # Recipe changed (e.g. full-episode collection + informative
+            # subset): the cached initialization no longer matches.
+            _log(f"STALE {task}/seed_{seed}: BC recipe changed, refitting")
+            ckpt.unlink(missing_ok=True)
+            Path(str(ckpt) + ".recipe.json").unlink(missing_ok=True)
+        if not ckpt.exists() or (task == "rocket" and not (bc_dir / "run.json").is_file()):
             _log(f"BC    {task}/seed_{seed}: fitting shared BC initialization")
-            bc_init_path = OUT_ROOT / "_tmp_bc_init.py"
+            bc_init_path = OUT_ROOT / f"_tmp_bc_init_{task}_{seed}.py"
             bc_init_path.write_text(
                 bc_init_template(seed, str(bc_dir), str(ckpt), task)
             )
             proc = subprocess.run(
                 [sys.executable, str(bc_init_path)], cwd=_ROOT,
-                capture_output=True, text=True, timeout=900
+                capture_output=True, text=True, timeout=3600
             )
             bc_init_path.unlink(missing_ok=True)
             if proc.returncode != 0:
                 _log(f"FAIL  bc_shared {task}/seed_{seed}\n{proc.stderr[-4000:]}")
                 raise RuntimeError("BC init failed")
         bc_src = (
-            "{'steps': %d, 'epochs': %d, 'batch_size': %d, 'lr': %g,\n"
+            "{'steps': %r, 'epochs': %d, 'batch_size': %d, 'lr': %g,\n"
             "               'fit_critic': %s, 'checkpoint': %r}" %
-            (BC_RECIPE["steps"], BC_RECIPE["epochs"], BC_RECIPE["batch_size"],
-             BC_RECIPE["lr"], BC_RECIPE["fit_critic"], str(ckpt))
+            (recipe["steps"], recipe["epochs"], recipe["batch_size"],
+             recipe["lr"], recipe["fit_critic"], str(ckpt))
         )
 
     _log(f"START {task}/{method}/seed_{seed}")
     t0 = time.perf_counter()
-    runner_path = OUT_ROOT / "_tmp_runner.py"
+    runner_path = OUT_ROOT / f"_tmp_runner_{task}_{method}_{seed}.py"
     runner_path.write_text(
         runner_template(
             task=task, method=method, seed=seed, out=str(out),
@@ -171,13 +184,7 @@ def _subprocess_train_job(job):
     runner_path.unlink(missing_ok=True)
     if proc.returncode != 0:
         _log(f"FAIL  {task}/{method}/seed_{seed}\n{proc.stderr[-4000:]}")
-        retries = _load_retries()
-        retries.append({
-            "job": list(job), "attempt": 1,
-            "last_error": (proc.stderr.splitlines()[-1] if proc.stderr else "unknown")[:300],
-        })
-        _save_retries(retries)
-        return
+        raise RuntimeError(proc.stderr.strip()[-400:] or f"training exited {proc.returncode}")
     _log(f"DONE  {task}/{method}/seed_{seed} in {time.perf_counter() - t0:.0f}s")
 
 
@@ -185,6 +192,7 @@ def _subprocess_train_job(job):
 # temp-script template helpers
 # --------------------------------------------------------------------------- #
 def bc_init_template(seed, out_dir, save_checkpoint, task):
+    recipe = _bc_recipe(task)
     return (
         "import sys; sys.path.insert(0, %r)\n"
         "from %s import main\n"
@@ -195,7 +203,7 @@ def bc_init_template(seed, out_dir, save_checkpoint, task):
         "    clean=True,\n"
         "    performance=True,\n"
         "    bc_warmstart={\n"
-        "        'steps': %d,\n"
+        "        'steps': %r,\n"
         "        'epochs': %d,\n"
         "        'batch_size': %d,\n"
         "        'lr': %g,\n"
@@ -207,8 +215,8 @@ def bc_init_template(seed, out_dir, save_checkpoint, task):
             TRAIN_MODULES[task],
             seed,
             out_dir,
-            BC_RECIPE["steps"], BC_RECIPE["epochs"], BC_RECIPE["batch_size"],
-            BC_RECIPE["lr"], BC_RECIPE["fit_critic"],
+            recipe["steps"], recipe["epochs"], recipe["batch_size"],
+            recipe["lr"], recipe["fit_critic"],
             save_checkpoint,
         )
     )
@@ -264,6 +272,7 @@ def _train_job_dispatcher(job):
         _subprocess_train_job(job)
     except Exception:
         _log(f"FAIL  {job} dispatcher\n{traceback.format_exc()}")
+        return job
 
 
 def _train_jobs(tasks, seeds, methods):
@@ -282,9 +291,9 @@ def _train_jobs(tasks, seeds, methods):
 def _eval_job(job):
     task, method, seed, eval_seed = job
     t0 = time.perf_counter()
-    run_dir = OUT_ROOT / task / method / f"seed_{seed}"
+    run_dir = benchmark_method_dir(OUT_ROOT / task, method) / f"seed_{seed}"
     report = run_dir / f"eval_seed_{eval_seed}.json"
-    if report.exists():
+    if reusable_evaluation(task, report, run_dir / "config.json"):
         return
     cmd = [
         sys.executable,
@@ -332,15 +341,17 @@ def _baseline_job(job):
     t0 = time.perf_counter()
     name = variant or "default"
     out = OUT_ROOT / task / "baselines" / name / f"seed_{eval_seed}"
-    if (out / "baseline.json").exists():
+    src = OUT_ROOT / task / "ppo_scratch" / "seed_11" / "config.json"
+    filename = f"baseline_{variant}.json" if variant else "baseline.json"
+    if reusable_evaluation(task, out / filename, src):
         return
     out.mkdir(parents=True, exist_ok=True)
     # baseline_eval restores the training env_kwargs from out/config.json:
     # copy the task's ppo_scratch training config so baselines see the same
     # wind / reward-variant conditions as the learned policies.
-    src = OUT_ROOT / task / "ppo_scratch" / "seed_11" / "config.json"
-    if src.exists() and not (out / "config.json").exists():
-        shutil.copy(src, out / "config.json")
+    if not src.exists():
+        raise FileNotFoundError(f"Matched baseline requires the training config: {src}")
+    shutil.copy(src, out / "config.json")
     cmd = [
         sys.executable,
         str(_ROOT / "scripts" / "baseline_eval.py"),
@@ -378,13 +389,17 @@ def _baseline_jobs(tasks, eval_seeds):
 # driver
 # --------------------------------------------------------------------------- #
 def _run_pool(jobs, worker, workers):
+    failures = []
     if not jobs:
-        return
+        return failures
     ctx = mp.get_context("spawn")
     # maxtasksperchild=1: one CUDA context per process, no cross-run state
     with ctx.Pool(processes=workers, maxtasksperchild=1) as pool:
-        for i, _ in enumerate(pool.imap_unordered(worker, jobs)):
+        for i, failed in enumerate(pool.imap_unordered(worker, jobs)):
+            if failed is not None:
+                failures.append(failed)
             _log(f"progress {i + 1}/{len(jobs)} jobs finished")
+    return failures
 
 
 def main():
@@ -411,42 +426,16 @@ def main():
     if args.phase in ("train", "all"):
         jobs = _train_jobs(args.tasks, args.seeds, args.methods)
         _log(f"=== train phase: {len(jobs)} runs, {args.workers} workers ===")
-        _run_pool(jobs, _train_job_dispatcher, args.workers)
-        # Auto-retry any Genesis-failed training runs (up to MAX_RETRIES).
-        # These show up as the rigid solver's nan check under GPU saturation
-        # and succeed deterministically on the next attempt.
-        while True:
-            retries = _load_retries()
-            if not retries:
-                break
-            # Retry in waves: every entry with attempt < MAX_RETRIES gets one
-            # more go; any successes are removed, any new failures increment
-            # attempt; exhausted entries are moved to _exhausted_retry.json.
-            wave = [tuple(r["job"]) for r in retries if r["attempt"] < MAX_RETRIES]
-            exhausted = [r for r in retries if r["attempt"] >= MAX_RETRIES]
-            if not wave:
-                if exhausted:
-                    _log(f"=== {len(exhausted)} jobs hit MAX_RETRIES -- see {RETRY_QUEUE} ===")
+        for attempt in range(1, MAX_RETRIES + 1):
+            jobs = _run_pool(jobs, _train_job_dispatcher, args.workers)
+            if not jobs:
                 RETRY_QUEUE.unlink(missing_ok=True)
                 break
-            _log(f"=== retry wave ({len(wave)} jobs exhausted={len(exhausted)}) ===")
-            _run_pool(wave, _retry_job, args.workers)
-            # Filter: succeeded jobs have run.json now; failed ones are re-queued
-            # by _train_job itself and we re-load.
-            current = _load_retries()
-            if exhausted:
-                # merge exhausted back so the next outer loop iteration can
-                # surface them; we only break when current is empty OR all are
-                # exhausted.
-                pass
-            # _train_job already appended new failures with attempt=1; bump
-            # attempt counter on pre-existing entries we just retried.
-            seen = {tuple(r["job"]): r for r in current}
-            for entry in retries:
-                j = tuple(entry["job"])
-                if j in wave and j in seen:
-                    seen[j]["attempt"] = max(seen[j]["attempt"], entry["attempt"] + 1)
-            _save_retries(list(seen.values()))
+            temporary = RETRY_QUEUE.with_suffix(".tmp")
+            temporary.write_text(json.dumps([{"job": job, "attempt": attempt} for job in jobs], indent=2))
+            temporary.replace(RETRY_QUEUE)
+        if jobs:
+            raise RuntimeError(f"{len(jobs)} training jobs still failed; see {RETRY_QUEUE}")
     if args.phase in ("baselines", "all"):
         jobs = _baseline_jobs(args.tasks, args.eval_seeds)
         _log(f"=== baselines phase: {len(jobs)} evals, {args.workers} workers ===")

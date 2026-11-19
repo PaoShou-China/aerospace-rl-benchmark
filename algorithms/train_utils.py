@@ -374,15 +374,30 @@ def run_training(
 
     bc_warmstart (PPO only): None disables; a dict enables the behavior-
     cloning warm start (algorithms/warmstart/bc_warmstart.py). Keys with defaults:
-    'steps' (512 vectorized env steps of expert data, collected ON the
+    'steps' (512 vectorized env steps of expert data by default; None collects
+    one full episode horizon from the env's max_steps, which long-horizon tasks
+    such as rocket require, collected ON the
     training env by driving the task's classical baseline controller (its
     ``conventional_controller``) directly through collect_expert), 'epochs'
     (100 supervised epochs), 'batch_size' (8192),
-    'lr' (1e-3, a separate Adam over the actor's parameters), 'gamma'
+    'select' (optional dict; when set, full-episode data is reduced to the most
+    informative transitions per replica -- episodes are located from the done
+    mask, each is stratified into phases, and steps are ranked by the
+    temporal-action-change (TSS) score with keyframe-neighbour clusters and a
+    terminal-approach bonus for terminal tasks, or kept as stratified-uniform
+    coverage for tracking tasks.  'drop_failed' (default True) removes expert
+    episodes that did not succeed.  The exact full-trajectory returns are
+    preserved for the critic; defaults to ``{'budget': 512, 'segments': 8}``
+    with the method resolved per task), 'bc_val_fraction' (0.0 by default;
+    withholds that fraction of replicas as a BC validation set -- monitoring
+    only, no early stopping), 'lr' (1e-3, a separate Adam over the
+    actor's parameters), 'gamma'
     (None -> the PPO config's gamma, used only for the critic's
     returns-to-go targets) and 'fit_critic' (True). The env's episode
     counters are zeroed and the env reset after collection so the PPO run's
-    own reporting stays clean. Skipped when `resume` actually loads a
+    own reporting stays clean. Full-scale rocket BC defaults to collecting each
+    replica through its first episode boundary. Both actor and critic exclude
+    post-reset samples in this mode. Skipped when `resume` actually loads a
     checkpoint (the checkpoint would overwrite the warm start anyway).
 
     Extra keyword arguments are forwarded to ``build_cfg`` so a task entry can
@@ -492,6 +507,8 @@ def run_training(
                 BC_DEFAULTS,
                 collect_expert,
                 fit_behavior_cloning,
+                resolve_bc_select,
+                save_bc_recipe,
             )
 
             bc_cfg = {**BC_DEFAULTS, **bc_warmstart}
@@ -526,15 +543,11 @@ def run_training(
                 splits = split_dataset(ds, seed=seed)
                 pairs = flatten_split(ds, splits[split_name])
                 val_pairs = flatten_split(ds, splits["val"]) if splits.get("val") else None
-                sample_weights = None
-                if bc_cfg.get("sample_weighting"):
-                    from algorithms.warmstart.bc_warmstart import phase_weights
-
-                    sample_weights = phase_weights(pairs["obs"], bc_cfg["sample_weighting"])
-                obs = pairs["obs"].reshape(-1, 1, pairs["obs"].shape[-1])
                 # delta parameterization: the supervised target must be the
                 # increment, not the absolute command (train_arm sets the scale
                 # only for the dataset-fit arms under action_mode='delta').
+                # Computed on the FULL episode sequence before any selection so
+                # the increment stays the expert's true per-step delta.
                 act_flat = pairs["act"]
                 val_act_flat = None if val_pairs is None else val_pairs["act"]
                 if bc_cfg.get("delta_action_scale") is not None:
@@ -546,15 +559,65 @@ def run_training(
                         val_act_flat = delta_action_targets(
                             val_act_flat, val_pairs["t_in_episode"], scale
                         )
-                acts = act_flat.reshape(-1, 1, act_flat.shape[-1])
-                rews = pairs["rew"].reshape(-1, 1)
-                dones = pairs["done"].reshape(-1, 1)
                 # success ends the episode as a TRUE terminal event (the task
                 # env marks it truncated); keep timeout tails out of critic
                 # targets unless a bootstrap is supplied.
                 term_eff = (pairs["terminated"] | pairs["success"]).reshape(-1, 1)
                 trunc_eff = (pairs["truncated"] & ~pairs["success"]).reshape(-1, 1)
                 cut = pairs["cut"].reshape(-1, 1)
+                # Same informative-subset reduction as the rollout path, applied
+                # per episode.  Critic targets are computed on the FULL split
+                # first so selection cannot bias them.
+                returns = returns_valid = None
+                select_cfg = resolve_bc_select(task, bc_cfg.get("select"))
+                collected_pairs = pairs["obs"].shape[0]
+                if select_cfg:
+                    from algorithms.warmstart.bc_warmstart import (
+                        returns_to_go_flat,
+                        select_informative_indices_flat,
+                    )
+
+                    targets, valid = None, None
+                    if bc_cfg["fit_critic"]:
+                        # Episode-vectorised boundary-aware targets on the FULL
+                        # split, computed once before selection.  Success is a
+                        # true terminal end; timeout tails are marked invalid.
+                        targets, valid = returns_to_go_flat(
+                            pairs["rew"], pairs["done"],
+                            pairs["terminated"] | pairs["success"],
+                            pairs["episode_id"], bc_cfg["gamma"],
+                        )
+                    keep = select_informative_indices_flat(
+                        pairs["obs"], pairs["act"], pairs["done"],
+                        pairs["episode_id"],
+                        terminated=pairs["terminated"], success=pairs["success"],
+                        **select_cfg,
+                    )
+                    if keep is not None:
+                        pairs = {k: v[keep] for k, v in pairs.items()}
+                        act_flat = act_flat[keep]
+                        term_eff = term_eff[keep]
+                        trunc_eff = trunc_eff[keep]
+                        cut = cut[keep]
+                        if targets is not None:
+                            returns = targets[keep].reshape(-1, 1)
+                            returns_valid = valid[keep].reshape(-1, 1)
+                        print(
+                            f"[bc] selected {keep.numel()}/{collected_pairs} informative "
+                            f"dataset pairs (budget {select_cfg.get('budget')}/episode, "
+                            f"{select_cfg.get('segments', 8)} phases, "
+                            f"drop_failed={select_cfg.get('drop_failed', True)})",
+                            flush=True,
+                        )
+                sample_weights = None
+                if bc_cfg.get("sample_weighting"):
+                    from algorithms.warmstart.bc_warmstart import phase_weights
+
+                    sample_weights = phase_weights(pairs["obs"], bc_cfg["sample_weighting"])
+                obs = pairs["obs"].reshape(-1, 1, pairs["obs"].shape[-1])
+                acts = act_flat.reshape(-1, 1, act_flat.shape[-1])
+                rews = pairs["rew"].reshape(-1, 1)
+                dones = pairs["done"].reshape(-1, 1)
                 val = None
                 if val_pairs is not None and val_pairs["obs"].shape[0]:
                     val = {
@@ -586,6 +649,8 @@ def run_training(
                     cut=cut,
                     sample_weights=sample_weights,
                     performance=performance,
+                    returns=returns,
+                    returns_valid=returns_valid,
                 )
                 bc_report["fit_wall_seconds"] = round(time.perf_counter() - _t_fit, 1)
                 bc_report["dataset_path"] = str(bc_cfg["dataset"])
@@ -593,40 +658,170 @@ def run_training(
                 bc_report["sample_weighting"] = bc_cfg.get("sample_weighting")
                 bc_report["delta_action_scale"] = bc_cfg.get("delta_action_scale")
                 bc_report["dataset_split"] = split_name
+                bc_report["selection"] = dict(select_cfg) if select_cfg else None
+                bc_report["pairs_collected"] = collected_pairs
+                bc_report["pairs_selected"] = obs.shape[0]
                 bc_report["split_episodes"] = {k: len(v) for k, v in splits.items()}
                 bc_report["initial_output_std"] = _actor_std(runner)
             else:
-                print(
-                    f"[bc] collecting expert data: {bc_cfg['steps']} steps x {num_envs} envs",
-                    flush=True,
-                )
                 t0 = time.perf_counter()
-                obs, acts, rews, dones = collect_expert(env, bc_cfg["steps"], performance=performance)
-                collect_wall = time.perf_counter() - t0
-                print(
-                    f"[bc] collected {obs.shape[0] * num_envs} pairs in "
-                    f"{time.perf_counter() - t0:.1f}s",
-                    flush=True,
-                )
+                full_scale = task == "rocket" and getattr(base_env, "f9_real", False)
+                protocol = bc_cfg.setdefault("collection", "first_complete_episode" if full_scale else "fixed_steps")
+                coverage = None
+                if protocol == "first_complete_episode":
+                    from algorithms.warmstart.expert_dataset import collect_landing_first_episodes
+
+                    print(f"[bc] collecting one complete descent x {num_envs} replicas", flush=True)
+                    fit_data, coverage = collect_landing_first_episodes(env, seed=seed, performance=performance)
+                    collect_wall = time.perf_counter() - t0
+                    # First-descent protocol retains all first-episode pairs, not
+                    # the modern fixed-window informative-subset selector.
+                    bc_cfg["steps"] = None
+                    bc_cfg["select"] = None
+                    select_cfg = None
+                    collected = selected = coverage["expert_pairs"]
+                    returns = returns_valid = val = None
+                    frac = float(bc_cfg.get("bc_val_fraction") or 0.0)
+                    n_env = fit_data["obs"].shape[1]
+                    if frac > 0 and n_env > 1:
+                        n_val = min(max(1, int(round(n_env * frac))), n_env - 1)
+                        cut = n_env - n_val
+                        mask = fit_data["pair_mask"][:, cut:]
+                        val = {"obs": fit_data["obs"][:, cut:][mask].unsqueeze(1),
+                               "acts": fit_data["acts"][:, cut:][mask].unsqueeze(1)}
+                        fit_data = {key: value[:, :cut] for key, value in fit_data.items()}
+                elif protocol == "fixed_steps":
+                    (obs, acts, rews, dones, terms, succs) = collect_expert(
+                        env, bc_cfg["steps"], performance=performance
+                    )
+                    collect_wall = time.perf_counter() - t0
+                    n_env = obs.shape[1]
+                    collected = obs.shape[0] * n_env
+                    print(
+                        f"[bc] collected {collected} pairs in "
+                        f"{time.perf_counter() - t0:.1f}s",
+                        flush=True,
+                    )
+                    # Boundary-aware targets: a success is a true terminal end even
+                    # though the env reports it through ``truncated``; a plain
+                    # timeout leaves an invalid tail.
+                    terminated_eff = terms | succs
+                    truncated_eff = dones & ~succs & ~terms
+                    # Full-episode rollouts are mostly low-information steady
+                    # flight.  Keep only the most informative transitions, chosen
+                    # inside each episode (per replica), instead of storing/fitting
+                    # every step; failed expert episodes are dropped.  Critic
+                    # targets are computed on the FULL trajectory first.
+                    returns = returns_valid = None
+                    val = None
+                    flat = False
+                    n_idx = None
+                    selected = collected
+                    select_cfg = resolve_bc_select(task, bc_cfg.get("select"))
+                    if select_cfg:
+                        from algorithms.warmstart.bc_warmstart import (
+                            returns_to_go,
+                            select_informative_indices_rollout,
+                        )
+
+                        if bc_cfg["fit_critic"]:
+                            targets, valid = returns_to_go(
+                                rews, dones, bc_cfg["gamma"],
+                                terminated=terminated_eff, truncated=truncated_eff,
+                            )
+                        picked = select_informative_indices_rollout(
+                            obs, acts, dones, terminated=terms, success=succs,
+                            **select_cfg,
+                        )
+                        if picked is not None:
+                            t_idx, n_idx = picked
+                            obs = obs[t_idx, n_idx].unsqueeze(1)
+                            acts = acts[t_idx, n_idx].unsqueeze(1)
+                            rews = rews[t_idx, n_idx].unsqueeze(1)
+                            dones = dones[t_idx, n_idx].unsqueeze(1)
+                            terminated_eff = terminated_eff[t_idx, n_idx].unsqueeze(1)
+                            truncated_eff = truncated_eff[t_idx, n_idx].unsqueeze(1)
+                            if bc_cfg["fit_critic"]:
+                                returns = targets[t_idx, n_idx].unsqueeze(1)
+                                returns_valid = valid[t_idx, n_idx].unsqueeze(1)
+                            flat = True
+                            selected = obs.shape[0] * obs.shape[1]
+                            print(
+                                f"[bc] selected {selected}/{collected} "
+                                f"informative pairs (budget {select_cfg.get('budget')}/env, "
+                                f"{select_cfg.get('segments', 8)} phases/episode, "
+                                f"drop_failed={select_cfg.get('drop_failed', True)})",
+                                flush=True,
+                            )
+                    if obs.shape[0] == 0:
+                        raise RuntimeError(
+                            "BC curation removed every expert pair (no successful episode "
+                            "and/or budget too small); set select={'drop_failed': False} "
+                            "or inspect the expert baseline"
+                        )
+                    # Optional BC validation split by REPLICA.  No model selection
+                    # is performed with it (the protocol forbids early stopping);
+                    # it exists so curation variants can be compared on held-out
+                    # expert actions before spending PPO budget.
+                    frac = float(bc_cfg.get("bc_val_fraction") or 0.0)
+                    if frac > 0 and n_env > 1:
+                        n_val = min(max(1, int(round(n_env * frac))), n_env - 1)
+                        if flat:
+                            is_val = n_idx >= (n_env - n_val)
+                            val = {"obs": obs[is_val], "acts": acts[is_val]}
+                            keep = ~is_val
+                            obs, acts = obs[keep], acts[keep]
+                            rews, dones = rews[keep], dones[keep]
+                            terminated_eff = terminated_eff[keep]
+                            truncated_eff = truncated_eff[keep]
+                            if returns is not None:
+                                returns, returns_valid = returns[keep], returns_valid[keep]
+                        else:
+                            cut = n_env - n_val
+                            val = {"obs": obs[:, cut:], "acts": acts[:, cut:]}
+                            obs, acts = obs[:, :cut], acts[:, :cut]
+                            rews, dones = rews[:, :cut], dones[:, :cut]
+                            terminated_eff = terminated_eff[:, :cut]
+                            truncated_eff = truncated_eff[:, :cut]
+                    if val is not None and val["obs"].shape[0] == 0:
+                        val = None
+                    if obs.shape[0] == 0:
+                        raise RuntimeError(
+                            "BC validation split left no training pairs; lower "
+                            "bc_val_fraction or check the expert episodes"
+                        )
+                    fit_data = dict(obs=obs, acts=acts, rews=rews, dones=dones,
+                                    terminated=terminated_eff, truncated=truncated_eff)
+                else:
+                    raise ValueError(f"Unknown expert collection protocol: {protocol}")
                 _t_fit = time.perf_counter()
                 bc_report = fit_behavior_cloning(
                     runner,
-                    obs,
-                    acts,
-                    rews,
-                    dones,
+                    **fit_data,
                     epochs=bc_cfg["epochs"],
                     batch_size=bc_cfg["batch_size"],
                     lr=bc_cfg["lr"],
                     gamma=bc_cfg["gamma"],
                     fit_critic=bc_cfg["fit_critic"],
+                    val=val,
                     performance=performance,
+                    returns=returns,
+                    returns_valid=returns_valid,
                 )
+                del fit_data
+                if coverage is not None:
+                    bc_report["expert_coverage"] = coverage
                 bc_report["collect_wall_seconds"] = round(collect_wall, 1)
+                bc_report["selection"] = dict(select_cfg) if select_cfg else None
+                bc_report["pairs_collected"] = collected
+                bc_report["pairs_selected"] = selected
+                bc_report["pairs_val"] = 0 if val is None else val["obs"].shape[0] * val["obs"].shape[1]
+                bc_report["bc_val_fraction"] = frac
                 bc_report["fit_wall_seconds"] = round(time.perf_counter() - _t_fit, 1)
             bc_warmstart = {**bc_cfg, **bc_report}
             if bc_cfg.get("save_checkpoint"):
                 _save_runner(runner, bc_cfg["save_checkpoint"])
+                save_bc_recipe(bc_cfg["save_checkpoint"], task, bc_cfg)
                 print(f"[bc] saved initialization to {bc_cfg['save_checkpoint']}", flush=True)
             # fresh MDP state for the PPO run; zero the counters the expert
             # rollout inflated so run.json only reports PPO's own episodes

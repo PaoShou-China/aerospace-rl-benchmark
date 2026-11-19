@@ -1,0 +1,259 @@
+{
+  "name": "scale_large_w256",
+  "width": 256,
+  "data": "large",
+  "successes": {
+    "scale_small_w128": 1,
+    "scale_small_w256": 2,
+    "scale_large_w128": 2,
+    "scale_large_w256": 7
+  },
+  "n_per_cell": 512,
+  "cells": {
+    "scale_small_w128": {
+      "name": "scale_small_w128",
+      "width": 128,
+      "data": "small",
+      "train_samples": 4699565,
+      "train_episodes": 4096,
+      "validation_samples": 585982,
+      "validation_episodes": 512,
+      "critic_valid_pairs": 4699565,
+      "trainable_parameters": {
+        "actor": 22286,
+        "critic": 20609
+      },
+      "best_update": 20480,
+      "best_validation_mse": 0.012366289489688985,
+      "actual_updates": 20480,
+      "actor_samples_seen": 167772160,
+      "history": [
+        {
+          "update": 2048,
+          "validation_action_mse": 0.03504573565510088
+        },
+        {
+          "update": 4096,
+          "validation_action_mse": 0.031028347518290953
+        },
+        {
+          "update": 6144,
+          "validation_action_mse": 0.025499926103707417
+        },
+        {
+          "update": 8192,
+          "validation_action_mse": 0.020567879411332594
+        },
+        {
+          "update": 10240,
+          "validation_action_mse": 0.018129160501880893
+        },
+        {
+          "update": 12288,
+          "validation_action_mse": 0.016277964799380987
+        },
+        {
+          "update": 14336,
+          "validation_action_mse": 0.015095258401751438
+        },
+        {
+          "update": 16384,
+          "validation_action_mse": 0.01399066031312761
+        },
+        {
+          "update": 18432,
+          "validation_action_mse": 0.012928098429315573
+        },
+        {
+          "update": 20480,
+          "validation_action_mse": 0.012366289489688985
+        }
+      ],
+      "updated": "2026-11-15T16:53:25+00:00"
+    },
+    "scale_small_w256": {
+      "name": "scale_small_w256",
+      "width": 256,
+      "data": "small",
+      "train_samples": 4699565,
+      "train_episodes": 4096,
+      "validation_samples": 585982,
+      "validation_episodes": 512,
+      "critic_valid_pairs": 4699565,
+      "trainable_parameters": {
+        "actor": 77326,
+        "critic": 73985
+      },
+      "best_update": 20480,
+      "best_validation_mse": 0.01204239797953859,
+      "actual_updates": 20480,
+      "actor_samples_seen": 167772160,
+      "history": [
+        {
+          "update": 2048,
+          "validation_action_mse": 0.033000852832135004
+        },
+        {
+          "update": 4096,
+          "validation_action_mse": 0.026762151997810558
+        },
+        {
+          "update": 6144,
+          "validation_action_mse": 0.021384504593753025
+        },
+        {
+          "update": 8192,
+          "validation_action_mse": 0.01824557264290968
+        },
+        {
+          "update": 10240,
+          "validation_action_mse": 0.0161757170736835
+        },
+        {
+          "update": 12288,
+          "validation_action_mse": 0.01522862270770076
+        },
+        {
+          "update": 14336,
+          "validation_action_mse": 0.01402419420979232
+        },
+        {
+          "update": 16384,
+          "validation_action_mse": 0.013526139535384658
+        },
+        {
+          "update": 18432,
+          "validation_action_mse": 0.01250408080317184
+        },
+        {
+          "update": 20480,
+          "validation_action_mse": 0.01204239797953859
+        }
+      ],
+      "updated": "2026-11-15T16:58:15+00:00"
+    },
+    "scale_large_w128": {
+      "name": "scale_large_w128",
+      "width": 128,
+      "data": "large",
+      "train_samples": 14066048,
+      "train_episodes": 12288,
+      "validation_samples": 585982,
+      "validation_episodes": 512,
+      "critic_valid_pairs": 14066048,
+      "trainable_parameters": {
+        "actor": 22286,
+        "critic": 20609
+      },
+      "best_update": 20480,
+      "best_validation_mse": 0.012843668941156149,
+      "actual_updates": 20480,
+      "actor_samples_seen": 167772160,
+      "history": [
+        {
+          "update": 2048,
+          "validation_action_mse": 0.03510890945845157
+        },
+        {
+          "update": 4096,
+          "validation_action_mse": 0.03094819693879363
+        },
+        {
+          "update": 6144,
+          "validation_action_mse": 0.025363539229693016
+        },
+        {
+          "update": 8192,
+          "validation_action_mse": 0.020877454084691875
+        },
+        {
+          "update": 10240,
+          "validation_action_mse": 0.018556096529893637
+        },
+        {
+          "update": 12288,
+          "validation_action_mse": 0.01668645736204202
+        },
+        {
+          "update": 14336,
+          "validation_action_mse": 0.015225473884343397
+        },
+        {
+          "update": 16384,
+          "validation_action_mse": 0.014869808202513999
+        },
+        {
+          "update": 18432,
+          "validation_action_mse": 0.013355699682104333
+        },
+        {
+          "update": 20480,
+          "validation_action_mse": 0.012843668941156149
+        }
+      ],
+      "updated": "2026-11-15T17:01:26+00:00"
+    },
+    "scale_large_w256": {
+      "name": "scale_large_w256",
+      "width": 256,
+      "data": "large",
+      "train_samples": 14066048,
+      "train_episodes": 12288,
+      "validation_samples": 585982,
+      "validation_episodes": 512,
+      "critic_valid_pairs": 14066048,
+      "trainable_parameters": {
+        "actor": 77326,
+        "critic": 73985
+      },
+      "best_update": 20480,
+      "best_validation_mse": 0.01317334932713691,
+      "actual_updates": 20480,
+      "actor_samples_seen": 167772160,
+      "history": [
+        {
+          "update": 2048,
+          "validation_action_mse": 0.03474924208648958
+        },
+        {
+          "update": 4096,
+          "validation_action_mse": 0.02703821344257832
+        },
+        {
+          "update": 6144,
+          "validation_action_mse": 0.021187536070712932
+        },
+        {
+          "update": 8192,
+          "validation_action_mse": 0.018091949726724753
+        },
+        {
+          "update": 10240,
+          "validation_action_mse": 0.0169631925726038
+        },
+        {
+          "update": 12288,
+          "validation_action_mse": 0.015418657947776774
+        },
+        {
+          "update": 14336,
+          "validation_action_mse": 0.014213446272740883
+        },
+        {
+          "update": 16384,
+          "validation_action_mse": 0.01323513754375401
+        },
+        {
+          "update": 18432,
+          "validation_action_mse": 0.013650039701472902
+        },
+        {
+          "update": 20480,
+          "validation_action_mse": 0.01317334932713691
+        }
+      ],
+      "updated": "2026-11-15T17:05:58+00:00"
+    }
+  },
+  "utc": "2026-11-15T17:09:28+00:00"
+}

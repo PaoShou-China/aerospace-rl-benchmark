@@ -1,9 +1,7 @@
 """Episode-level expert dataset for the controller-prior experiments.
 
-This is the *independent* data interface requested by the controller-prior
-study.  It does NOT replace ``collect_expert`` (the legacy BC path used by
-``run_training`` stays bit-for-bit compatible); it adds the bookkeeping needed
-for a defensible train/validation/test split:
+Controller-prior experiments and full-scale rocket BC use this episode-aware
+interface. Fixed-window BC uses ``collect_expert``. This module records:
 
 - raw observations and expert actions;
 - episode ID and replica ID per step, plus in-episode time;
@@ -193,6 +191,34 @@ def collect_expert_dataset(env, *, steps=None, episodes_per_replica=2,
         # thousands of near-duplicate rollouts
         out = select_representative_episodes(out, int(select_episodes))
     return out
+
+
+def collect_landing_first_episodes(env, *, seed, performance=False):
+    """Collect one full-scale descent per replica, including its last action."""
+    controller = env.conventional_controller(env, design=env.controller_design)
+    ds = collect_expert_dataset(env, episodes_per_replica=1, max_steps=env.max_steps,
+                                controller=controller, seed=seed, performance=performance)
+    data = ds['data']
+    first = data['episode_id'] == 0
+    boundary = data['done'] & first
+    if not (boundary.sum(dim=0) == 1).all():
+        raise RuntimeError('Incomplete full-scale expert cohort at the episode time limit')
+    contact = (data['obs'][:, :, -1] > 0.5) & first
+    ticks = torch.arange(first.shape[0], device=first.device)[:, None]
+    first_contact = torch.where(contact, ticks, first.shape[0]).amin(dim=0)
+    observed = first_contact < first.shape[0]
+    precontact = observed & (ticks < first_contact) & (ticks >= first_contact - 2 * env.agent_hz)
+    summary = dict(protocol='first_complete_episode', replicas=env.num_envs,
+                   complete_episodes=int(boundary.sum()), expert_pairs=int(first.sum()),
+                   policy_steps=data['obs'].shape[0], policy_hz=env.agent_hz,
+                   replicas_observing_pad_contact=int(observed.sum()),
+                   pairs_in_2s_before_first_observed_contact=int((first & precontact).sum()),
+                   observed_pad_contact_pairs=int(contact.sum()),
+                   terminal_stable_episodes=int((boundary & data['success']).sum()))
+    training = dict(obs=data['obs'], acts=data['act'], rews=data['rew'], dones=data['done'],
+                    pair_mask=first, terminated=data['terminated'] | data['success'],
+                    truncated=data['truncated'] & ~data['success'])
+    return training, summary
 
 
 def _episode_table(data):

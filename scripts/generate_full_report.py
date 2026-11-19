@@ -11,6 +11,12 @@ import json
 import statistics
 from pathlib import Path
 
+if __package__:
+    from .landing_score import evaluation_rate, rocket_version
+else:
+    from landing_score import evaluation_rate, rocket_version
+
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -47,7 +53,13 @@ def load_baselines():
         for s in SEEDS:
             p = RES / "baseline_protocol" / f"seed{s}" / t / "baseline.json"
             if p.exists():
-                data[t][s] = json.loads(p.read_text())
+                report = json.loads(p.read_text())
+                if t == "rocket" and rocket_version(report) == "v1":
+                    rate = evaluation_rate(t, report)
+                    if rate is None:
+                        continue
+                    report["success_rate"] = rate
+                data[t][s] = report
     return data
 
 
@@ -109,7 +121,7 @@ def chart_baseline_sr(baselines):
     width = 0.2
     colors = ["#4C72B0", "#55A868", "#C44E52", "#8172B3"]
     for i, s in enumerate(SEEDS):
-        vals = [baselines[t].get(s, {}).get("success_rate", 0) for t in TASKS]
+        vals = [baselines[t].get(s, {}).get("success_rate", np.nan) for t in TASKS]
         ax.bar(x + i * width, vals, width, label=f"seed {s}", color=colors[i])
     ax.set_xticks(x + width * 1.5)
     ax.set_xticklabels(TASKS, rotation=30, ha="right")
@@ -265,9 +277,9 @@ def main():
     for t in TASKS:
         srs = [baselines[t].get(s, {}).get("success_rate") for s in SEEDS]
         valid = [v for v in srs if v is not None]
-        mean = statistics.mean(valid) if valid else 0
-        std = statistics.stdev(valid) if len(valid) > 1 else 0
-        base_rows.append([t] + [f"{v:.3f}" if v is not None else "-" for v in srs] + [f"{mean:.3f}", f"{std:.3f}"])
+        mean = f"{statistics.mean(valid):.3f}" if valid else "-"
+        std = f"{statistics.stdev(valid):.3f}" if len(valid) > 1 else "-"
+        base_rows.append([t] + [f"{v:.3f}" if v is not None else "-" for v in srs] + [mean, std])
 
     # ---- RL table ----
     rl_table_rows = [[r["task"], r["algo"], r["seed"], f"{r['sr']:.3f}",

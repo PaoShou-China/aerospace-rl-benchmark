@@ -103,14 +103,18 @@ $$
 参考点 $\bar p=(p_{t,x}+\delta_x,\ p_{t,y}+\delta_y,\ \texttt{ALT\_REF})$，$\delta=(1.5,0)$ m，高度 6 m，每策略步：
 
 $$
+\Phi_{\text{aux}}(s) = -2\lVert p_{xy}-\bar p_{xy}\rVert
+      - 0.4(z-\texttt{ALT\_REF})^2,
+$$
+
+$$
 r_t = 0.10\,y_t - 0.10(1-y_t)
-      - 0.05\lVert p_{xy}-\bar p_{xy}\rVert y_t
-      - 0.01(z-\texttt{ALT\_REF})^2
+      + \Phi_{\text{aux}}(s_t) - \Phi_{\text{aux}}(s_{t-1})
       - 0.002\lVert\bar a_t\rVert^2
       - 10\,\kappa_t ,
 $$
 
-$\kappa_t\in\{0,1\}$ 为坠毁/出界。跟踪项仅在可见时支付；丢失时唯一信号是 $-0.10$ 惩罚。奖励是环境侧量，不是观测通道，也不通过它向控制器暴露目标状态。
+$\kappa_t\in\{0,1\}$ 为坠毁/出界。参考偏移与高度项为势函数塑形，回合和望远镜收敛到 $\Phi_{\text{aux}}(s_T)-\Phi_{\text{aux}}(s_0)$；该势函数不按可见性门控（可见性是任务的主逐步骤信号）。可见奖励/丢失惩罚每步支付，动作正则与坠毁项保持不变。奖励是环境侧量，不是观测通道，也不通过它向控制器暴露目标状态。
 
 ## 9. 终止、截断与成功
 
@@ -156,12 +160,12 @@ $\kappa_t\in\{0,1\}$ 为坠毁/出界。跟踪项仅在可见时支付；丢失�
 | 目标速度 / 转弯率 / 航段 | 0.4–1.2 m/s；0.3–1.0 rad/s；12 段，每段 2–5 s |
 | 目标区域 / 载机边界 | 15 m / 30 m |
 | 成功可见占比 | 0.85 |
-| 奖励权重 | +0.10 可见，−0.10 丢失，−0.05/m 跟踪，−0.01/m² 高度，−0.002 动作²，−10 坠毁 |
+| 奖励权重 | +0.10 可见，−0.10 丢失；势函数：−2/m 跟踪，−0.4/m² 高度；−0.002 动作²；−10 坠毁 |
 | `vel_clamp` | 15 m/s，30 rad/s |
 
 ## 13. RL 训练协议（PPO）
 
-学习臂为**未修改的仓库 PPO 实现**：`rsl_rl` `OnPolicyRunner` + rsl-rl `MLPModel` actor-critic（2×128 tanh，无循环层），状态无关 Beta 策略（`BetaDistribution`，有界并缩放到 $[-1,1]$），每次更新 100 向量化步、5 epochs、4 minibatches、固定 lr $3\times10^{-4}$、熵 0.01。入口启用行为克隆热启动（`BC_WARMSTART = dict(steps=512, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`），`WIND=None` 保持静风。
+学习臂为**未修改的仓库 PPO 实现**：`rsl_rl` `OnPolicyRunner` + rsl-rl `MLPModel` actor-critic（2×128 tanh，无循环层），状态无关 Beta 策略（`BetaDistribution`，有界并缩放到 $[-1,1]$），每次更新 100 向量化步、5 epochs、4 minibatches、固定 lr $3\times10^{-4}$、熵 0.01。入口启用行为克隆热启动（`BC_WARMSTART = dict(steps=None, epochs=100, batch_size=8192, lr=1e-3, fit_critic=True)`；`steps=None` 采集一整回 1200 步专家数据，随后跟踪类任务的分层均匀筛选器保留 512 对预算），`WIND=None` 保持静风。
 
 它消费第 7 节 25 维观测（当前自身状态、当前测量、可见标志；不可见时测量为 0）、同一 4 维动作接口、同一奖励、同一 reset 分布与同一评测场景。
 

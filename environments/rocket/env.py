@@ -36,26 +36,27 @@ there), these upstream behaviours are KEPT:
     in [0,1] -- uniform exploration fires the engine on ~50% of steps,
     exactly like upstream; gimbals (dims 5-6) in [-1,1].
 
-Reward (2026-10-28 'v5'): dense per-POLICY-step shaping. v4 kept a pure dive
-net-negative per step but ignored that a fatal crash also ends the hover-cost
-stream: PPO converged to +100 returns by diving onto the pad at 5 m/s, with
-zero successes in 65.5M transitions. v5 adds a feasible descent-speed corridor
-and a one-shot fatal penalty; the successful-settle and contact terms are
-unchanged:
+Reward (2026-10-28 'v5', auxiliary terms potential-based): dense per-POLICY-step
+shaping. v4 kept a pure dive net-negative per step but ignored that a fatal crash
+also ends the hover-cost stream: PPO converged to +100 returns by diving onto the
+pad at 5 m/s, with zero successes in 65.5M transitions. v5 adds a feasible
+descent-speed corridor and a one-shot fatal penalty; the successful-settle and
+contact terms are unchanged. The state-only auxiliary terms (hold, decel,
+corridor, attitude) are folded into the potential
+  Phi_aux(s) = HOLD_COEF/(||p_xy||+0.1)
+               - CORRIDOR_COEF*relu(-vz - v_allow(z))
+               - DECEL_COEF*exp(-z)*|vz|
+               - YAW_COEF*|w_yaw| - TILT_COEF*||rpy_xy||,
+each contributing Phi_aux(s_t) - Phi_aux(s_{t-1}). The remaining per-step form is
   r = -HOVER_COST                                time pressure, always
-      + HOLD_COEF/(||p_xy||+0.1)                 <= 0.05, cannot farm hover
       + LATERAL_COEF*(d_xy_prev - d_xy)          telescoping pad approach
       + DESCENT_COEF*(z_prev - z)                descent progress
-      + DECEL_COEF*(dvz+1)/e^z*sign(vz)          upstream decel term
-      - CORRIDOR_COEF*relu(-vz - v_allow(z))     v_allow = 0.5+sqrt(2*2*z),
-                                                 conservative vs ~3.55 m/s^2
-                                                 nominal maximum net decel
-      - YAW_COEF*|w_yaw| - TILT_COEF*||rpy_xy||
       + contact: CONTACT_BASE - CONTACT_VEL_COEF*|vz| per pad-contact step
       - FATAL_COST once on a new terminal transition (500: a dive-crash return
         becomes negative instead of escaping the remaining hover cost)
       + SUCCESS_BONUS once on first settle (5000 >> gamma*c/(1-gamma)~70,
-        so delaying a reachable success is never profitable)
+        so delaying a reachable success is never profitable).
+v_allow = 0.5+sqrt(2*2*z), conservative vs ~3.55 m/s^2 nominal maximum net decel.
 Success still does NOT truncate; the settled contact stream keeps paying.
 
 Port details: 40 Hz policy / 120 Hz control / 240 Hz physics (all rates read
@@ -90,13 +91,16 @@ HOLD_COEF = 0.005  # holding reward HOLD_COEF/(||p_xy||+0.1), max 0.05 -- too
 LATERAL_COEF = 10.0  # telescoping lateral progress toward the pad axis
 DESCENT_COEF = 0.1  # descent progress (0.2 -> 0.1 by the dive analysis: a pure
 # vertical dive then stays net-negative up to 150 m/s)
-DECEL_COEF = 0.1  # upstream deceleration term (dvz+1)/e^z*sign(vz), 4 -> 0.1
-YAW_COEF = 0.5  # -YAW_COEF*|body yaw rate|
-TILT_COEF = 0.5  # -TILT_COEF*||roll/pitch||
+DECEL_COEF = 0.1  # -DECEL_COEF*exp(-z)*|vz| in Phi_aux (potential-based since
+# 2026-11-17; at cruise altitude exp(-z) underflows, so this only acts near the
+# ground when the descent speed changes).
+YAW_COEF = 10.0  # -YAW_COEF*|body yaw rate| in Phi_aux (2026-11-17 calibration)
+TILT_COEF = 10.0  # -TILT_COEF*||roll/pitch|| in Phi_aux (same calibration)
 CONTACT_BASE = 0.5  # per policy step with any pad contact
 CONTACT_VEL_COEF = 1.0  # -CONTACT_VEL_COEF*|vz| on contact steps
 SUCCESS_BONUS = 5000.0  # one-shot on first settle-success (B >> gamma*c/(1-gamma))
-CORRIDOR_COEF = 0.5  # per-step penalty per m/s above the feasible descent corridor
+CORRIDOR_COEF = 8.0  # per-step potential penalty per m/s above the feasible
+# descent corridor (2026-11-17 calibration; worst-case potential range ~500).
 CORRIDOR_ACCEL = 2.0  # m/s^2; nominal net decel is ~3.55, leaving control margin
 CORRIDOR_V0 = 0.5  # m/s terminal descent allowance, below the 1.0 fatal threshold
 FATAL_COST = 500.0  # one-shot on a new terminal transition, not per contact step
@@ -115,6 +119,34 @@ REWARD_KEYS = (
 )
 
 
+def _corridor_excess(z, vel_z, cfg, fuel=None):
+    """Descent speed above the feasible corridor at altitude ``z``."""
+    corridor_accel = cfg["corridor_accel"]
+    if fuel is not None:
+        mass = cfg["dry_mass"] + fuel * cfg["fuel_full"]
+        corridor_accel = 0.6 * (cfg["max_thrust"] / mass - 9.81).clamp_min(0.5)
+    v_allow = cfg["corridor_v0"] + torch.sqrt(2.0 * corridor_accel * z)
+    return ((-vel_z).clamp_min(0.0) - v_allow).clamp_min(0.0)
+
+
+def _aux_potential(cfg, p, vel_z, rpy, body_omega, fuel=None):
+    """State potential of the auxiliary terms: hold, decel, corridor, attitude.
+
+    Shaping pays Phi(s_t) - Phi(s_{t-1}), so each term telescopes over an
+    episode instead of charging the absolute per-step penalty.
+    """
+    dxy = p[:, :2].norm(dim=-1)
+    z = p[:, 2].clamp_min(0.0)
+    tilt = rpy[:, :2].square().sum(-1).sqrt()
+    return (
+        cfg["hold"] / (dxy + 0.1)
+        - cfg["corridor"] * _corridor_excess(z, vel_z, cfg, fuel)
+        - cfg["decel"] * torch.exp(-z) * vel_z.abs()
+        - cfg["yaw"] * body_omega[:, 2].abs()
+        - cfg["tilt"] * tilt
+    )
+
+
 def rocket_shaping(
     cfg,
     p,
@@ -122,7 +154,9 @@ def rocket_shaping(
     vel_z,
     previous_vel_z,
     rpy,
+    previous_rpy,
     body_omega,
+    previous_body_omega,
     contact,
     contact_vz,
     newly_complete,
@@ -136,27 +170,33 @@ def rocket_shaping(
     the first contact inner step; `newly_complete` and `newly_fatal` fire once
     per episode on settle success and termination respectively. All
     coefficients come from cfg (see the module constants).
+
+    The auxiliary terms (hold, decel, corridor, attitude) are potential-based:
+    each component is Phi(s_t) - Phi(s_{t-1}) for the shared `_aux_potential`,
+    so their episode sum telescopes. Hover is a constant time pressure and
+    contact/fatal/success are events.
     """
     dxy = p[:, :2].norm(dim=-1)
     dxy_prev = previous_position[:, :2].norm(dim=-1)
-    dvz = vel_z - previous_vel_z
-    decel = (dvz + 1.0) * torch.exp(-p[:, 2].clamp_min(0.0)) * torch.where(vel_z < 0.0, 1.0, -1.0)
     z = p[:, 2].clamp_min(0.0)
-    corridor_accel = cfg["corridor_accel"]
-    if fuel is not None:
-        mass = cfg["dry_mass"] + fuel * cfg["fuel_full"]
-        corridor_accel = 0.6 * (cfg["max_thrust"] / mass - 9.81).clamp_min(0.5)
-    v_allow = cfg["corridor_v0"] + torch.sqrt(2.0 * corridor_accel * z)
-    v_excess = ((-vel_z).clamp_min(0.0) - v_allow).clamp_min(0.0)
+    z_prev = previous_position[:, 2].clamp_min(0.0)
+    tilt = rpy[:, :2].square().sum(-1).sqrt()
+    tilt_prev = previous_rpy[:, :2].square().sum(-1).sqrt()
+    v_excess = _corridor_excess(z, vel_z, cfg, fuel)
+    v_excess_prev = _corridor_excess(z_prev, previous_vel_z, cfg, fuel)
     comps = {
         "hover": torch.full_like(dxy, -cfg["hover"]),
-        "hold": cfg["hold"] / (dxy + 0.1),
+        "hold": cfg["hold"] * (1.0 / (dxy + 0.1) - 1.0 / (dxy_prev + 0.1)),
         "lateral": cfg["lateral"] * (dxy_prev - dxy),
         "descent": cfg["descent"] * (previous_position[:, 2] - p[:, 2]),
-        "decel": cfg["decel"] * decel,
-        "corridor": -cfg["corridor"] * v_excess,
-        "attitude": -cfg["yaw"] * body_omega[:, 2].abs()
-        - cfg["tilt"] * rpy[:, :2].square().sum(-1).sqrt(),
+        "decel": -cfg["decel"]
+        * (
+            torch.exp(-z) * vel_z.abs()
+            - torch.exp(-z_prev) * previous_vel_z.abs()
+        ),
+        "corridor": -cfg["corridor"] * (v_excess - v_excess_prev),
+        "attitude": -cfg["yaw"] * (body_omega[:, 2].abs() - previous_body_omega[:, 2].abs())
+        - cfg["tilt"] * (tilt - tilt_prev),
         "contact": torch.where(
             contact,
             cfg["contact_base"] - cfg["contact_vel"] * contact_vz.abs(),
@@ -380,7 +420,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         # updates them in place)
         self._p_start = torch.zeros((num_envs, 3), device=self.device, dtype=COMPUTE_DTYPE)
         self._vz_start = torch.zeros(num_envs, device=self.device, dtype=COMPUTE_DTYPE)
+        self._rpy_start = torch.zeros((num_envs, 3), device=self.device, dtype=COMPUTE_DTYPE)
+        self._wb_start = torch.zeros((num_envs, 3), device=self.device, dtype=COMPUTE_DTYPE)
         self._complete_start = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
+        self._episode_pad_contact = self.terminated.clone()
         self._stable_start = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self._terminated_start = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
         self._contact_any = torch.zeros(num_envs, device=self.device, dtype=torch.bool)
@@ -394,6 +437,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.touch_tilt = torch.zeros_like(self.touch_speed)
         self.completed_metrics = {
             "pad_touch_rate": torch.zeros_like(self.touch_speed),
+            "ever_pad_contact_rate": torch.zeros_like(self.touch_speed),
             "nonfatal_touch_rate": torch.zeros_like(self.touch_speed),
             "touch_speed": torch.zeros_like(self.touch_speed),
             "touch_ang_vel": torch.zeros_like(self.touch_speed),
@@ -433,18 +477,18 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             "v1": "rocket_falcon9_stage1.urdf",
             "v2": "rocket_v2.urdf",
         }[benchmark_version]
-        primary_metric = "ever_stable_2s"
+        self.primary_metric = "terminal_stable_2s" if self.f9_real else "ever_stable_2s"
         self.cfg["benchmark"] = dict(
             version=benchmark_version,
             variation=variation,
-            variation_ranges=VARIATIONS[variation],
+            variation_ranges=dict(self.plant.rocket_variation.ranges),
             variation_seed_offset=104729,
             policy_hz=agent_hz,
             control_hz=self.plant.control_hz,
             physics_hz=self.plant.physics_hz,
             horizon_seconds=60 if self.f9_real else 30,
             stable_samples=self.landing_metrics.required_samples,
-            primary_metric=primary_metric,
+            primary_metric=self.primary_metric,
             collision_asset_sha256=hashlib.sha256(model.read_bytes()).hexdigest(),
             physics_and_success_predicate_modified=True,
             integration="native-main-v2",
@@ -454,6 +498,10 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.controller_design = {}
         apply_static_perturbation(self, param_mismatch)
         self._dr_counter = 0
+        if self.f9_real:
+            from environments.common.plant import TensorRandom
+            # A dedicated stream isolates later episode draws from neighbouring resets.
+            self._episode_dr_rng = TensorRandom(num_envs, self.device, seed ^ 0x5A71D3)
         default_dr = self.DEFAULT_DOMAIN_RANDOMIZE
         if self.plant.realistic:
             default_dr = dict(default_dr)
@@ -531,7 +579,12 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
 
     def _scale_actions(self, actions):
         """Affinely map [-1, 1] policy actions onto the physical action bounds."""
-        raw = actions.to(COMPUTE_DTYPE).clamp(-self.clip_actions, self.clip_actions)
+        raw = actions.to(COMPUTE_DTYPE)
+        # Guard against non-finite policy outputs: NaN.clamp == NaN, so a
+        # diverged actor can otherwise push NaN through the action pipeline
+        # into the motor solver and crash Genesis.
+        raw = torch.where(torch.isfinite(raw), raw, torch.zeros_like(raw))
+        raw = raw.clamp(-self.clip_actions, self.clip_actions)
         return self.action_low + (raw + 1) * 0.5 * (self.action_high - self.action_low)
 
     def step(self, actions):
@@ -605,9 +658,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.touch_flag.fill_(False)
         self.count += 1
         # policy-step snapshots for the per-policy-step reward deltas
-        p_start, _, v_start, _ = self.plant.state()
+        p_start, q_start, v_start, w_start = self.plant.state()
         self._p_start.copy_(p_start)
         self._vz_start.copy_(v_start[:, 2])
+        self._rpy_start.copy_(euler(q_start))
+        self._wb_start.copy_(inverse_rotate(q_start, w_start))
         self._complete_start.copy_(self.complete)
         self._stable_start.copy_(self.landing_metrics.ever_stable)
         self._terminated_start.copy_(self.terminated)
@@ -661,6 +716,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
                 )
         new_touch = touch & ~self.touch_flag
         self.touch_flag |= new_touch
+        self._episode_pad_contact |= touch
         self.touch_speed.copy_(torch.where(new_touch, speed0, self.touch_speed))
         self.touch_ang_vel.copy_(torch.where(new_touch, spin0, self.touch_ang_vel))
         self.touch_tilt.copy_(torch.where(new_touch, tilt0, self.touch_tilt))
@@ -673,6 +729,9 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.obs_pad.copy_(
             torch.where(active, self.plant.pad_contact.to(COMPUTE_DTYPE), self.obs_pad)
         )
+        if self.f9_real:
+            # _observe ran before contact bookkeeping inside this control step.
+            self._observation[:, -1].copy_(self.obs_pad)
         term = fatal | bounds
         # success does NOT truncate: the rocket keeps earning the settled
         # contact stream until the time limit below
@@ -718,7 +777,9 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             v[:, 2],
             self._vz_start,
             rpy,
+            self._rpy_start,
             wb,
+            self._wb_start,
             self._contact_any,
             self._contact_vz,
             newly_success,
@@ -737,10 +798,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.completed_returns += torch.where(done, self.returns, 0.0)
         self.completed_episodes += done.to(torch.long)
         metrics = self.landing_metrics.values(self.complete, self.terminated)
-        primary = metrics["ever_stable_2s"]
+        primary = metrics[self.primary_metric]
         self.completed_successes += (done & primary).to(torch.long)
         for key, value in metrics.items():
             self.completed_metrics[key] += (done & value).to(COMPUTE_DTYPE)
+        self.completed_metrics["ever_pad_contact_rate"] += (done & self._episode_pad_contact).to(COMPUTE_DTYPE)
         landed = done & self.touch_flag
         nonfatal_touch = landed & ~self.fatal_collision
         self.completed_metrics["pad_touch_rate"] += landed.to(COMPUTE_DTYPE)
@@ -756,6 +818,8 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
 
         time_outs = self.truncated & ~self.terminated & ~self.complete
         self._cache_terminal_observations()
+        if self._sensor is not None and self._sensor.latency == 1:
+            self._terminal_obs.copy_(self._sensor._delay)
         return term_out, trunc_out, done, time_outs, primary, landed, nonfatal_touch
 
     def _episode_stats(self, done, primary, landed, nonfatal_touch):
@@ -866,11 +930,18 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         angular velocity. The upstream random linear/angular velocities are
         dead code there ("randoimize_drop" typo) and are not reproduced.
         """
-        if self._domain_randomize:
-            self._dr_counter += 1
-            stage_domain_randomization(self, self._domain_randomize, self._seed, self._dr_counter)
         if nonempty is None:
             nonempty = bool(envs_idx.any())
+        if self.f9_real and not nonempty:
+            return
+        if self._domain_randomize:
+            self._dr_counter += 1
+            # Keep the release's first-episode draw, then advance only reset rows.
+            rng = self._episode_dr_rng if self.f9_real and self._dr_counter > 1 else None
+            stage_domain_randomization(
+                self, self._domain_randomize, self._seed, self._dr_counter,
+                replica_rng=rng, mask=envs_idx,
+            )
         self._reset_replicas(envs_idx, nonempty)
         if getattr(self, "_dr_scales", None):
             self.extras["dr_scales"] = {
@@ -920,6 +991,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
         self.fatal_collision.masked_fill_(mask, False)
         self.landing_metrics.reset(mask)
         self.touch_flag.masked_fill_(mask, False)
+        self._episode_pad_contact.masked_fill_(mask, False)
         self.touch_dwell.masked_fill_(mask, 0)
         self.touch_speed.masked_fill_(mask, 0)
         self.touch_ang_vel.masked_fill_(mask, 0)
@@ -944,6 +1016,11 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             self._wind.reset(mask)
             flow = self._wind.sample(spawn[:, 2])
             self.plant.wind.copy_(torch.where(mask[:, None], flow, self.plant.wind))
+        elif self.f9_real and self._wind is not None:
+            self._wind.reset(mask)
+            position, _, _, _ = self.plant.state()
+            initial_wind = self._wind.initial_wind(position[:, 2])
+            self.plant.wind.copy_(torch.where(mask[:, None], initial_wind, self.plant.wind))
         if nonempty:
             self.plant.warmup(mask, nonempty=True)
         self._observe(mask)
@@ -951,7 +1028,7 @@ class RocketLandingEnv(BaseEnv, ResidualActionMixin):
             self._sensor.reset(mask)
         self.episode_length_buf.masked_fill_(mask, 0)
         self.returns.masked_fill_(mask, 0)
-        if self._wind is not None and self.measured_wind is None:
+        if self._wind is not None and self.measured_wind is None and not self.f9_real:
             self._wind.reset(mask)
         self._residual_reset(mask)
 

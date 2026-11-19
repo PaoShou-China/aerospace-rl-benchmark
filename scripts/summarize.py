@@ -15,6 +15,12 @@ import argparse
 import json
 from pathlib import Path
 
+if __package__:
+    from .landing_score import TERMINAL, evaluation_rate, rocket_version
+else:
+    from landing_score import TERMINAL, evaluation_rate, rocket_version
+
+
 TASKS = [
     "quadx",
     "quadx_track",
@@ -53,9 +59,9 @@ def collect(task):
         "ksteps_s": None,
         "vram_gib": None,
         "baseline": (base or {}).get("baseline"),
-        "base_sr": (base or {}).get("success_rate"),
+        "base_sr": evaluation_rate(task, base),
         "base_ret": (base or {}).get("mean_episode_return"),
-        "eval_sr": (ev or {}).get("success_rate"),
+        "eval_sr": evaluation_rate(task, ev),
         "eval_ret": (ev or {}).get("mean_episode_return"),
         "vis": (root / "vis.mp4").exists(),
         "vis_ckpt": (root / "vis_ckpt.mp4").exists(),
@@ -69,6 +75,9 @@ def collect(task):
         eps, ok = run.get("completed_episodes"), run.get("completed_successes")
         if eps is not None and ok is not None:
             row["train_sr"] = ok / max(eps, 1)
+        contract = run.get("task") or {}
+        if task == "rocket" and isinstance(contract, dict) and rocket_version(contract) == "v1" and eps:
+            row["train_sr"] = (run.get("completed_metrics") or {}).get(TERMINAL)
     return row
 
 

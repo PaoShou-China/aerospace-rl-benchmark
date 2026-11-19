@@ -1,0 +1,128 @@
+{
+  "source": "4e1c729cc94e1863c4d2fdfcf8fbc887e1590af0",
+  "train_shards": {
+    "small": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "large": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47
+    ]
+  },
+  "validation_shards": [
+    48,
+    49
+  ],
+  "widths": [
+    128,
+    256
+  ],
+  "train_seeds": [
+    11,
+    22,
+    33,
+    44
+  ],
+  "selection_seeds": [
+    3111,
+    3122,
+    3133,
+    3144
+  ],
+  "test_seeds": [
+    4111,
+    4122,
+    4133,
+    4144,
+    4155,
+    4166,
+    4177,
+    4188
+  ],
+  "eval_replicas": 128,
+  "ppo_milestones": [
+    8,
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+    2000
+  ],
+  "bc": {
+    "batch_size": 8192,
+    "lr": 0.001,
+    "max_updates": 20480,
+    "eval_interval": 2048,
+    "patience": 3,
+    "min_relative_improvement": 0.005
+  },
+  "checkpoint_validation_seeds": [
+    3211,
+    3222
+  ],
+  "selection_rule": "Highest validation landing count. Ties prefer smaller network, then fewer episodes.",
+  "ppo_rule": "At freeze time compare the largest common milestone and the preceding common milestone on two validation seeds. Sum successes across both arms and four training seeds, use the same winning update for all, prefer earlier on tie. Open the final panel after locking the update."
+}

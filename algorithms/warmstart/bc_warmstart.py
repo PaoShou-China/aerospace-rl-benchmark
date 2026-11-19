@@ -20,13 +20,19 @@ integrals, rendezvous ratchet) stay consistent with the visited states.
 PPO-only by design: the tanh-bounded actor head of off-policy methods is a
 different regression target and their runner is not touched here.
 """
+import hashlib
+import json
 import time
 from contextlib import nullcontext
 
 import torch
 
 __all__ = ['collect_expert', 'returns_to_go', 'fit_behavior_cloning', 'BC_DEFAULTS',
-           'phase_weights', 'delta_action_targets']
+           'phase_weights', 'delta_action_targets', 'select_informative_pairs',
+           'select_informative_indices_flat', 'select_informative_indices_rollout',
+           'returns_to_go_flat', 'resolve_bc_select', 'bc_recipe_fingerprint',
+           'save_bc_recipe', 'bc_recipe_matches', 'BC_SELECT_DEFAULTS',
+           'BC_RECIPE_VERSION', 'BC_TASK_SELECT_METHOD']
 
 
 def delta_action_targets(acts, t_in_episode, scale):
@@ -80,24 +86,317 @@ def phase_weights(obs, spec):
         w = w / w.mean()
     return w
 
+
+def _selection_indices(obs, acts, dones, *, budget=512, segments=8, method='tss',
+                       act_change=1.0, neighbor=2, terminal=2.0,
+                       terminal_window=5, terminal_mask=None):
+    """Return (N, B) time indices of the informative subset, or None if no-op."""
+    T, N = dones.shape
+    if obs.shape[:2] != dones.shape or acts.shape[:2] != dones.shape:
+        raise ValueError(
+            f'selection inputs disagree: obs {tuple(obs.shape)}, acts '
+            f'{tuple(acts.shape)}, dones {tuple(dones.shape)}'
+        )
+    if terminal_mask is not None and terminal_mask.shape != dones.shape:
+        raise ValueError(
+            f'terminal_mask shape {tuple(terminal_mask.shape)} != dones {tuple(dones.shape)}'
+        )
+    if T <= 1 or N == 0:
+        return None
+    budget = T if budget is None else int(budget)
+    if budget >= T:
+        return None
+    segments = max(1, int(segments))
+    if method not in ('tss', 'uniform'):
+        raise ValueError(f'unknown selection method {method!r}')
+    seg_len = max(1, (T + segments - 1) // segments)
+    bounds = [(s, min(T, s + seg_len)) for s in range(0, T, seg_len)]
+    base, rem = divmod(budget, len(bounds))
+    picks = []
+    if method == 'uniform':
+        # stratified-uniform ablation: equally spaced steps in every phase
+        for s, (start, stop) in enumerate(bounds):
+            k = min(stop - start, base + (1 if s < rem else 0))
+            if k <= 0:
+                continue
+            offsets = torch.arange(k, device=dones.device) * (stop - start) // k
+            picks.append((start + offsets).view(1, -1).expand(N, -1))
+    else:
+        raw = torch.zeros(T, N, device=acts.device, dtype=acts.dtype)
+        raw[1:] = act_change * (acts[1:] - acts[:-1]).norm(dim=-1)
+        score = raw.clone()
+        for k in range(1, int(neighbor) + 1):
+            score[k:].clamp_min_(raw[:-k])
+            score[:-k].clamp_min_(raw[k:])
+        if terminal and terminal_window > 0:
+            boundary = dones if terminal_mask is None else terminal_mask
+            term = boundary.to(score.dtype)
+            window = term.clone()
+            for k in range(1, int(terminal_window)):
+                window[:-k].clamp_min_(term[k:])
+            score = score + float(terminal) * window
+        for s, (start, stop) in enumerate(bounds):
+            k = min(stop - start, base + (1 if s < rem else 0))
+            if k <= 0:
+                continue
+            top = torch.topk(score[start:stop].transpose(0, 1), k, dim=1).indices
+            picks.append(torch.sort(top + start, dim=1).values)
+    if not picks:  # budget too small to cover one step per phase
+        return None
+    return torch.cat(picks, dim=1)
+
+
+def select_informative_pairs(obs, acts, rews, dones, returns=None, *, budget=512,
+                             segments=8, method='tss',
+                             act_change=1.0, neighbor=2,
+                             terminal=2.0, terminal_window=5, terminal_mask=None):
+    """Keep a fixed per-replica budget of the most informative expert steps.
+
+    A full-episode rollout of a long-horizon task is mostly low-information
+    steady flight; storing and fitting every step wastes memory and BC time.
+    This follows the demonstration-curation literature:
+
+    * **TSS (Temporal Surprise Score)** -- rank steps by the magnitude of the
+      expert's action change (``||a_t - a_{t-1}||``); action changepoints
+      (ignition, throttle pulses, reversals, capture) are where behaviour is
+      decided, while consecutive transit frames are nearly redundant
+      (``LESS IS MORE: On Data Redundancy in VLA Training``).
+    * **Keyframe clusters** -- the score of a changepoint is propagated to its
+      ``neighbor`` temporal neighbours (max-pooling), so the selection keeps
+      dense *clusters* around keyframes instead of isolated frames, mirroring
+      the keyframe focus of ``Keyframe-Focused Visual Imitation Learning``.
+    * **Stratified coverage** -- the horizon is split into ``segments`` equal
+      phases and the budget is divided across them, so every phase is
+      represented.  This is deliberate: the redundancy study above finds broad
+      coverage matters more than difficulty alone.  ``method='uniform'`` gives
+      the matching stratified-random ablation.
+    * **Terminal phase** -- a bonus on the ``terminal_window`` steps before
+      every episode end keeps the precision-critical final approach dense
+      (cf. semantic-critical-phase preservation in ``ESPADA``).
+
+    The score uses only data the BC target already consumes (policy
+    observations, expert actions and done flags); no privileged environment
+    state is read.  ``returns`` (T, N), when provided, is gathered with the
+    same indices so the critic still regresses the exact full-trajectory
+    discounted return-to-go instead of a return recomputed on the decimated
+    sequence.  Selected steps are returned in per-replica time order.
+
+    Returns the same tuple shape as the inputs, with the (optional) returns
+    gathered last.  A no-op when ``budget`` already covers the horizon.
+    """
+    T, N = dones.shape
+    if terminal_mask is not None and terminal_mask.shape != dones.shape:
+        raise ValueError(
+            f'terminal_mask shape {tuple(terminal_mask.shape)} != dones {tuple(dones.shape)}'
+        )
+    idx = _selection_indices(
+        obs, acts, dones, budget=budget, segments=segments, method=method,
+        act_change=act_change, neighbor=neighbor,
+        terminal=terminal, terminal_window=terminal_window,
+        terminal_mask=terminal_mask,
+    )
+    if idx is None:
+        return obs, acts, rews, dones, returns
+    B = idx.shape[1]
+
+    def _take(x):
+        if x is None:
+            return None
+        shape = x.shape[2:]
+        index = idx.transpose(0, 1).reshape(B, N, *((1,) * len(shape)))
+        index = index.expand(B, N, *shape)
+        return torch.gather(x, 0, index)
+
+    return _take(obs), _take(acts), _take(rews), _take(dones), _take(returns)
+
+
+def select_informative_indices_flat(obs, acts, dones, episode_id, *,
+                                    terminated=None, success=None, drop_failed=True,
+                                    **select_cfg):
+    """Episode-aware variant of the TSS selection for flat dataset rows.
+
+    ``flatten_split`` returns episode-contiguous rows ``(M, d)`` plus an
+    ``episode_id`` column.  This returns the global row indices of the same
+    TSS/keyframe + stratified selection applied inside every episode (with a
+    per-episode budget), so a dataset of many long demonstrations is reduced
+    without mixing or truncating episodes.  ``obs``/``acts``/``dones`` are used
+    only for scoring, so callers remain free to gather whichever arrays
+    (delta-transformed actions, targets, masks, ...) accompany the rows.
+
+    ``terminated``/``success`` (per row) refine the terminal bonus to true
+    episode ends instead of every auto-reset, and ``drop_failed`` removes
+    expert episodes that did not succeed (falling back to keeping everything
+    when the split contains no successful episode at all).
+
+    Returns ``None`` when nothing was filtered or truncated.
+    """
+    if episode_id.shape != dones.shape:
+        raise ValueError(
+            f'episode_id shape {tuple(episode_id.shape)} != dones {tuple(dones.shape)}'
+        )
+    if terminated is not None and terminated.shape != dones.shape:
+        raise ValueError('terminated must match the dones (M,) shape')
+    if success is not None and success.shape != dones.shape:
+        raise ValueError('success must match the dones (M,) shape')
+    counts = torch.unique_consecutive(episode_id, return_counts=True)[1].tolist()
+    starts = [0]
+    for c in counts[:-1]:
+        starts.append(starts[-1] + int(c))
+    n_done = int(dones.sum())
+    filter_failures = (success is not None and n_done > 0
+                       and float(success.sum()) / n_done >= BC_DROP_FAILED_MIN_FRACTION)
+    idx_parts, reduced = [], False
+    for s, c in zip(starts, counts):
+        e = s + int(c)
+        if drop_failed and filter_failures and not bool(success[e - 1]):
+            reduced = True
+            continue
+        term_mask = None
+        if terminated is not None or success is not None:
+            term_mask = torch.zeros(e - s, dtype=torch.bool, device=dones.device)
+            if terminated is not None:
+                term_mask |= terminated[s:e]
+            if success is not None:
+                term_mask |= success[s:e]
+        idx = _selection_indices(
+            obs[s:e].unsqueeze(1), acts[s:e].unsqueeze(1), dones[s:e].unsqueeze(1),
+            terminal_mask=None if term_mask is None else term_mask.unsqueeze(1),
+            **select_cfg,
+        )
+        if idx is None:
+            idx_parts.append(torch.arange(s, e, device=obs.device))
+        else:
+            reduced = True
+            idx_parts.append(s + idx[0])
+    if not reduced:
+        return None
+    return torch.cat(idx_parts)
+
+
 # shared warm-start defaults; per-task entries pass a dict of overrides on
-# top of these so every task's BC recipe stays directly comparable
+# top of these so every task's BC recipe stays directly comparable.
+# ``steps=None`` rolls one full episode horizon (``env.max_steps``) so the
+# expert's terminal behaviour is recorded; ``select`` then keeps only the most
+# informative transitions (a fixed per-replica budget) instead of training on
+# and storing every step of a long episode.
+#
+# Curation defaults live in ONE place so the two collection paths (rollout and
+# dataset) and the orchestrators cannot drift apart.  The method is resolved
+# per task: terminal-type tasks (rocket / missile / docking / rendezvous) use
+# the TSS keyframe ranking, tracking/cruise tasks keep broad uniform coverage
+# (``LESS IS MORE`` finds coverage matters more than difficulty there).
+BC_SELECT_DEFAULTS = {'budget': 512, 'segments': 8}
+BC_TASK_SELECT_METHOD = {
+    'rocket': 'tss', 'missile': 'tss', 'docking': 'tss', 'rendezvous': 'tss',
+    'quadx': 'uniform', 'quadx_track': 'uniform', 'fixedwing': 'uniform',
+    'quadplane': 'uniform', 'satellite': 'uniform', 'transfer': 'uniform',
+}
+# Bump whenever the curation rule or a BC default changes: cached BC
+# checkpoints (orchestrators) carry this version and are refitted on mismatch.
+BC_RECIPE_VERSION = 2
+# Safety floor for failure filtering: a near-zero expert success rate must not
+# silently throw away almost all demonstrations.  Filtering is applied only
+# when at least this fraction of episode ends succeeded; otherwise the split
+# is used as-is (the audited baselines are all well above this floor).
+BC_DROP_FAILED_MIN_FRACTION = 0.1
 BC_DEFAULTS = {'steps': 512, 'epochs': 100, 'batch_size': 8192, 'lr': 1e-3,
-               'gamma': None, 'fit_critic': True}
+               'gamma': None, 'fit_critic': True,
+               'select': dict(BC_SELECT_DEFAULTS), 'bc_val_fraction': 0.0}
 
 
-def collect_expert(env, steps, *, performance=False):
+def resolve_bc_select(task, select=None):
+    """Merge the shared curation defaults and pick the task's score method.
+
+    ``select=None`` disables the informative-subset reduction (train on every
+    collected step).  An explicit ``method`` always wins.
+    """
+    if select is None:
+        return None
+    cfg = {**BC_SELECT_DEFAULTS, **dict(select)}
+    cfg.setdefault('method', BC_TASK_SELECT_METHOD.get(task, 'tss'))
+    return cfg
+
+
+def bc_recipe_fingerprint(task, bc_cfg):
+    """Stable hash of the parts of a BC recipe that determine the fitted data.
+
+    The orchestrators store this next to a shared BC checkpoint; a mismatch
+    (old 512-step data, changed selector, different budget, ...) forces a
+    refit instead of silently reusing stale initialization.
+    """
+    payload = {
+        'version': BC_RECIPE_VERSION,
+        'task': task,
+        'steps': bc_cfg.get('steps'),
+        'collection': bc_cfg.get('collection', 'fixed_steps'),
+        'select': resolve_bc_select(task, bc_cfg.get('select')),
+        'epochs': bc_cfg.get('epochs'),
+        'batch_size': bc_cfg.get('batch_size'),
+        'lr': bc_cfg.get('lr'),
+        'fit_critic': bool(bc_cfg.get('fit_critic', True)),
+        'bc_val_fraction': float(bc_cfg.get('bc_val_fraction') or 0.0),
+        'delta_action_scale': bc_cfg.get('delta_action_scale'),
+    }
+    blob = json.dumps(payload, sort_keys=True, default=str).encode()
+    return hashlib.sha1(blob).hexdigest()
+
+
+def save_bc_recipe(checkpoint, task, bc_cfg):
+    """Write the recipe sidecar next to a BC checkpoint."""
+    payload = {
+        'version': BC_RECIPE_VERSION,
+        'task': task,
+        'fingerprint': bc_recipe_fingerprint(task, bc_cfg),
+        'recipe': {k: bc_cfg.get(k) for k in
+                   ('steps', 'epochs', 'batch_size', 'lr', 'fit_critic',
+                    'delta_action_scale')} | {
+            'select': resolve_bc_select(task, bc_cfg.get('select')),
+        },
+    }
+    with open(str(checkpoint) + '.recipe.json', 'w') as f:
+        json.dump(payload, f, indent=2, sort_keys=True, default=str)
+
+
+def bc_recipe_matches(checkpoint, task, bc_cfg):
+    """True only if ``checkpoint`` was fitted with the identical recipe."""
+    path = str(checkpoint) + '.recipe.json'
+    try:
+        with open(path) as f:
+            saved = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (saved.get('fingerprint') == bc_recipe_fingerprint(task, bc_cfg)
+            and saved.get('task') == task)
+
+
+def collect_expert(env, steps=None, *, performance=False):
     """Roll the env for `steps` vectorized steps under the task's classical
     controller (``env.conventional_controller``), instantiated here and driven
     directly; the env never sees it.
 
+    ``steps=None`` means one full episode: the horizon is read from the env's
+    ``max_steps`` (falling back to ``max_episode_length``).  Fixed step counts
+    that are shorter than the episode silently truncate the expert trajectory
+    (e.g. rocket's 512 steps only reach 12.8 s of a 60 s descent), so long
+    horizon tasks must not rely on the 512-step shared default.
+
     Returns device-resident tensors: obs (T, N, obs_dim), act (T, N, A),
     rew (T, N), done (T, N) where done marks the env auto-reset at that
-    step.  The controller's stateful parts are reset on the same mask the
+    step, plus ``terminated`` (T, N) and ``success`` (T, N) masks so the
+    curation step can reward true terminal ends and drop failed expert
+    episodes.  The controller's stateful parts are reset on the same mask the
     env resets on, so per-env controller state always matches the env.
     """
     if env.conventional_controller is None:
         raise RuntimeError(f'{type(env).__name__} declares no conventional_controller')
+    if steps is None:
+        steps = getattr(env, 'max_steps', None) or getattr(env, 'max_episode_length', None)
+        if not steps:
+            raise ValueError(
+                f'{type(env).__name__} has no max_steps/max_episode_length; '
+                'pass an explicit BC collection horizon'
+            )
+    steps = int(steps)
     if performance:
         from algorithms.warmstart.performance import prepare_collection
         prepare_collection(env)
@@ -109,6 +408,10 @@ def collect_expert(env, steps, *, performance=False):
     acts = torch.empty(T, N, A, device=env.device, dtype=torch.float32)
     rews = torch.empty(T, N, device=env.device)
     dones = torch.empty(T, N, device=env.device, dtype=torch.bool)
+    terms = torch.zeros(T, N, device=env.device, dtype=torch.bool)
+    succs = torch.zeros(T, N, device=env.device, dtype=torch.bool)
+    completed = getattr(env, 'completed_successes', None)
+    succ_prev = completed.clone() if completed is not None else None
     ctrl.reset_idx(torch.ones(N, dtype=torch.bool, device=env.device))
     checked = False
     for t in range(T):
@@ -123,12 +426,43 @@ def collect_expert(env, steps, *, performance=False):
                 raise ValueError('expert action violates finiteness/action range')
             checked = True
         obss[t], acts[t] = obs['policy'], expert
-        with torch.no_grad() if performance else nullcontext():
-            _, rew, term, trunc, _ = env.step(expert)
-        rews[t], dones[t] = rew, term | trunc
+        # Expert rollouts can occasionally drive a replica into a state where
+        # the Genesis rigid solver diverges (NaN accelerations).  The plant's
+        # ``_step_scene`` recovers up to 10 times; if it still raises, or if
+        # the observation silently contains NaN, reset the affected replicas
+        # and continue collecting from a clean spawn state.
+        try:
+            with torch.no_grad() if performance else nullcontext():
+                _, rew, term, trunc, _ = env.step(expert)
+        except Exception:
+            # The solver diverged; force a full reset of every replica to
+            # clear corrupted internal solver state, then continue.
+            env.reset_idx(torch.ones(N, dtype=torch.bool, device=env.device))
+            ctrl.reset_idx(torch.ones(N, dtype=torch.bool, device=env.device))
+            rew = torch.zeros(N, device=env.device)
+            term = torch.ones(N, dtype=torch.bool, device=env.device)
+            trunc = torch.zeros(N, dtype=torch.bool, device=env.device)
+        if completed is not None:
+            succ = completed > succ_prev
+            succ_prev = completed.clone()
+        else:
+            succ = torch.zeros(N, dtype=torch.bool, device=env.device)
+        rews[t], dones[t], terms[t], succs[t] = rew, term | trunc, term, succ
         obs = env.get_observations()
+        nan_mask = ~torch.isfinite(obs['policy']).all(-1)
+        if nan_mask.any():
+            env.reset_idx(nan_mask)
+            ctrl.reset_idx(nan_mask)
+            obs = env.get_observations()
+            # The artificial recovery reset is an episode boundary: close the
+            # episode as a truncated (invalid-tail) end for those replicas so
+            # curation never stitches pre- and post-reset states into one
+            # episode or treats the recovery as a success.
+            dones[t] |= nan_mask
+            terms[t] &= ~nan_mask
+            succs[t] &= ~nan_mask
         ctrl.reset_idx(term | trunc)
-    return obss, acts, rews, dones
+    return obss, acts, rews, dones, terms, succs
 
 
 def returns_to_go(rews, dones, gamma=None, *, bootstrap_values=None, terminated=None,
@@ -192,11 +526,128 @@ def returns_to_go(rews, dones, gamma=None, *, bootstrap_values=None, terminated=
     return out
 
 
+def returns_to_go_flat(rews, dones, terminated, episode_id, gamma):
+    """Episode-vectorised return-to-go for flat dataset rows.
+
+    Equivalent to calling ``returns_to_go`` on each episode separately with
+    boundary-aware masks (success/violation = true terminal, timeout tails
+    invalid), but implemented with one reverse discounted cumulative sum per
+    episode instead of a Python loop over every row.  ``episode_id`` must be
+    episode-contiguous (as produced by ``flatten_split``).
+
+    Returns ``(targets, valid)`` shaped like ``rews``/``dones``.
+    """
+    if gamma is None:
+        raise ValueError('returns_to_go_flat: gamma is required')
+    if episode_id.shape != rews.shape or dones.shape != rews.shape:
+        raise ValueError(
+            f'returns_to_go_flat inputs disagree: rews {tuple(rews.shape)}, '
+            f'dones {tuple(dones.shape)}, episode_id {tuple(episode_id.shape)}'
+        )
+    if terminated.shape != rews.shape:
+        raise ValueError('returns_to_go_flat: terminated must match rews shape')
+    counts = torch.unique_consecutive(episode_id, return_counts=True)[1].tolist()
+    out = torch.empty_like(rews)
+    valid = torch.zeros(dones.shape, dtype=torch.bool, device=rews.device)
+    s = 0
+    for c in counts:
+        e = s + int(c)
+        r = rews[s:e].to(torch.float32)
+        disc = gamma ** torch.arange(e - s, dtype=torch.float32, device=rews.device)
+        suffix = torch.flip(torch.cumsum(torch.flip(r * disc, [0]), 0), [0])
+        out[s:e] = (suffix / disc.clamp_min(1e-30)).to(rews.dtype)
+        # With success folded into ``terminated``, a complete episode ending in
+        # a true terminal has every target valid; a timeout tail is invalid
+        # from the start (returns_to_go propagates that backward).
+        valid[s:e] = bool(terminated[e - 1])
+        s = e
+    return out, valid
+
+
+def select_informative_indices_rollout(obs, acts, dones, *, terminated=None,
+                                       success=None, budget=512, segments=8,
+                                       method='tss', act_change=1.0, neighbor=2,
+                                       terminal=2.0, terminal_window=5,
+                                       drop_failed=True):
+    """Episode-aware informative selection for the (T, N) rollout path.
+
+    Unlike the rectangular phase split, episodes are located per replica from
+    the ``done`` mask, so a collection horizon that contains several auto-reset
+    episodes (e.g. missile kills at ~600/900 steps, quadx successes at ~670)
+    is stratified inside each episode instead of across the whole window.
+    The per-replica budget is distributed across that replica's episodes in
+    proportion to their lengths.
+
+    ``terminated``/``success`` refine the terminal bonus (true ends only) and
+    ``drop_failed`` removes episodes that did not succeed.  Returns 1-D
+    ``(time_idx, replica_idx)`` tensors, or ``None`` when nothing changed.
+    """
+    T, N = dones.shape
+    if T <= 1 or N == 0:
+        return None
+    if terminated is None:
+        terminated = dones
+    if success is None:
+        success = torch.zeros_like(dones)
+    if terminated.shape != dones.shape or success.shape != dones.shape:
+        raise ValueError('terminated/success must match the dones (T, N) shape')
+    budget_total = T if budget is None else int(budget)
+    n_done = int(dones.sum())
+    filter_failures = (drop_failed and n_done > 0
+                       and float(success.sum()) / n_done >= BC_DROP_FAILED_MIN_FRACTION)
+    if budget_total >= T and not filter_failures:
+        return None
+    term_mask = terminated | success
+    device = dones.device
+    t_parts, n_parts = [], []
+    for n in range(N):
+        ends = torch.nonzero(dones[:, n], as_tuple=False).flatten() + 1
+        if ends.numel() == 0 or int(ends[-1]) < T:
+            ends = torch.cat([ends, torch.tensor([T], device=device)])
+        starts = torch.cat([torch.zeros(1, dtype=ends.dtype, device=device), ends[:-1]])
+        episodes = list(zip(starts.tolist(), ends.tolist()))
+        keep = [i for i, (_, e) in enumerate(episodes)
+                if (not drop_failed) or (not filter_failures) or bool(success[e - 1, n])]
+        if not keep:
+            continue
+        lengths = [episodes[i][1] - episodes[i][0] for i in keep]
+        total = sum(lengths)
+        alloc = [min(L, max(1, int(round(budget_total * L / total))))
+                 for L in lengths]
+        while sum(alloc) > budget_total:
+            j = max(range(len(alloc)), key=lambda i: alloc[i])
+            if alloc[j] <= 1:
+                break
+            alloc[j] -= 1
+        for i, k in zip(keep, alloc):
+            if k <= 0:
+                continue
+            s, e = episodes[i]
+            if k >= e - s:
+                ts = torch.arange(s, e, device=device)
+            else:
+                idx = _selection_indices(
+                    obs[s:e, n:n + 1], acts[s:e, n:n + 1], dones[s:e, n:n + 1],
+                    budget=k, segments=segments, method=method,
+                    act_change=act_change, neighbor=neighbor, terminal=terminal,
+                    terminal_window=terminal_window,
+                    terminal_mask=term_mask[s:e, n:n + 1],
+                )
+                ts = (torch.arange(s, e, device=device) if idx is None
+                      else s + idx[0])
+            t_parts.append(ts)
+            n_parts.append(torch.full_like(ts, n))
+    if not t_parts:
+        return None
+    return torch.cat(t_parts), torch.cat(n_parts)
+
+
 def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, lr,
                          gamma, fit_critic=True, log=print, val=None,
                          normalizer_mode='per_batch', freeze_normalizer=False,
                          terminated=None, truncated=None, cut=None,
-                         bootstrap_values=None, sample_weights=None, performance=False):
+                         bootstrap_values=None, sample_weights=None, performance=False,
+                         returns=None, returns_valid=None, pair_mask=None):
     """Supervised warm start of the runner's actor (and critic).
 
     obs/acts: (T, N, d) pairs from collect_expert; rews/dones feed the
@@ -227,15 +678,46 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
       obs layout) applied to the actor regression only, for terminal-phase
       weighting (see ``phase_weights``).  The critic targets and PPO are
       unaffected.
+    - ``pair_mask``: optional boolean [time, replica] selection applied after
+      full-trajectory returns, excluding post-reset actor and critic samples.
+    - ``returns``: optional (T, N) precomputed return-to-go targets.  Used by
+      the informative-subset path (``select_informative_pairs``), where the
+      exact full-trajectory returns are gathered with the selected pairs so
+      the critic never sees a target recomputed on the decimated sequence.
+      When given, ``terminated``/``truncated``/``cut``/``bootstrap_values``
+      are ignored.
+    - ``returns_valid``: optional (T, N) bool mask aligned with ``returns``;
+      rows excluded by the boundary-aware target builder stay excluded after
+      selection (defaults to all valid).
     """
+    # Retain the time-by-replica layout until discounted returns are computed.
+    # Masking or concatenating episodes first would leak returns across replicas.
     actor, critic = runner.alg.actor, runner.alg.critic
     device = obs.device
     T, N = obs.shape[:2]
+    if returns is not None and tuple(returns.shape) != (T, N):
+        raise ValueError(
+            f'returns shape {tuple(returns.shape)} != obs (T, N) {(T, N)}'
+        )
+    if returns_valid is not None and tuple(returns_valid.shape) != (T, N):
+        raise ValueError(
+            f'returns_valid shape {tuple(returns_valid.shape)} != obs (T, N) {(T, N)}'
+        )
     flat_obs = obs.reshape(T * N, -1)
     flat_act = acts.reshape(T * N, -1)
-    M = flat_obs.shape[0]
     flat_w = (sample_weights.reshape(T * N).to(device=device, dtype=flat_obs.dtype)
               if sample_weights is not None else None)
+
+    if pair_mask is not None:
+        if pair_mask.shape != (T, N) or pair_mask.dtype != torch.bool:
+            raise ValueError('pair_mask must be a boolean [time, replica] tensor')
+        selected = pair_mask.flatten()
+        flat_obs, flat_act = flat_obs[selected], flat_act[selected]
+        if flat_w is not None:
+            flat_w = flat_w[selected]
+    M = flat_obs.shape[0]
+    if M == 0:
+        raise ValueError('expert collection contains no selected pairs')
 
     def _val_loss():
         if val is None:
@@ -260,7 +742,11 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
     critic_opt, flat_ret, valid = None, None, None
     flat_obs_c, flat_ret_c, m_critic = None, None, 0
     if fit_critic:
-        if terminated is not None:
+        if returns is not None:
+            targets = returns.reshape(T, N)
+            valid = (returns_valid.reshape(T, N) if returns_valid is not None
+                     else torch.ones_like(targets, dtype=torch.bool))
+        elif terminated is not None:
             targets, valid = returns_to_go(rews, dones, gamma,
                                            bootstrap_values=bootstrap_values,
                                            terminated=terminated,
@@ -271,6 +757,8 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
             valid = torch.ones_like(targets, dtype=torch.bool)
         flat_ret = targets.reshape(T * N)
         flat_valid = valid.reshape(T * N)
+        if pair_mask is not None:
+            flat_ret, flat_valid = flat_ret[selected], flat_valid[selected]
         # Filter the valid pairs ONCE: the critic never sees an excluded pair,
         # so no per-minibatch ``bool(keep.any())`` host sync or re-masking.
         flat_obs_c = flat_obs[flat_valid]
@@ -278,7 +766,7 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
         m_critic = int(flat_obs_c.shape[0])
         critic.train()
         critic_opt = torch.optim.Adam(critic.parameters(), lr=lr)
-        if normalizer_mode == 'fit_once':
+        if m_critic and normalizer_mode == 'fit_once':
             critic.update_normalization({'policy': flat_obs_c})
 
     actor_step, critic_step = None, None
@@ -367,11 +855,13 @@ def fit_behavior_cloning(runner, obs, acts, rews, dones, *, epochs, batch_size, 
                'final_val_actor_mse': last_val,
                'normalizer_mode': normalizer_mode,
                'freeze_normalizer': bool(freeze_normalizer),
-               'critic_target': ('boundary-aware returns_to_go; unfinished tails excluded '
-                                 'unless bootstrap provided' if terminated is not None
-                                 else 'legacy returns_to_go (zero terminal value)'),
-               'critic_valid_pairs': int(valid.sum()) if valid is not None else None,
-               'critic_excluded_pairs': int((~valid).sum()) if valid is not None else None,
+               'critic_target': ('precomputed full-trajectory returns-to-go (selected pairs)'
+                                 if returns is not None else
+                                 ('boundary-aware returns_to_go; unfinished tails excluded '
+                                  'unless bootstrap provided' if terminated is not None
+                                  else 'legacy returns_to_go (zero terminal value)')),
+               'critic_valid_pairs': m_critic if fit_critic else None,
+               'critic_excluded_pairs': M - m_critic if fit_critic else None,
                'sample_weighting': bool(flat_w is not None),
                'sample_weight_mean': (float(flat_w.mean()) if flat_w is not None else None)}
     if fit_critic:

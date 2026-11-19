@@ -69,17 +69,19 @@ reset 时先做 10 次零指令 warmup（20 物理子步）以沉降接触与作
 
 \begin{align}
 r_{\text{hover}} &= -0.3, \tag{1a}\\
-r_{\text{hold}} &= \frac{0.005}{\lVert p_{xy}\rVert+0.1}\ \le 0.05, \tag{1b}\\
-r_{\text{lateral}} &= 10\big(\lVert p_{xy}^{-}\rVert-\lVert p_{xy}\rVert\big), \tag{1c}\\
-r_{\text{descent}} &= 0.1(z^{-}-z), \tag{1d}\\
-r_{\text{decel}} &= 0.1(\Delta v_z+1)e^{-\max(z,0)}\sigma(v_z),\quad \sigma(v_z)=\begin{cases}+1 & v_z<0\\ -1 & \text{否则}\end{cases} \tag{1e}\\
-r_{\text{attitude}} &= -0.5\lvert\omega_{b,z}\rvert-0.5\sqrt{\phi^{2}+\theta^{2}}, \tag{1f}\\
-r_{\text{contact}} &= \mathbb 1[\text{任一平台接触}]\cdot(0.5-1.0\lvert v_{z,c}\rvert), \tag{1g}\\
-r_{\text{corridor}} &= -0.5\,\mathrm{relu}\big(-v_z-(0.5+\sqrt{2\cdot2\,z})\big), \tag{1h}\\
-r_{\text{success}} &= 5000\cdot\mathbb 1[\text{本步首次稳定}], \tag{1i}\\
-r_{\text{fatal}} &= -500\cdot\mathbb 1[\text{新终止转场}], \tag{1j}
+\Phi_{\text{aux}}(s) &= \frac{0.005}{\lVert p_{xy}\rVert+0.1}
+ -0.1\,e^{-\max(z,0)}\lvert v_z\rvert
+ -10\lvert\omega_{b,z}\rvert-10\sqrt{\phi^{2}+\theta^{2}}
+ -8\,\mathrm{relu}\big(-v_z-(0.5+\sqrt{2\cdot2\,z})\big), \tag{1b}\\
+r_{\text{hold}}+r_{\text{decel}}+r_{\text{attitude}}+r_{\text{corridor}}
+ &= \Phi_{\text{aux}}(s)-\Phi_{\text{aux}}(s^{-}), \tag{1c}\\
+r_{\text{lateral}} &= 10\big(\lVert p_{xy}^{-}\rVert-\lVert p_{xy}\rVert\big), \tag{1d}\\
+r_{\text{descent}} &= 0.1(z^{-}-z), \tag{1e}\\
+r_{\text{contact}} &= \mathbb 1[\text{任一平台接触}]\cdot(0.5-1.0\lvert v_{z,c}\rvert), \tag{1f}\\
+r_{\text{success}} &= 5000\cdot\mathbb 1[\text{本步首次稳定}], \tag{1g}\\
+r_{\text{fatal}} &= -500\cdot\mathbb 1[\text{新终止转场}], \tag{1h}
 \end{align}
-其中 $(\cdot)^{-}$ 为策略步起始值，$\Delta v_z$ 为整步垂直速度变化，$v_{z,c}$ 为首次接触内步的世界下降速度。总奖励 $r=\sum_k r_k$；分量和累计到 `reward_components` 并以 `rew_*` 指标报告。设计依据（$\gamma=0.995$ 的折现回报分析）：成功奖励满足 $B=5000\gg\gamma c/(1-\gamma)\approx70$（$c$ 为最大可持续逐步接触流），故延迟可达成功永不划算；走廊 (1h) 由保守可行剖面 $v_{\text{allow}}(z)$ 界定下降速度，一次性致命成本 (1j) 使坠冲回报为负而非逃逸剩余悬停成本；保持项每步上限 0.05，低于 0.3 悬停成本，故驻留也无法刷分。所有系数可经 `reward` dict 覆写，并记录进 `cfg` / `run.json` 供演化扫描臂使用。
+其中 $(\cdot)^{-}$ 为策略步起始值，$s^{-}$ 为其完整状态，$v_{z,c}$ 为首次接触内步的世界下降速度。辅助项为势函数塑形：其回合和望远镜收敛到 $\Phi_{\text{aux}}(s_T)-\Phi_{\text{aux}}(s_0)$。总奖励 $r=\sum_k r_k$；分量和累计到 `reward_components` 并以 `rew_*` 指标报告。设计依据（$\gamma=0.995$ 的折现回报分析）：成功奖励满足 $B=5000\gg\gamma c/(1-\gamma)\approx70$（$c$ 为最大可持续逐步接触流），故延迟可达成功永不划算；$\Phi_{\text{aux}}$ 中的走廊项由保守可行剖面 $v_{\text{allow}}(z)$ 界定下降速度，一次性致命成本 (1h) 使坠冲回报为负而非逃逸剩余悬停成本；保持项为势函数，故持续驻留无法刷分。所有系数可经 `reward` dict 覆写，并记录进 `cfg` / `run.json` 供演化扫描臂使用。
 
 ## 7. 成功、终止与截断
 
@@ -123,7 +125,8 @@ x,y\sim\mathcal U[-20,20]\ \text{m},\quad z\sim\mathcal U[400,450]\ \text{m},\qu
 | `num_actions` / 观测维度 | 7 / 30 |
 | `HOVER_COST` / `HOLD_COEF` | 0.3 / 0.005 |
 | `LATERAL_COEF` / `DESCENT_COEF` / `DECEL_COEF` | 10.0 / 0.1 / 0.1 |
-| `YAW_COEF` / `TILT_COEF` | 0.5 / 0.5 |
+| `YAW_COEF` / `TILT_COEF` | 10 / 10（势函数，2026-11-17 校准） |
+| `CORRIDOR_COEF` | 8（势函数；最坏范围约 500） |
 | `CONTACT_BASE` / `CONTACT_VEL_COEF` / `SUCCESS_BONUS` | 0.5 / 1.0 / 5000.0 |
 | `ic_xy_half` / `ic_z_min` / `ic_euler_half` | 20 m / 400 m（跨 50）/ 0.3 rad |
 | 最小 / 最大推力；万向节范围 | 2966.7 / 7607.0 N；$\pm5^{\circ}$ |
@@ -153,7 +156,9 @@ x,y\sim\mathcal U[-20,20]\ \text{m},\quad z\sim\mathcal U[400,450]\ \text{m},\qu
 | TVC / 栅格翼 | ±5° / 四面，±20° | 公开几何 + 工程作动先验 |
 | 平台 / 支脚 | 半径 26 m；基座原点静止于 z=0.65 m | 仿真器任务几何 |
 
-7 维动作与 30 维观测接口不变。燃料观测为剩余 LOX+RP-1 总量除以 410.9 t。初始脚高 0.8–1.5 km，下降率 60–120 m/s，水平偏移至多 100 m，倾角至多 3°。时限 60 s。平台接触快于 6 m/s、自旋高于 0.35 rad/s 或倾角高于 15° 为致命。成功及其一次性奖励均要求连续 2 s 速度 <0.1 m/s、自旋 <0.02 rad/s、倾角 <5°；该版本瞬时接触不再支付成功奖励。
+7 维动作与 30 维观测接口不变。燃料观测为剩余 LOX+RP-1 总量除以 410.9 t。初始脚高 0.8–1.5 km，下降率 60–120 m/s，水平偏移至多 100 m，倾角至多 3°。时限 60 s。平台接触快于 6 m/s、自旋高于 0.35 rad/s 或倾角高于 15° 为致命。全尺寸 v1 的主指标为 `terminal_stable_2s`。从回合结束向前数，火箭须连续 2 s 接触平台，速度 <0.1 m/s、自旋 <0.02 rad/s、倾角 <5°。中途离台后需重新累计，随后撞地计为失败。首次停稳仍支付一次性训练奖励，并单独记录为 `ever_stable_2s`。
+
+全尺寸 v1 的默认行为克隆示范由每个副本的初始状态采到首次终止或 60 秒时限，保留末步动作。提前结束的副本在自动重置后产生的样本不参与此次拟合。成功和失败示范均保留。训练报告的 `bc_warmstart.expert_coverage` 记录回合、样本、观测到平台接触的副本和终态停稳数。批量训练把本次 BC 权重与结果放在 `bc_shared/bc_recipe_2/` 和 `bc_ppo/bc_recipe_2/` 下。
 
 体气动、鳍系数与刚性足接触均为显式工程先验。平台支撑的角/侧向阻尼代表腿足能量耗散，并非实测着陆腿模型。真实尺度传统控制器使用高度调度动力下降、直立 TVC/鳍姿态控制、终端关机与触地关车锁存。其不确定性应以参数失配/域随机化检验，而非解读为已验证的 F9 数据。
 

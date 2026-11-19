@@ -635,7 +635,18 @@ class SegmentGraph:
             return result
         if entry["graph"] is None:
             return self._capture(entry, args)
-        return self._replay(entry, args)
+        try:
+            return self._replay(entry, args)
+        except Exception:
+            # Graph replay hit a solver divergence (GenesisException from
+            # check_errno, or NaN propagated into a kernel).  The captured
+            # graph cannot recover because replay does not run the Python
+            # try/except inside ``_step_scene``.  Discard this graph so the
+            # next call re-captures eagerly, which lets the plant's NaN
+            # recovery sanitize the state before stepping again.
+            entry["graph"] = None
+            entry["warmups"] = 0
+            return self.fn(*args)
 
     def _stage_inputs(self, entry, args):
         if "inputs" not in entry:

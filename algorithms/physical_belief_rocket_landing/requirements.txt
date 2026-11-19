@@ -1,0 +1,9 @@
+# Python 3.11; versions read from the completed GPU experiment.
+torch==2.14.1
+genesis-world==1.4.4
+rsl-rl-lib==5.5.1
+tensordict==0.15.2
+tensorboard==2.21.0
+numpy==2.4.6
+scipy==1.17.1
+PyYAML==6.0.3
