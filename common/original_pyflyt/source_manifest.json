@@ -1,0 +1,287 @@
+{
+  "version": "0.29.0",
+  "changes": "imports only; task, control, component and Aviary bodies unchanged",
+  "files": {
+    "__init__.py": {
+      "original_sha256": "5d8f83ca93017cac833e9697c49a6e07c69ea304dbabe3a9be636a6bd31f2645",
+      "adapted_sha256": "5d8f83ca93017cac833e9697c49a6e07c69ea304dbabe3a9be636a6bd31f2645",
+      "original_nonimport_ast_sha256": "22b07f6cecf1b406936935979c81aec9aa7c988a84e3ca17cd9a124aa19665ff"
+    },
+    "pz_envs/__init__.py": {
+      "original_sha256": "acfab014a3f2f2c5fe502a68a07836236a018af9d1897359cc39d0c9e46f7438",
+      "adapted_sha256": "acfab014a3f2f2c5fe502a68a07836236a018af9d1897359cc39d0c9e46f7438",
+      "original_nonimport_ast_sha256": "81d270e050de0c3eea6bfa6b4dae18fb5cc4ab70fac729c4eeb25a45f0d7da73"
+    },
+    "gym_envs/__init__.py": {
+      "original_sha256": "27c5a6228ec2cfffc62158448f5b4ed017bcb61d98a3acc9f03eda0aa663641c",
+      "adapted_sha256": "9b189aaa554e78b03a40736e20f72d863e6ba5cd097bf484be5b6a0cb188478f",
+      "original_nonimport_ast_sha256": "42e49348cf23d409231767fddafc61f4b4ef435797caf92164853a5a2d116609"
+    },
+    "core/aviary.py": {
+      "original_sha256": "ec47b50a22dc532d2a4aba616b9d0c784d58740a79d7b0d806acb3564558fa83",
+      "adapted_sha256": "4840c699df0f241a51d8290a2e3bc7be65bd544920aca247fa72a24c8c257b1c",
+      "original_nonimport_ast_sha256": "ff0196b693137d35017cc2d07a504cd238038f8b374cadd7ab65e91bc68ffc0c"
+    },
+    "core/__init__.py": {
+      "original_sha256": "645a905775531324acf51485d23011744656d74e7952a7828b37357a49b59552",
+      "adapted_sha256": "645a905775531324acf51485d23011744656d74e7952a7828b37357a49b59552",
+      "original_nonimport_ast_sha256": "8cbed999cef0c75c871cccaeac77192126306cae6b2f43627d00d75d018d8ffb"
+    },
+    "models/cup.urdf": {
+      "original_sha256": "f4c22569bea9c940e2919fd57818c98ef5ea55b145d5c3b0fff7cec62e2215af",
+      "adapted_sha256": "f4c22569bea9c940e2919fd57818c98ef5ea55b145d5c3b0fff7cec62e2215af"
+    },
+    "models/pole.urdf": {
+      "original_sha256": "5a43136170c4e31568b28e41dfc058ce38d2518fe55dfcc36b25ffe4ced5484e",
+      "adapted_sha256": "5a43136170c4e31568b28e41dfc058ce38d2518fe55dfcc36b25ffe4ced5484e"
+    },
+    "models/ball_and_string.urdf": {
+      "original_sha256": "5e761dece50317ec10ae17762fba7679a7b549e5e998659188b264d536711e41",
+      "adapted_sha256": "5e761dece50317ec10ae17762fba7679a7b549e5e998659188b264d536711e41"
+    },
+    "models/target.urdf": {
+      "original_sha256": "4b0a4e358c5849c25c760f1f258e60547e2825cdc0648bcbd85c8e95eeb54cb5",
+      "adapted_sha256": "4b0a4e358c5849c25c760f1f258e60547e2825cdc0648bcbd85c8e95eeb54cb5"
+    },
+    "models/landing_pad.urdf": {
+      "original_sha256": "308ac094625ca627a07c8ca9575b7c56b5bc618aa86e1c4dfa6e377c991d7787",
+      "adapted_sha256": "308ac094625ca627a07c8ca9575b7c56b5bc618aa86e1c4dfa6e377c991d7787"
+    },
+    "models/race_gate.urdf": {
+      "original_sha256": "d2253b6d78a9c30c9bd7353bf1629e60adaa67f831e84b8184eac8177c10947c",
+      "adapted_sha256": "d2253b6d78a9c30c9bd7353bf1629e60adaa67f831e84b8184eac8177c10947c"
+    },
+    "pz_envs/quadx_envs/ma_quadx_base_env.py": {
+      "original_sha256": "f0b9bd07e446226203911a5e5a33b12cecec888a548a43275f262f3e2ff518b4",
+      "adapted_sha256": "7cda05bb0f6daf59699aaba26136f022edc017c76b7e63d5526e6278992cc48b",
+      "original_nonimport_ast_sha256": "3ad047f6d7014c672c4af70fe7ccc710920845ffa47ebdc7d89a9ba990cc04d4"
+    },
+    "pz_envs/quadx_envs/ma_quadx_hover_env.py": {
+      "original_sha256": "4c624cfc57c9901bfbc63d7864c4b1313d6769fd3d6f135644484045f1e039ac",
+      "adapted_sha256": "9032654cc837352e5d6cc569188d42d071b0559366c542f4b7eb5c8fb39fc6ec",
+      "original_nonimport_ast_sha256": "5a49c67a3f5553ea72f00be7b1082626d2428dc501801a45951c1d3fe88087c3"
+    },
+    "pz_envs/fixedwing_envs/ma_fixedwing_dogfight_env.py": {
+      "original_sha256": "90f9fed4cfee53d9e7e2659c5e4275d3c4568ba1b39dbbec588cf3f98875c5f0",
+      "adapted_sha256": "4e31723b29d4ace55acce308fc23f9fc8de42bc65a300b6b482636a9cd038952",
+      "original_nonimport_ast_sha256": "7d4a1cb6fcc1597b3897fdc6494f059112a75a227733afe4e9c2150096dda4f2"
+    },
+    "pz_envs/fixedwing_envs/ma_fixedwing_base_env.py": {
+      "original_sha256": "b0fc432288d65507f60e242ce7b73829f2c9e5900cebe78e093040ca49d9f961",
+      "adapted_sha256": "59f8a0ae13da7e12e1a284f210f36d00b14c030ce7a2f8f489a54e18e60391a4",
+      "original_nonimport_ast_sha256": "86ee38d9f0f908819ddf5ee5666413c5bc8047be8bc4b017cfdbefd06f2eae81"
+    },
+    "gym_envs/utils/waypoint_handler.py": {
+      "original_sha256": "62bf9708aa5e3f7aa9cefe480c9f91f5761c22667c00682d0afe480fa256afc5",
+      "adapted_sha256": "0af7ebe1498006fb5c9f6611337eb5ef70f6837bb3e15eea44d85f4c2f460685",
+      "original_nonimport_ast_sha256": "f0abe658c5bfd0f9f52bad5804189b0b9443cbc598d5f1bd6884e6712c2086ba"
+    },
+    "gym_envs/utils/flatten_waypoint_env.py": {
+      "original_sha256": "56f6bec6bba293e10880ecd24e27cf7ef34fac12a37d978c7fd8003eb4905cd2",
+      "adapted_sha256": "ef68530a02671554968659b8c3abb954f95bf93cf33cd9df0f35a7aebb39715e",
+      "original_nonimport_ast_sha256": "2a40dd7426b154265cd05400588157c2e327dc429120623f734b9724c4f04655"
+    },
+    "gym_envs/utils/pole_handler.py": {
+      "original_sha256": "e060e5e5cbad30bd192e8a716b4679fdec053de823639d2028596df23789b6e3",
+      "adapted_sha256": "65742a03c4051e053d333a50a8d3ffbfb7e6c96dab1a5a828046328d765c7634",
+      "original_nonimport_ast_sha256": "2920772551f20d0b1c5f26fda91811d1a944c96469f193a9412740544672e0f4"
+    },
+    "gym_envs/quadx_envs/quadx_gates_env.py": {
+      "original_sha256": "f16a9f383df14fda631bd62e84da9bc322abe717ce389b904200a679da469d1e",
+      "adapted_sha256": "5fe503dbe83f34906f0b9889882f36ce28351d94901e27a6b6594548933203c7",
+      "original_nonimport_ast_sha256": "a8f946993ad83adf754ad1c8c4736cc27389ce4d212e4380dfe9991263e89ca2"
+    },
+    "gym_envs/quadx_envs/quadx_waypoints_env.py": {
+      "original_sha256": "6f959ff66304297d8945fb102382c20ba4ecf4e88f6f32d1027b7f49208134d1",
+      "adapted_sha256": "8baf7d84348dd13b3f0719c57fcd2a8d966af650994c02e9afc8f74630adc3a9",
+      "original_nonimport_ast_sha256": "27dc9da6bc38c6ca4998d43afa35a470044c80d3de5b56f3fe19c44694a08bfe"
+    },
+    "gym_envs/quadx_envs/quadx_hover_env.py": {
+      "original_sha256": "c4063c1cd39c7de0e4c70617c6823abcf63894fe4bc45f0b46e3a365850b649a",
+      "adapted_sha256": "cad407f5a802f082490932e391d3b5c28e7fb66af53d95640d5173bbcb580ec6",
+      "original_nonimport_ast_sha256": "7e433900239d0231694bea69240cb7129f1c04e9009b4ebde8d13d535aefab92"
+    },
+    "gym_envs/quadx_envs/quadx_pole_balance_env.py": {
+      "original_sha256": "9b46691453cad43335396e738f53203709bbd4e345f6ea2e37a1a7901fb78b66",
+      "adapted_sha256": "af2cf35661545dcb98ad0a726311977c74015c9a2b901673bc98fa21d892148a",
+      "original_nonimport_ast_sha256": "5f15c809edd7492c4fc9dbe214c3a2902155e714d0b8d24c571e8764fc5946f1"
+    },
+    "gym_envs/quadx_envs/quadx_base_env.py": {
+      "original_sha256": "d9495b22f96ca0d84cd0b1558c72e00902f5baf256161811873036d4c5cfb5f3",
+      "adapted_sha256": "030b7463235d330da8fdbfdb03d258337346c8f76a582de6da97a9a537ead891",
+      "original_nonimport_ast_sha256": "111b21acbab5d67a7318d7100216229253ab5566a8bdf0c9200b07028c50f44e"
+    },
+    "gym_envs/quadx_envs/quadx_pole_waypoints_env.py": {
+      "original_sha256": "a929a31a91ab081fa7cefaaf6a826924095031c1cfac713be8fa48fdf067be83",
+      "adapted_sha256": "0c541142e7eac1c0e83aaa3d53a0fa6922ec06a141296c84c70470ba294409dc",
+      "original_nonimport_ast_sha256": "eeebaa4c0e8ba11bfcc17e87bbc3415b8584c27531d3dc89a832e25664f3faae"
+    },
+    "gym_envs/quadx_envs/quadx_ball_in_cup_env.py": {
+      "original_sha256": "abfd71acbbe22d61ea21bc3f4cb086e7a3e6d73c2ba5f7dc3b4dd2db983f3b2b",
+      "adapted_sha256": "4f76cccdfd6fba3e18646a5e9a78fe89dc485c591ff3e1664a2dce81af782b5c",
+      "original_nonimport_ast_sha256": "33dd124b64977453e377319187650f160c9abf0ff1bd6c20a71b0ab2a758dfea"
+    },
+    "gym_envs/rocket_envs/rocket_landing_env.py": {
+      "original_sha256": "3789e2d63d8e44013bd5c9ad69cffff97f074947310bd432bd06a2557c9323c7",
+      "adapted_sha256": "d9deff6fde5906ef9bf3858cff9646222633eeeb5316bc78c4fa740ef21f4bf8",
+      "original_nonimport_ast_sha256": "cb5b4e6fa27e6acbeb9bbf6a78c9ebc1614547f1505dca5d569fb49a73c9de67"
+    },
+    "gym_envs/rocket_envs/rocket_base_env.py": {
+      "original_sha256": "882103b066662c6b7b1f9fa148d976ef7d4872e7e235a0d9ab0f97836b215492",
+      "adapted_sha256": "68134295e0da69213ee8168afbc174ba779aacef464093b322ba3e1b9022fae7",
+      "original_nonimport_ast_sha256": "c80fe983cd8f9e34ac618467b656284406fe70bb600dccb898d45d3110b90045"
+    },
+    "gym_envs/fixedwing_envs/fixedwing_base_env.py": {
+      "original_sha256": "34b3d53745ccdcfb7a11a8ad0f4e658b086576a66f397a9c19cf30fdbadfd332",
+      "adapted_sha256": "2781d2fc1ffe15c1f77b80fad1c95b80b811a3dbd7c2600b9805b9d7e84bb9b6",
+      "original_nonimport_ast_sha256": "4c727a7f96237158e07bb2f6fa0adfcc0d8e6738bba298b4fef0d8acf6263aed"
+    },
+    "gym_envs/fixedwing_envs/fixedwing_waypoints_env.py": {
+      "original_sha256": "cb2be1c398cd57832520dda8dfbfa09c27f5737c79c2ddbb803f21c7cd02d299",
+      "adapted_sha256": "db71f880cbc271e3bc181a557204dd0a48b2e44b23bba31c5c92e0b18af0132c",
+      "original_nonimport_ast_sha256": "3244aeb1608306632b19ddb5a041f2047e516523baa64203b7b890e533d17d09"
+    },
+    "core/drones/rocket.py": {
+      "original_sha256": "744f7b5380853ba3511f18a62a3520a24f82ffcd45c81e62f69ee42b7ee32943",
+      "adapted_sha256": "affd77feccc3781743327d80e1b023a185f6d3cbbaac000f4ebabadd8da7f13a",
+      "original_nonimport_ast_sha256": "d882ec3a76f285b25b4c165d502fe7d23e8a5fe3a4f2e1a3eb6f83643f44a419"
+    },
+    "core/drones/fixedwing.py": {
+      "original_sha256": "9fac18544da32628b5bf25a4ce75718c0702b6b09f45c42075d6cc2b033c8066",
+      "adapted_sha256": "ae381e071e18c18c89f59d6e0f0498273fc8f8af1a79a3a91a097775c1cb61fa",
+      "original_nonimport_ast_sha256": "114413d19bc9984667abdea560a7bf61040b311d22e5349c6524447ad5e22aa2"
+    },
+    "core/drones/quadx.py": {
+      "original_sha256": "c90fda2f205250ed4d2864b350b4028831656f3cf17d86d28457483d46e1806f",
+      "adapted_sha256": "f11404587306c9783c5485fda8c9e20ff2d3e533426d2b985d5cedb9eda0f293",
+      "original_nonimport_ast_sha256": "0744b51c83b673db0a6f3ec6b24a005e70c3a83185c4786e7a011ac16549938c"
+    },
+    "core/drones/__init__.py": {
+      "original_sha256": "9275ae73b196f0170e6eaa226f3ef41eeefaa49edbe02cb5420ff50e65456885",
+      "adapted_sha256": "9275ae73b196f0170e6eaa226f3ef41eeefaa49edbe02cb5420ff50e65456885",
+      "original_nonimport_ast_sha256": "174acbbb19ccbf58574f3068b98bc52d2d8bbdaf4968174b5f8c59b868173e32"
+    },
+    "core/utils/load_objs.py": {
+      "original_sha256": "a455a34a9684f7920c0c3c4029329b0bb11f3f6a9dd0b7ffecc2c8e42b332037",
+      "adapted_sha256": "6bdafe8d030fe6a3f9ba67988a19c09a24a065a7949181d29f8f332f6f5f85cd",
+      "original_nonimport_ast_sha256": "ab3ed5bc05cf715cdc8d39231cea346a0846216fad4cd63961b94ee4c935ac20"
+    },
+    "core/utils/compile_helpers.py": {
+      "original_sha256": "0be561c104b1e2b61b68cb53ac06ff7f06eab02ddb881ac13d98b0361fed0320",
+      "adapted_sha256": "ddcded710cc2e8eba17d525f9308a7bd64790fac1619eec24cbd87de42c7ceed",
+      "original_nonimport_ast_sha256": "d139c79fc1cf5574c84adc00a819e81371e3dd950ffaf9231ce767d05f32707e"
+    },
+    "core/abstractions/camera.py": {
+      "original_sha256": "6f9d5532d88eaa3b32614cf26d3cd03cd94e18fb98e0d858a14cd73553b4deae",
+      "adapted_sha256": "c06aa89824fff48c5cb35b502677f17e3c7b0ce1d54cf11886fa666e59a0885f",
+      "original_nonimport_ast_sha256": "b74ad38b3ce5652c1b1b1d778bfa25d52e0b48e1edd634ef5f138d5080427621"
+    },
+    "core/abstractions/boosters.py": {
+      "original_sha256": "9f63987768da5ad9eceee41876aef653418e66190e46bc61169b7fc45bf60ee3",
+      "adapted_sha256": "67813395e0536d30fbd7166197fb9b06d75d24668bb9367760f2f361dd1dc6e7",
+      "original_nonimport_ast_sha256": "a71fd9bceb1bd7cf5ab490fd675f2fa942c71ef3c300a45dd75383ac47ffaba1"
+    },
+    "core/abstractions/base_wind_field.py": {
+      "original_sha256": "e38f27d6511308671590370a282f0455d5f08a5f2412b1f437a55bd81269fd71",
+      "adapted_sha256": "e38f27d6511308671590370a282f0455d5f08a5f2412b1f437a55bd81269fd71",
+      "original_nonimport_ast_sha256": "2e4e3d760318e5fa8e5dda30361d31a6a10ead6692afaf14cee99d522ba02117"
+    },
+    "core/abstractions/base_drone.py": {
+      "original_sha256": "8ac6df239b4dd7e230d72e9fae689b00f71accd6af95c1763457527220781ab3",
+      "adapted_sha256": "3864566bf39eb6e1a996b967bb7f772e7617c1c2575ee298196a8579b8fc971b",
+      "original_nonimport_ast_sha256": "42e13e64a31b0d9a15fd89b76bb1acbf5f0aca831d62f24e172b455d933f09c9"
+    },
+    "core/abstractions/base_controller.py": {
+      "original_sha256": "0010d15c326001f26b8bd502d5998a30e041407fb52a680701ec3661535aa013",
+      "adapted_sha256": "0010d15c326001f26b8bd502d5998a30e041407fb52a680701ec3661535aa013",
+      "original_nonimport_ast_sha256": "65117c13adf2a0af44ebae0760f67d790ed8ab8e81a9dd07e58ec8cfa1bf5098"
+    },
+    "core/abstractions/gimbals.py": {
+      "original_sha256": "e938897cf455efcf14001a2d1d44b8d2b61a7f8e972b63c1556c8b32d9a8f878",
+      "adapted_sha256": "a0494f439799b5f2e890d86277e0071c89336bddaec9106d8f4ed3f80ec41240",
+      "original_nonimport_ast_sha256": "8aa1841911412bede589b14e95831def612de4d95e9daaa953fd420d745ce103"
+    },
+    "core/abstractions/lifting_surfaces.py": {
+      "original_sha256": "b05127d71abc4fa801ab59af3fc8318a8be4a8c46d5d889264bc6e0fc6fa34a9",
+      "adapted_sha256": "dc3f7a3ba8bbd5997e5aa4a33bc238317738d41ee1b55592558adec7e6865fc6",
+      "original_nonimport_ast_sha256": "5f522dd4e2dfdf1425c81d188d781e013216b05b7b1d7f9f248326c37bda73f3"
+    },
+    "core/abstractions/motors.py": {
+      "original_sha256": "329ef83b83efa79b0f627b28ff473490cbf52e84538413cec77af2afb455ef17",
+      "adapted_sha256": "982ca6bc1f8ccaf755b4c56875e1a0b1238ddaafaedd4f9bd7f29e5047ce2fcc",
+      "original_nonimport_ast_sha256": "523563ef84dcd00a36bfda90ab0dadefac8eb7f189c05b4f643ec5fd36e6d1c3"
+    },
+    "core/abstractions/boring_bodies.py": {
+      "original_sha256": "5c183f692405c3ba609dd4644aff3bcdaece52dbc219d4a8c683da93f142db6e",
+      "adapted_sha256": "12f74b54a3cb36ca5eac062c809407c5eff1cad3278e449262cfe82ddc3a38ac",
+      "original_nonimport_ast_sha256": "86a7dd0f59bda8a34dcb3b8b0650c711d23b3a8f14c00f644d81df04a1ef884b"
+    },
+    "core/abstractions/__init__.py": {
+      "original_sha256": "4490cf4a0f40988f4609fc711e1fba87614c3b74c119cb5c7cfb848081cab323",
+      "adapted_sha256": "4490cf4a0f40988f4609fc711e1fba87614c3b74c119cb5c7cfb848081cab323",
+      "original_nonimport_ast_sha256": "46b3bc0b8af044b773d5dad378ad32cf0b63af0ce9c35108fe0c937884c7ef68"
+    },
+    "core/abstractions/pid.py": {
+      "original_sha256": "5f18a15ac539d4bc70279c3f6975a01c3909bd70e810cd643ab6daa1940fb5e6",
+      "adapted_sha256": "5f18a15ac539d4bc70279c3f6975a01c3909bd70e810cd643ab6daa1940fb5e6",
+      "original_nonimport_ast_sha256": "df5358459de97b212c268fe35371a9efffadda3a9b6fbdc453efb6b84b2e4d2e"
+    },
+    "core/wind/__init__.py": {
+      "original_sha256": "d640b8805fafc939187fa93d3a7b7280cd28ed710b5719ebff5443a1246b1796",
+      "adapted_sha256": "d640b8805fafc939187fa93d3a7b7280cd28ed710b5719ebff5443a1246b1796",
+      "original_nonimport_ast_sha256": "eebd23a20dfaf6120ed59ef8d915c0cfc9757ca4df110e96e60344a1fd28edf4"
+    },
+    "models/vehicles/fixedwing/fixedwing.urdf": {
+      "original_sha256": "b0b79cd3a19ca5b3bb4bceb9f1a2724bdfa16f63d512b871d7f5914608ec431e",
+      "adapted_sha256": "b0b79cd3a19ca5b3bb4bceb9f1a2724bdfa16f63d512b871d7f5914608ec431e"
+    },
+    "models/vehicles/fixedwing/fixedwing.yaml": {
+      "original_sha256": "7ed3d1c13fb417b6a426940fb2c1c078b49b72c7de408b7d15f8384520b7446c",
+      "adapted_sha256": "7ed3d1c13fb417b6a426940fb2c1c078b49b72c7de408b7d15f8384520b7446c"
+    },
+    "models/vehicles/acrowing/acrowing.yaml": {
+      "original_sha256": "45f733b4e907f986c9e2bc87703e76f695fcd205182b2b01c67f58c404f17223",
+      "adapted_sha256": "45f733b4e907f986c9e2bc87703e76f695fcd205182b2b01c67f58c404f17223"
+    },
+    "models/vehicles/acrowing/acrowing.urdf": {
+      "original_sha256": "53ec9c8072c3f3ceae3a5091b82e859bf0dc0916ccc0bec8f82e7c27b4df52be",
+      "adapted_sha256": "53ec9c8072c3f3ceae3a5091b82e859bf0dc0916ccc0bec8f82e7c27b4df52be"
+    },
+    "models/vehicles/quadplane/quadplane.yaml": {
+      "original_sha256": "5cea138d43887ae8faa77e28349066c358b09cd7fc5a4a4497cf22cbf058608f",
+      "adapted_sha256": "5cea138d43887ae8faa77e28349066c358b09cd7fc5a4a4497cf22cbf058608f"
+    },
+    "models/vehicles/quadplane/quadplane.urdf": {
+      "original_sha256": "ca47cdba4145b9c22d7b410b757a32271fc98a061c788a7a3a3659bc5f2bcf01",
+      "adapted_sha256": "ca47cdba4145b9c22d7b410b757a32271fc98a061c788a7a3a3659bc5f2bcf01"
+    },
+    "models/vehicles/primitive_drone/primitive_drone.urdf": {
+      "original_sha256": "c6b4a51556e82c24091dd3252272c672e3dcd8e31077dab389bf7bcce8327b17",
+      "adapted_sha256": "c6b4a51556e82c24091dd3252272c672e3dcd8e31077dab389bf7bcce8327b17"
+    },
+    "models/vehicles/primitive_drone/primitive_drone.yaml": {
+      "original_sha256": "116b02220b990e63aaa533fa0bf70ee60dbdce885b18a278a6214bda20c252c1",
+      "adapted_sha256": "116b02220b990e63aaa533fa0bf70ee60dbdce885b18a278a6214bda20c252c1"
+    },
+    "models/vehicles/cf2x/cf2x.urdf": {
+      "original_sha256": "08d4b7c2cc6e92d7f1e7e9f5a5287c4c59ffe730620e560a5df52d9779598248",
+      "adapted_sha256": "08d4b7c2cc6e92d7f1e7e9f5a5287c4c59ffe730620e560a5df52d9779598248"
+    },
+    "models/vehicles/cf2x/cf2x.yaml": {
+      "original_sha256": "c66163fdfdbb79cdef4a6f35762e16aa0cbd99008673836eaaf11dac5cd89e8e",
+      "adapted_sha256": "c66163fdfdbb79cdef4a6f35762e16aa0cbd99008673836eaaf11dac5cd89e8e"
+    },
+    "models/vehicles/cf2x/cf2.dae": {
+      "original_sha256": "f0ffba569473497ce8a72a5ae6ff8e07b2f2954507ca693199ada0317b95de1b",
+      "adapted_sha256": "f0ffba569473497ce8a72a5ae6ff8e07b2f2954507ca693199ada0317b95de1b"
+    },
+    "models/vehicles/rocket/rocket.yaml": {
+      "original_sha256": "321724ba783037a699b598323c1edebd145d8ab189b65fdfb2d0c9eb2368258d",
+      "adapted_sha256": "321724ba783037a699b598323c1edebd145d8ab189b65fdfb2d0c9eb2368258d"
+    },
+    "models/vehicles/rocket/rocket.urdf": {
+      "original_sha256": "402e0ef7b31dbc4f1ad5d5490e76e95505bf9aa01f337e21bf55804d9b0bcb4e",
+      "adapted_sha256": "402e0ef7b31dbc4f1ad5d5490e76e95505bf9aa01f337e21bf55804d9b0bcb4e"
+    }
+  }
+}

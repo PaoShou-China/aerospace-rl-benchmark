@@ -1,0 +1,7 @@
+{
+  "note": "Project-authored missile assets (NOT PyFlyt 0.29.0 upstream); regenerate with sha256sum. Checked by environments.common.consistency.verify_missile_assets.",
+  "files": {
+    "missile.urdf": "2226b0a79b7c98f30fa0f3f2d56aa83430015f6fadc85c7ce83fc0ca8425f20a",
+    "missile.yaml": "7c576360160395249886f213e070d87da48e49efb94d4ba3b561bd76b94dbe93"
+  }
+}
