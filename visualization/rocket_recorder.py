@@ -26,7 +26,7 @@ def scalar(value):
 
 
 class RocketRecorder:
-    def __init__(self, env, *, seed, source, config, terminal_height=20.):
+    def __init__(self, env, *, seed, source, config, terminal_height=20., method_label=None):
         if env.num_envs != 1:
             raise ValueError('Diagnostic recorder requires num_envs=1; batch recording is not implemented')
         if not math.isfinite(terminal_height) or terminal_height <= 0:
@@ -54,6 +54,7 @@ class RocketRecorder:
             commit, dirty = 'unavailable-archive-without-git', None
         self.metadata = dict(task='rocket', source=source, source_commit=commit, source_dirty=dirty,
             seed=seed, env_id=0, episode_id=f'seed-{seed}-first', device=str(env.device),
+            evaluation_scope='single_episode', scenario_id=f'rocket-seed-{seed}',
             solver_dtype=str(p.drone.get_pos().dtype), versions=versions,
             effective_env_config=dict(env.cfg), requested_config=config,
             position_frame='ENU', velocity_frame='ENU', angular_velocity_frame='ENU',
@@ -64,7 +65,13 @@ class RocketRecorder:
             terminal_height_m=float(terminal_height), terminal_definition='first descending foot clearance <= threshold',
             fuel_fraction_reference='full_tank', fuel_capacity_kg=capacity,
             initial_fuel_mass_kg=float(scalar(p.fuel))*capacity,
-            gimbal_range_rad=math.radians(p.params['booster_params']['gimbal_range_degrees']))
+            gimbal_range_rad=math.radians(p.params['booster_params']['gimbal_range_degrees']),
+            success_criteria=dict(pad_contact=True, speed_mps_lt=.02,
+                                  spin_radps_lt=.02, tilt_rad_lt=.1))
+        if method_label is not None:
+            if not isinstance(method_label, str) or not method_label.strip():
+                raise ValueError('method_label must be a non-empty string')
+            self.metadata['method_label'] = method_label.strip()
         self.metadata.update(asset_geometry())
         assets = [MODELS/'vehicles/rocket/rocket.urdf', MODELS/'vehicles/rocket/rocket.yaml', MODELS/'landing_pad.urdf']
         self.metadata['assets_sha256'] = {str(f.relative_to(ROOT)): hashlib.sha256(f.read_bytes()).hexdigest() for f in assets}

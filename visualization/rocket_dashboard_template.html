@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>火箭着陆证据回放</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050a14;
+      --panel: rgba(12, 22, 42, .88);
+      --panel-strong: rgba(9, 18, 36, .96);
+      --line: rgba(170, 202, 255, .17);
+      --line-strong: rgba(170, 202, 255, .32);
+      --text: #f3f7ff;
+      --muted: #aab9d2;
+      --cyan: #56b4e9;
+      --pink: #df75b7;
+      --good: #58d6a8;
+      --warn: #f0c96a;
+      --bad: #ff7e88;
+      --radius: 18px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 48% 13%, rgba(37, 111, 211, .25), transparent 32rem),
+        radial-gradient(circle at 70% 33%, rgba(215, 80, 168, .13), transparent 26rem),
+        var(--bg);
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, summary:focus-visible {
+      outline: 3px solid rgba(86, 180, 233, .85);
+      outline-offset: 3px;
+    }
+    .app { width: min(1800px, 100%); min-height: 100vh; margin: 0 auto; padding: 18px 22px 30px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 4px 2px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: conic-gradient(from 35deg, var(--cyan), #776ee8, var(--pink), var(--cyan));
+      box-shadow: 0 0 28px rgba(86, 180, 233, .35);
+    }
+    .eyebrow { margin: 0; color: #8fa6c9; font-size: .82rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 1px 0 0; font-size: clamp(1.12rem, 2vw, 1.45rem); line-height: 1.2; }
+    .header-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+    .badge, .scope {
+      display: inline-flex; align-items: center; min-height: 32px; padding: 5px 11px;
+      border: 1px solid var(--line-strong); border-radius: 999px;
+      color: #c8d7ec; background: rgba(11, 23, 46, .7); font-size: .84rem;
+    }
+    .scope { color: #ffe3f4; border-color: rgba(223, 117, 183, .4); }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 270px) minmax(520px, 1fr) minmax(250px, 310px);
+      gap: 14px;
+      padding-top: 14px;
+      align-items: stretch;
+    }
+    .panel {
+      min-width: 0;
+      background: linear-gradient(155deg, rgba(18, 33, 61, .87), rgba(7, 15, 30, .92));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 22px 60px rgba(0, 0, 0, .24);
+      backdrop-filter: blur(18px);
+    }
+    .side-panel { padding: 18px; }
+    .section-title { margin: 0 0 5px; font-size: .95rem; letter-spacing: .04em; }
+    .section-note { margin: 0 0 16px; color: var(--muted); font-size: .84rem; }
+    .method-list { display: grid; gap: 10px; }
+    .method-card {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+      padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: rgba(4, 11, 24, .52);
+    }
+    .method-card[data-active="false"] { opacity: .48; }
+    .method-check { width: 19px; height: 19px; accent-color: var(--cyan); }
+    .method-name { display: block; overflow: hidden; color: #f6f8ff; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .method-role { display: block; color: var(--muted); font-size: .78rem; }
+    .method-state { font-size: .76rem; font-weight: 700; text-align: right; }
+    .method-state.success { color: var(--good); }
+    .method-state.failure { color: var(--bad); }
+    .method-state.incomplete, .method-state.unknown { color: var(--warn); }
+    .style-key { display: flex; align-items: center; gap: 8px; margin-top: 7px; color: #c9d5e8; font-size: .78rem; }
+    .style-key svg { flex: 0 0 auto; }
+    .method-summary { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .mini-table { display: grid; gap: 8px; }
+    .mini-row { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .82rem; }
+    .mini-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+    .stage-panel { display: flex; min-height: 650px; flex-direction: column; overflow: hidden; }
+    .stage-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+    .view-tabs { display: flex; gap: 6px; }
+    .view-button, .quiet-button, .primary-button {
+      min-height: 38px; padding: 7px 13px; border: 1px solid var(--line-strong); border-radius: 999px;
+      background: rgba(7, 17, 35, .7); cursor: pointer;
+    }
+    .view-button[aria-pressed="true"] { color: #07111f; background: #dcefff; border-color: #dcefff; font-weight: 800; }
+    .primary-button { color: #151323; background: linear-gradient(120deg, #f08ac7, #9fc5ff); border: 0; font-weight: 800; }
+    .quiet-button:hover, .view-button:hover { background: rgba(37, 67, 111, .55); }
+    .stage { position: relative; flex: 1; min-height: 480px; background: #02050a; }
+    .view { height: 100%; min-height: 480px; }
+    .view[hidden] { display: none; }
+    video { display: block; width: 100%; height: 100%; min-height: 480px; object-fit: contain; background: #02050a; }
+    .stage-status {
+      position: absolute; z-index: 3; top: 16px; left: 16px; display: flex; align-items: center; gap: 8px;
+      padding: 7px 11px; border: 1px solid var(--line-strong); border-radius: 999px;
+      background: rgba(5, 12, 25, .82); backdrop-filter: blur(12px); font-size: .84rem; font-weight: 800;
+    }
+    .stage-status::before { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); content: ""; box-shadow: 0 0 12px currentColor; }
+    .trajectory-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 100%; min-height: 480px; padding: 14px; background: radial-gradient(circle at 50% 55%, rgba(40, 97, 178, .16), transparent 55%); }
+    .plot { display: flex; min-width: 0; flex-direction: column; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: rgba(1, 7, 17, .6); }
+    .plot h3 { margin: 0 0 5px; color: #c9d9ef; font-size: .84rem; }
+    .plot svg { width: 100%; height: 100%; min-height: 390px; }
+    .grid-line { stroke: rgba(175, 204, 247, .1); stroke-width: 1; }
+    .axis-label { fill: #8197b8; font-size: 11px; }
+    .path-label { font-size: 12px; font-weight: 800; paint-order: stroke; stroke: #07101f; stroke-width: 4px; }
+    .conclusion {
+      position: absolute; z-index: 6; inset: auto 20px 20px 20px;
+      max-height: calc(100% - 40px); overflow: auto; padding: 20px;
+      border: 1px solid rgba(220, 235, 255, .36); border-radius: 20px;
+      background:
+        radial-gradient(circle at 78% 12%, rgba(225, 103, 177, .22), transparent 16rem),
+        rgba(7, 15, 31, .96);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, .58); backdrop-filter: blur(20px);
+    }
+    .conclusion[hidden] { display: none; }
+    .conclusion-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .conclusion h2 { margin: 4px 0 8px; font-size: clamp(1.45rem, 3vw, 2.25rem); line-height: 1.1; }
+    .conclusion-body { max-width: 900px; margin: 0; color: #d5e1f3; font-size: 1rem; }
+    .close-button { width: 38px; height: 38px; border: 1px solid var(--line-strong); border-radius: 50%; background: rgba(15, 28, 52, .75); cursor: pointer; }
+    .evidence-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 9px; margin: 18px 0 14px; }
+    .evidence { padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: rgba(12, 28, 54, .62); }
+    .evidence span, .evidence small { display: block; color: var(--muted); font-size: .76rem; }
+    .evidence strong { display: block; margin: 4px 0; font-size: 1rem; font-variant-numeric: tabular-nums; }
+    .evidence.good strong { color: var(--good); } .evidence.bad strong { color: var(--bad); } .evidence.warn strong { color: var(--warn); }
+    .caveat { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warn); color: #e6d9ae; background: rgba(111, 83, 21, .14); font-size: .84rem; }
+    .conclusion-actions { display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap; }
+    .timeline { padding: 13px 16px 16px; border-top: 1px solid var(--line); background: rgba(4, 10, 21, .8); }
+    .time-row { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center; }
+    .play-button { width: 40px; height: 40px; border: 1px solid var(--line-strong); border-radius: 50%; background: rgba(18, 38, 70, .75); cursor: pointer; }
+    .scrubber { width: 100%; accent-color: var(--pink); }
+    .time-readout { min-width: 105px; color: #c8d7eb; font: .84rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; text-align: right; }
+    .event-track { position: relative; height: 31px; margin: 4px 116px 0 51px; border-top: 1px solid rgba(171, 203, 248, .16); }
+    .event-button { position: absolute; top: 3px; width: 10px; height: 20px; padding: 0; transform: translateX(-50%); border: 0; border-radius: 6px; background: var(--warn); cursor: pointer; }
+    .event-button::after { position: absolute; top: 21px; left: 50%; width: max-content; max-width: 90px; overflow: hidden; transform: translateX(-50%); color: #9babc1; content: attr(data-label); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+    .metric-stack { display: grid; gap: 9px; }
+    .metric {
+      display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: end;
+      padding: 12px; border: 1px solid var(--line); border-radius: 13px; background: rgba(4, 11, 24, .48);
+    }
+    .metric-label { color: var(--muted); font-size: .82rem; }
+    .metric-value { font: 700 1.18rem/1.1 ui-monospace, SFMono-Regular, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .metric-sub { grid-column: 1 / -1; color: #8298b8; font-size: .74rem; }
+    details { margin-top: 15px; border-top: 1px solid var(--line); }
+    summary { padding: 14px 0 6px; color: #dce8f9; cursor: pointer; font-weight: 700; }
+    .raw { max-height: 245px; margin: 7px 0 0; overflow: auto; color: #a9bdd8; font: .76rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+    .methodology { margin-top: 14px; padding: 14px 18px; color: var(--muted); font-size: .84rem; }
+    .methodology strong { color: #e3ebf7; }
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 230px minmax(0, 1fr); }
+      .metrics-panel { grid-column: 1 / -1; }
+      .metric-stack { grid-template-columns: repeat(5, minmax(130px, 1fr)); }
+    }
+    @media (max-width: 820px) {
+      .app { padding: 12px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .header-meta { justify-content: flex-start; }
+      .layout { grid-template-columns: 1fr; }
+      .stage-panel { grid-row: 1; min-height: 540px; }
+      .methods-panel, .metrics-panel { grid-column: auto; }
+      .trajectory-grid { grid-template-columns: 1fr; }
+      .plot svg { min-height: 280px; }
+      .metric-stack { grid-template-columns: 1fr 1fr; }
+      .evidence-grid { grid-template-columns: 1fr 1fr; }
+      .event-track { margin-right: 0; }
+    }
+    @media (max-width: 520px) {
+      .stage-head { align-items: flex-start; flex-direction: column; }
+      .view-tabs { width: 100%; }
+      .view-button { flex: 1; }
+      .metric-stack, .evidence-grid { grid-template-columns: 1fr; }
+      .conclusion { inset: 10px; }
+      .event-button::after { display: none; }
+      .event-track { margin-left: 50px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">AerospaceRL · Evidence Replay</p>
+          <h1>火箭着陆实验回放</h1>
+        </div>
+      </div>
+      <div class="header-meta">
+        <span class="badge">__BADGE__</span>
+        <span class="scope">单回合证据，不代表总体性能</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel side-panel methods-panel" aria-labelledby="methods-title">
+        <h2 class="section-title" id="methods-title">对比方法</h2>
+        <p class="section-note">同种子、同配置与同初始状态才允许叠加。</p>
+        <div class="method-list" id="method-list"></div>
+        <section class="method-summary" aria-labelledby="selected-summary-title">
+          <h3 class="section-title" id="selected-summary-title">当前回合摘要</h3>
+          <div class="mini-table" id="method-summary"></div>
+        </section>
+      </aside>
+
+      <section class="panel stage-panel" aria-labelledby="stage-title">
+        <div class="stage-head">
+          <div>
+            <p class="eyebrow">同步证据视图</p>
+            <h2 class="section-title" id="stage-title">视景与轨迹</h2>
+          </div>
+          <div class="view-tabs" role="group" aria-label="选择视图">
+            <button class="view-button" type="button" data-view="video" aria-pressed="true">主视景</button>
+            <button class="view-button" type="button" data-view="trajectory" aria-pressed="false">对比轨迹</button>
+          </div>
+          <button class="primary-button" id="show-conclusion" type="button">查看本回合结论</button>
+        </div>
+
+        <div class="stage">
+          <div class="stage-status" id="stage-status">准备回放</div>
+          <div class="view" id="video-view">
+            <video id="replay" preload="metadata" playsinline src="data:video/mp4;base64,__VIDEO_BASE64__"></video>
+          </div>
+          <div class="view" id="trajectory-view" hidden>
+            <div class="trajectory-grid">
+              <section class="plot"><h3>俯视轨迹 · East / North</h3><svg id="top-plot" viewBox="0 0 520 420" role="img" aria-label="各方法俯视轨迹"></svg></section>
+              <section class="plot"><h3>侧视轨迹 · East / Altitude</h3><svg id="side-plot" viewBox="0 0 520 420" role="img" aria-label="各方法侧视轨迹"></svg></section>
+            </div>
+          </div>
+
+          <section class="conclusion" id="conclusion-panel" role="dialog" aria-modal="true" aria-labelledby="conclusion-title" hidden>
+            <div class="conclusion-top">
+              <div><p class="eyebrow" id="conclusion-eyebrow"></p><h2 id="conclusion-title"></h2><p class="conclusion-body" id="conclusion-body"></p></div>
+              <button class="close-button" id="close-conclusion" type="button" aria-label="关闭结论">×</button>
+            </div>
+            <div class="evidence-grid" id="evidence-grid"></div>
+            <p class="caveat" id="conclusion-caveat"></p>
+            <div class="conclusion-actions">
+              <button class="primary-button" id="replay-key" type="button">重放末端阶段</button>
+              <button class="quiet-button" id="open-comparison" type="button">查看对比轨迹</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="timeline">
+          <div class="time-row">
+            <button class="play-button" id="play-toggle" type="button" aria-label="播放">▶</button>
+            <input class="scrubber" id="scrubber" type="range" min="0" max="1" step="0.001" value="0" aria-label="回放进度">
+            <output class="time-readout" id="time-readout">00:00 / 00:00</output>
+          </div>
+          <div class="event-track" id="event-track" aria-label="关键事件时间轴"></div>
+        </div>
+      </section>
+
+      <aside class="panel side-panel metrics-panel" aria-labelledby="metrics-title">
+        <h2 class="section-title" id="metrics-title">关键指标</h2>
+        <p class="section-note">只保留任务判定所需与解释代价的量。</p>
+        <div class="metric-stack">
+          <article class="metric"><span class="metric-label">水平落点误差</span><strong class="metric-value" id="metric-error">--</strong><small class="metric-sub">相对着陆台目标点</small></article>
+          <article class="metric"><span class="metric-label">速度</span><strong class="metric-value" id="metric-speed">--</strong><small class="metric-sub">成功门槛 &lt; 0.02 m/s</small></article>
+          <article class="metric"><span class="metric-label">足端间隙</span><strong class="metric-value" id="metric-gap">--</strong><small class="metric-sub">考虑着陆腿与台面几何</small></article>
+          <article class="metric"><span class="metric-label">燃料消耗</span><strong class="metric-value" id="metric-fuel">--</strong><small class="metric-sub" id="metric-fuel-sub">本回合初始燃料占比</small></article>
+          <article class="metric"><span class="metric-label">末端阶段</span><strong class="metric-value" id="metric-terminal">--</strong><small class="metric-sub">进入末端高度后的实时时长</small></article>
+        </div>
+        <details>
+          <summary>完整遥测与坐标</summary>
+          <pre class="raw" id="raw-telemetry">等待视频元数据…</pre>
+        </details>
+      </aside>
+    </main>
+
+    <footer class="panel methodology">
+      <strong>判读口径：</strong>结论来自环境原始结束标记与记录遥测；百分比改进不在基线接近零时使用。多方法叠加在导出阶段强制检查任务、种子、环境配置、目标和初始状态，避免把不同试验条件包装成算法差异。
+    </footer>
+  </div>
+
+  <script type="application/json" id="dashboard-data">__PAYLOAD__</script>
+  <script>
+  (() => {
+    'use strict';
+    const data = JSON.parse(document.getElementById('dashboard-data').textContent);
+    const video = document.getElementById('replay');
+    const scrubber = document.getElementById('scrubber');
+    const playToggle = document.getElementById('play-toggle');
+    const timeReadout = document.getElementById('time-readout');
+    const methodList = document.getElementById('method-list');
+    const methodSummary = document.getElementById('method-summary');
+    const stageStatus = document.getElementById('stage-status');
+    const visible = new Set(data.methods.map(method => method.id));
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const eventLabels = {terminal_start: '末端段', pad_contact: '触垫', ground_contact: '接地', settled: '落稳', terminated: '终止', time_limit: '时限', collection_limit: '采集止'};
+
+    const text = (parent, value, className) => {
+      const node = document.createElement('span');
+      if (className) node.className = className;
+      node.textContent = value;
+      parent.appendChild(node);
+      return node;
+    };
+    const finite = value => typeof value === 'number' && Number.isFinite(value);
+    const format = (value, unit, digits = 2, fallback = '未记录') => finite(value) ? `${value.toFixed(digits)} ${unit}`.trim() : fallback;
+    const clock = seconds => {
+      if (!finite(seconds)) return '00:00';
+      const whole = Math.max(0, Math.floor(seconds));
+      return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}`;
+    };
+    const roleLabel = role => ({primary: '当前方法', baseline: '对照基线', comparison: '对比方法'}[role] || role);
+
+    function lineIcon(method) {
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '44'); svg.setAttribute('height', '13'); svg.setAttribute('viewBox', '0 0 44 13');
+      const line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', '2'); line.setAttribute('x2', '42'); line.setAttribute('y1', '6.5'); line.setAttribute('y2', '6.5');
+      line.setAttribute('stroke', method.color); line.setAttribute('stroke-width', '3');
+      if (method.dash) line.setAttribute('stroke-dasharray', method.dash);
+      svg.appendChild(line); return svg;
+    }
+
+    function renderMethods() {
+      methodList.replaceChildren();
+      data.methods.forEach(method => {
+        const card = document.createElement('label'); card.className = 'method-card'; card.dataset.active = String(visible.has(method.id));
+        const check = document.createElement('input'); check.type = 'checkbox'; check.className = 'method-check'; check.checked = visible.has(method.id);
+        check.setAttribute('aria-label', `显示 ${method.label}`);
+        check.addEventListener('change', () => {
+          if (check.checked) visible.add(method.id); else visible.delete(method.id);
+          if (!visible.size) { visible.add(method.id); check.checked = true; }
+          renderMethods(); drawPlots();
+        });
+        const info = document.createElement('span');
+        text(info, method.label, 'method-name'); text(info, roleLabel(method.role), 'method-role');
+        const style = document.createElement('span'); style.className = 'style-key'; style.appendChild(lineIcon(method)); text(style, method.marker);
+        info.appendChild(style);
+        const state = text(document.createElement('span'), method.outcome_label, `method-state ${method.outcome}`);
+        card.append(check, info, state); methodList.appendChild(card);
+      });
+      const primary = data.methods.find(method => method.id === data.primary_id) || data.methods[0];
+      const rows = [
+        ['首次触垫误差', format(primary.summary.horizontal_error_m, 'm')],
+        ['首次触垫速度', format(primary.summary.touch_speed_mps, 'm/s')],
+        ['燃料消耗', format(primary.summary.fuel_used_kg, 'kg')],
+        ['任务判定', primary.outcome_label],
+      ];
+      methodSummary.replaceChildren();
+      rows.forEach(([label, value]) => { const row = document.createElement('div'); row.className = 'mini-row'; text(row, label); const strong = document.createElement('strong'); strong.textContent = value; row.appendChild(strong); methodSummary.appendChild(row); });
+    }
+
+    function currentMetrics() {
+      const index = Math.min(data.values.length - 1, Math.max(0, Math.floor(video.currentTime * data.fps)));
+      return data.values[index];
+    }
+    function simulationTime() { return data.start_s + video.currentTime * data.speed; }
+
+    function updateMetrics() {
+      if (!data.values.length) return;
+      const metric = currentMetrics(); const sample = metric.sample;
+      document.getElementById('metric-error').textContent = format(metric.horizontal_error_m, 'm');
+      document.getElementById('metric-speed').textContent = format(metric.speed_mps, 'm/s');
+      document.getElementById('metric-gap').textContent = format(metric.foot_height_m, 'm');
+      document.getElementById('metric-fuel').textContent = format(metric.fuel_used_kg, 'kg');
+      document.getElementById('metric-fuel-sub').textContent = finite(metric.fuel_used_percent) ? `本回合初始燃料的 ${metric.fuel_used_percent.toFixed(1)}%` : '本回合初始燃料占比';
+      document.getElementById('metric-terminal').textContent = format(metric.terminal_elapsed_s, 's', 2, '未开始');
+      const state = sample.terminated ? '任务终止' : sample.complete ? '满足判据' : sample.pad_contact ? '着陆台接触' : metric.terminal_elapsed_s !== null ? '末端制导' : '下降段';
+      stageStatus.textContent = state;
+      document.getElementById('raw-telemetry').textContent = [
+        `仿真时间: ${sample.t_s.toFixed(3)} s`,
+        `位置 ENU [m]: ${sample.position_m.map(value => value.toFixed(3)).join(', ')}`,
+        `速度 ENU [m/s]: ${sample.linear_velocity_mps.map(value => value.toFixed(3)).join(', ')}`,
+        `四元数 wxyz: ${sample.quaternion_wxyz.map(value => value.toFixed(5)).join(', ')}`,
+        `角速度 [rad/s]: ${sample.angular_velocity_radps.map(value => value.toFixed(4)).join(', ')}`,
+        `位置偏差 [m]: ${metric.position_error_m.map(value => value.toFixed(3)).join(', ')}`,
+        `油门: ${sample.throttle_actual.toFixed(3)}`,
+        `燃料余量: ${(sample.fuel_fraction * 100).toFixed(2)}%`,
+        `pad_contact=${sample.pad_contact}  complete=${sample.complete}`,
+      ].join('\n');
+      scrubber.value = finite(video.duration) && video.duration > 0 ? String(video.currentTime / video.duration) : '0';
+      timeReadout.textContent = `${clock(video.currentTime)} / ${clock(video.duration)}`;
+      updateMarkers(simulationTime());
+    }
+
+    function createSvg(tag, attributes = {}) {
+      const node = document.createElementNS(svgNS, tag);
+      Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+      return node;
+    }
+    function markerNode(method, x, y, size = 6) {
+      const common = {fill: method.color, stroke: '#06101d', 'stroke-width': 2};
+      if (method.marker === 'square') return createSvg('rect', {x: x-size, y: y-size, width: size*2, height: size*2, rx: 1, ...common});
+      if (method.marker === 'diamond') return createSvg('polygon', {points: `${x},${y-size*1.3} ${x+size*1.3},${y} ${x},${y+size*1.3} ${x-size*1.3},${y}`, ...common});
+      if (method.marker === 'triangle') return createSvg('polygon', {points: `${x},${y-size*1.35} ${x+size*1.25},${y+size} ${x-size*1.25},${y+size}`, ...common});
+      if (method.marker === 'cross') return createSvg('path', {d: `M${x-size},${y-size} L${x+size},${y+size} M${x+size},${y-size} L${x-size},${y+size}`, fill: 'none', stroke: method.color, 'stroke-width': 3});
+      return createSvg('circle', {cx: x, cy: y, r: size, ...common});
+    }
+    function scales() {
+      const points = data.methods.filter(method => visible.has(method.id)).flatMap(method => method.trajectory.map(item => item.position_m));
+      const expand = values => { let min = Math.min(...values), max = Math.max(...values); if (max-min < 1e-6) { min -= 1; max += 1; } const pad = (max-min)*.09; return [min-pad, max+pad]; };
+      return {x: expand(points.map(point => point[0])), y: expand(points.map(point => point[1])), z: expand(points.map(point => point[2]))};
+    }
+    const map = (value, range, start, end) => start + (value-range[0])/(range[1]-range[0])*(end-start);
+    function addGrid(svg, horizontalLabel, verticalLabel) {
+      for (let i = 0; i <= 5; i++) {
+        const px = 42 + i * 88; const py = 25 + i * 70;
+        svg.appendChild(createSvg('line', {x1: px, y1: 25, x2: px, y2: 375, class: 'grid-line'}));
+        svg.appendChild(createSvg('line', {x1: 42, y1: py, x2: 482, y2: py, class: 'grid-line'}));
+      }
+      const x = createSvg('text', {x: 472, y: 405, class: 'axis-label', 'text-anchor': 'end'}); x.textContent = horizontalLabel; svg.appendChild(x);
+      const y = createSvg('text', {x: 9, y: 31, class: 'axis-label'}); y.textContent = verticalLabel; svg.appendChild(y);
+    }
+    function drawPlot(svg, ranges, verticalKey) {
+      svg.replaceChildren(); addGrid(svg, 'East [m]', verticalKey === 1 ? 'North [m]' : 'Altitude [m]');
+      data.methods.filter(method => visible.has(method.id)).forEach(method => {
+        const verticalRange = verticalKey === 1 ? ranges.y : ranges.z;
+        const coords = method.trajectory.map(item => [map(item.position_m[0], ranges.x, 42, 482), map(item.position_m[verticalKey], verticalRange, 375, 25)]);
+        const path = createSvg('polyline', {points: coords.map(point => point.join(',')).join(' '), fill: 'none', stroke: method.color, 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'});
+        if (method.dash) path.setAttribute('stroke-dasharray', method.dash); svg.appendChild(path);
+        const end = coords[coords.length-1]; const label = createSvg('text', {x: Math.min(465, end[0]+8), y: Math.max(18, end[1]-8), fill: method.color, class: 'path-label'}); label.textContent = method.label; svg.appendChild(label);
+        const marker = markerNode(method, coords[0][0], coords[0][1]); marker.dataset.method = method.id; marker.dataset.axis = String(verticalKey); svg.appendChild(marker);
+      });
+    }
+    function drawPlots() { const range = scales(); data._ranges = range; drawPlot(document.getElementById('top-plot'), range, 1); drawPlot(document.getElementById('side-plot'), range, 2); updateMarkers(simulationTime()); }
+    function positionAt(method, time) {
+      const points = method.trajectory; let index = 0;
+      while (index + 1 < points.length && points[index + 1].t_s <= time) index++;
+      if (index + 1 === points.length) return points[index].position_m;
+      const a = points[index], b = points[index+1], u = Math.max(0, Math.min(1, (time-a.t_s)/(b.t_s-a.t_s || 1)));
+      return a.position_m.map((value, dim) => value + (b.position_m[dim]-value)*u);
+    }
+    function updateMarkers(time) {
+      if (!data._ranges) return;
+      data.methods.filter(method => visible.has(method.id)).forEach(method => {
+        const position = positionAt(method, time);
+        [1, 2].forEach(axis => {
+          const old = document.querySelector(`[data-method="${method.id}"][data-axis="${axis}"]`); if (!old) return;
+          const verticalRange = axis === 1 ? data._ranges.y : data._ranges.z;
+          const fresh = markerNode(method, map(position[0], data._ranges.x, 42, 482), map(position[axis], verticalRange, 375, 25));
+          fresh.dataset.method = method.id; fresh.dataset.axis = String(axis); old.replaceWith(fresh);
+        });
+      });
+    }
+
+    function renderEvents() {
+      const track = document.getElementById('event-track'); track.replaceChildren();
+      data.events.filter(event => finite(event.t_s) && event.t_s >= data.start_s && event.t_s <= data.end_s).forEach(event => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'event-button';
+        const percent = 100 * (event.t_s-data.start_s)/(data.end_s-data.start_s || 1);
+        button.style.left = `${percent}%`; button.dataset.label = eventLabels[event.type] || event.type; button.title = `${button.dataset.label} · ${event.t_s.toFixed(3)} s`;
+        button.setAttribute('aria-label', button.title); button.addEventListener('click', () => { video.currentTime = Math.max(0, (event.t_s-data.start_s)/data.speed); updateMetrics(); }); track.appendChild(button);
+      });
+    }
+
+    function showConclusion() { document.getElementById('conclusion-panel').hidden = false; document.getElementById('close-conclusion').focus(); }
+    function closeConclusion() { document.getElementById('conclusion-panel').hidden = true; document.getElementById('show-conclusion').focus(); }
+    function renderConclusion() {
+      const conclusion = data.conclusion;
+      document.getElementById('conclusion-eyebrow').textContent = conclusion.eyebrow;
+      document.getElementById('conclusion-title').textContent = conclusion.title;
+      document.getElementById('conclusion-body').textContent = conclusion.body;
+      document.getElementById('conclusion-caveat').textContent = conclusion.caveat;
+      const grid = document.getElementById('evidence-grid'); grid.replaceChildren();
+      conclusion.evidence.forEach(item => { const card = document.createElement('article'); card.className = `evidence ${item.tone}`; text(card, item.label); const strong = document.createElement('strong'); strong.textContent = item.value; card.appendChild(strong); const detail = document.createElement('small'); detail.textContent = item.detail; card.appendChild(detail); grid.appendChild(card); });
+    }
+    function switchView(name) {
+      document.getElementById('video-view').hidden = name !== 'video'; document.getElementById('trajectory-view').hidden = name !== 'trajectory';
+      document.querySelectorAll('.view-button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.view === name)));
+      if (name === 'trajectory') drawPlots();
+    }
+
+    document.querySelectorAll('.view-button').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
+    document.getElementById('show-conclusion').addEventListener('click', showConclusion);
+    document.getElementById('close-conclusion').addEventListener('click', closeConclusion);
+    document.getElementById('open-comparison').addEventListener('click', () => { closeConclusion(); switchView('trajectory'); });
+    document.getElementById('replay-key').addEventListener('click', () => { closeConclusion(); switchView('video'); video.currentTime = Math.max(0, (video.duration || 0)-5); video.play(); });
+    playToggle.addEventListener('click', () => video.paused ? video.play() : video.pause());
+    scrubber.addEventListener('input', () => { if (finite(video.duration)) video.currentTime = Number(scrubber.value)*video.duration; updateMetrics(); });
+    video.addEventListener('play', () => { playToggle.textContent = 'Ⅱ'; playToggle.setAttribute('aria-label', '暂停'); });
+    video.addEventListener('pause', () => { playToggle.textContent = '▶'; playToggle.setAttribute('aria-label', '播放'); });
+    video.addEventListener('timeupdate', updateMetrics); video.addEventListener('seeked', updateMetrics);
+    video.addEventListener('ended', showConclusion);
+    video.addEventListener('loadedmetadata', () => { updateMetrics(); renderEvents(); drawPlots(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && !document.getElementById('conclusion-panel').hidden) closeConclusion(); });
+
+    renderMethods(); renderConclusion(); renderEvents(); drawPlots(); updateMetrics();
+  })();
+  </script>
+</body>
+</html>

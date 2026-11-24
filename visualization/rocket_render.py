@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from .rocket_data import ROOT, MODELS, Episode, playback_times, rotation
+from .rocket_dashboard import build_dashboard, method_label
 
 
 def episode_digest(episode):
@@ -39,13 +40,11 @@ def overlay(main, close, values, episode, width, height, font_path=None):
         draw.text((x, y), label, font=font(12), fill='#a6bdc9'); y += 20
         if value:
             draw.text((x, y), value, font=font(size), fill='#edf6f8'); y += 28
-    vec = lambda a: ' '.join(f'{v:7.2f}' for v in a)
-    line('ROCKET LANDING', 'DEMO' if episode.data.get('demo') else 'RECORDED LOG')
+    line('ROCKET LANDING / KEY METRICS', method_label(episode))
     line('SIMULATION TIME', f"{s['t_s']:.3f} s")
-    line('POSITION ENU [m]', vec(s['position_m']), 13)
-    line('VELOCITY ENU [m/s]', vec(s['linear_velocity_mps']), 13)
-    line('POSITION ERROR [m]', vec(values['position_error_m']), 13)
-    line('HORIZONTAL / FOOT GAP [m]', f"{values['horizontal_error_m']:.2f} / {values['foot_height_m']:.2f}")
+    line('HORIZONTAL ERROR', f"{values['horizontal_error_m']:.2f} m")
+    line('SPEED', f"{values['speed_mps']:.2f} m/s")
+    line('FOOT CLEARANCE', f"{values['foot_height_m']:.2f} m")
     line('FUEL USED [kg / %]', f"{values['fuel_used_kg']:.3f} / {values['fuel_used_percent']:.1f}")
     line('TOUCHDOWN ELAPSED [s]', f"{values['landing_elapsed_s']:.3f}" + (' LOCKED' if values['contact_time_s'] is not None else ' RUNNING'))
     terminal = values['terminal_elapsed_s']
@@ -173,8 +172,13 @@ def render_video(episode, output, *, fps=30, speed=1., start=0., end=None,
     output.with_suffix('.timeline.json').write_text(json.dumps(timeline, indent=2), encoding='utf-8')
 
 
-def export_html(episode, video, output):
-    """Share Genesis pixels + embedded metrics; no server, no remote assets."""
+def export_html(episode, video, output, comparison_episodes=()):
+    """Export an offline evidence dashboard around one verified Genesis video.
+
+    Comparison episodes contribute synchronized trajectory and result data;
+    their initial conditions are validated by ``build_dashboard`` before any
+    comparison is shown.  The embedded video always belongs to ``episode``.
+    """
     import base64
     from html import escape
     video, output = Path(video), Path(output)
@@ -185,18 +189,15 @@ def export_html(episode, video, output):
         raise ValueError('Video and trajectory do not belong to the same episode')
     times = playback_times(episode.duration, timeline['fps'], timeline['speed'], timeline['start_s'], timeline['end_s'])
     values = [episode.metrics(float(t)) for t in times]
-    payload = json.dumps(dict(fps=timeline['fps'], values=values), separators=(',', ':'), allow_nan=False).replace('<', '\\u003c')
+    dashboard = build_dashboard(episode, comparison_episodes)
+    dashboard.update(fps=timeline['fps'], speed=timeline['speed'], start_s=timeline['start_s'],
+                     end_s=timeline['end_s'], values=values)
+    payload = json.dumps(dashboard, separators=(',', ':'), allow_nan=False,
+                         ensure_ascii=False).replace('<', '\\u003c')
     badge = '示意数据' if episode.data.get('demo') else 'Genesis 回放 · 记录数据'
-    page = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>火箭着陆回放</title><style>body{background:#142532;color:#eef5f8;font:16px/1.6 system-ui;margin:24px auto;padding:0 16px;max-width:1200px}video{width:100%;display:block}pre{white-space:pre-wrap;font-variant-numeric:tabular-nums}small{color:#b0c8d4}</style>
-<h1>火箭着陆回放</h1><small>BADGE · 视频已包含同步双机位和 HUD</small>
-<video controls preload="metadata" src="data:video/mp4;base64,VIDEO"></video><pre id="metrics" aria-live="off"></pre>
-<script type="application/json" id="data">PAYLOAD</script><script>
-const data=JSON.parse(document.getElementById('data').textContent),v=document.querySelector('video'),o=document.getElementById('metrics');
-const vec=a=>a.map(x=>x.toFixed(2)).join(', ');
-function update(){const m=data.values[Math.min(data.values.length-1,Math.floor(v.currentTime*data.fps))],s=m.sample;
-o.textContent='仿真时间 '+s.t_s.toFixed(3)+' s\\n位置 [m] '+vec(s.position_m)+'\\n速度 [m/s] '+vec(s.linear_velocity_mps)+'\\n位置偏差 [m] '+vec(m.position_error_m)+'\\n燃料消耗 '+m.fuel_used_kg.toFixed(3)+' kg / '+m.fuel_used_percent.toFixed(1)+'%\\n首次触地耗时 '+(m.contact_time_s===null?'未触地':m.contact_time_s.toFixed(3)+' s')+'\\n末端阶段耗时 '+(m.terminal_elapsed_s===null?'未开始':m.terminal_elapsed_s.toFixed(3)+' s');}
-v.addEventListener('timeupdate',update);v.addEventListener('seeked',update);update();</script></html>'''
-    page = page.replace('BADGE', escape(badge)).replace('VIDEO', base64.b64encode(video.read_bytes()).decode()).replace('PAYLOAD', payload)
+    template = Path(__file__).with_name('rocket_dashboard_template.html').read_text(encoding='utf-8')
+    page = (template.replace('__BADGE__', escape(badge))
+            .replace('__VIDEO_BASE64__', base64.b64encode(video.read_bytes()).decode())
+            .replace('__PAYLOAD__', payload))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(page, encoding='utf-8')
