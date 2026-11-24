@@ -1,4 +1,4 @@
-# 火箭 Genesis 轨迹采集与回放（首版）
+# 火箭 Genesis 轨迹采集、回放与实验结论看板
 
 本模块实现单副本真实回合采集、240 Hz 状态日志、接触/成功/结束事件、Genesis 双机位、同步 HUD、流式 MP4 和离线 HTML 分享。它独立于原来的 `scripts/visualize.py`，只给火箭环境加入默认关闭的 `visual_recorder` 观察口。没有修改动力学、奖励、动作映射或成功门槛。
 
@@ -14,7 +14,7 @@
 ## 1. 采集一条真实轨迹
 
 ```bash
-python scripts/rocket_replay.py collect --backend cpu --seed 7 --out results/rocket_replay/seed7
+python scripts/rocket_replay.py collect --backend cpu --seed 7 --method-label "PDG 基线" --out results/rocket_replay/seed7
 ```
 
 默认使用 PDG 基线、一个副本和默认静风环境。它不会悄悄读取旧训练目录。若需要某次训练的风扰/奖励等配置，显式传入：
@@ -66,6 +66,21 @@ python scripts/rocket_replay.py html --episode results/rocket_replay/seed7 --vid
 
 渲染自动产生 `.timeline.json`，分享时校验其轨迹指纹。HTML 内嵌 Genesis 视频及与媒体时间对应的真实遥测，支持浏览器播放、暂停和时间拖动；它不是在浏览器里运行 Genesis，也不提供任意三维视角。保留视频旁的 timeline 文件，否则无法导出。
 
+离线页面以“实验结论优先”重组信息：播放结束自动弹出本回合结论；右侧只常驻水平误差、速度、足端间隙、燃料和飞行阶段等关键指标；原始位置、四元数、角速度等放入可折叠详情；事件标记与视频时间同步。结论始终标为“单回合证据”，不能据此声称算法整体优于其他方法。
+
+若要比较两种或多种方法，先用同一任务、随机种子、环境配置、目标和初始状态分别采集，再重复传入 `--compare`（最多四条对比轨迹）：
+
+```bash
+python scripts/rocket_replay.py html \
+  --episode results/rocket_replay/policy/seed7 \
+  --video results/rocket_replay/policy/seed7/full.mp4 \
+  --compare results/rocket_replay/pdg/seed7 \
+  --compare results/rocket_replay/ppo/seed7 \
+  --out results/rocket_replay/comparison-seed7.html
+```
+
+页面用颜色、线型和标记三重编码方法，避免只依赖颜色。若任务、seed、配置、目标或初始状态不一致，导出会直接拒绝，防止把不公平的轨迹并排展示。对比表同时给出绝对指标和相对基线差值；当基线接近零时不展示容易夸大的百分比。
+
 ## 检查与集成验收
 
 ```bash
@@ -73,6 +88,6 @@ python -m unittest discover -s tests -p 'test_rocket_replay.py' -v
 python -m compileall -q visualization scripts/rocket_replay.py environments/rocket/env.py
 ```
 
-数据测试只用 NumPy/Pillow。组内还需验证：同 seed 同设备记录关闭/开启的动作和状态一致；真实回合终止末帧没有重置瞬移；240 Hz 接触时刻和 120 Hz 判据速度对应；正常速度时长与日志相符；双机位同步；完整 30 s 输出内存保持有界；HTML 断网仍可打开。
+数据测试只用 NumPy/Pillow，覆盖日志往返、事件/指标、插值、离线 HTML、单回合声明及公平对比约束。组内还需验证：同 seed 同设备记录关闭/开启的动作和状态一致；真实回合终止末帧没有重置瞬移；240 Hz 接触时刻和 120 Hz 判据速度对应；正常速度时长与日志相符；双机位同步；完整 30 s 输出内存保持有界；HTML 断网仍可打开。
 
 本次不修改原有两个通用评测脚本的回合统计问题，避免将视景改动与 benchmark 评测语义变更混在一起。
