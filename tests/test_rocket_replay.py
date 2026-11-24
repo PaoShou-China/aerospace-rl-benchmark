@@ -9,6 +9,7 @@ import unittest
 import numpy as np
 
 from visualization.rocket_data import Episode, SCHEMA, asset_geometry, playback_times, slerp
+from visualization.rocket_dashboard import build_dashboard, ensure_comparable, episode_summary
 from visualization.rocket_recorder import RocketRecorder
 from visualization.rocket_render import episode_digest, export_html, overlay
 
@@ -99,12 +100,36 @@ class DataTests(unittest.TestCase):
             sidecar=dict(episode_sha256=episode_digest(e),fps=30,speed=1.,start_s=0.,end_s=3.)
             v.with_suffix('.timeline.json').write_text(json.dumps(sidecar))
             export_html(e,v,p/'share.html')
-            page=(p/'share.html').read_text()
+            page=(p/'share.html').read_text(encoding='utf-8')
             self.assertIn('data:video/mp4;base64,',page)
             self.assertNotIn('src="https://',page)
             self.assertIn('示意数据',page)
+            self.assertIn('id="conclusion-panel"',page)
+            self.assertIn('id="trajectory-view"',page)
+            self.assertIn('完整遥测与坐标',page)
+            self.assertIn('单回合证据，不代表总体性能',page)
             changed=copy.deepcopy(e.data);changed['metadata']['initial_fuel_mass_kg']=21.
             with self.assertRaises(ValueError):export_html(Episode(changed),v,p/'wrong.html')
+
+    def test_dashboard_conclusion_is_scoped_to_one_episode(self):
+        episode=Episode(fixture())
+        dashboard=build_dashboard(episode)
+        self.assertTrue(dashboard['demo'])
+        self.assertIn('示意',dashboard['conclusion']['title'])
+        self.assertIn('不能作为实验结论',dashboard['conclusion']['caveat'])
+        summary=episode_summary(episode)
+        self.assertEqual(summary['outcome'],'success')
+        self.assertAlmostEqual(summary['horizontal_error_m'],0.)
+
+    def test_comparison_requires_matched_experimental_conditions(self):
+        primary=Episode(fixture())
+        matched=copy.deepcopy(fixture());matched['metadata']['method_label']='comparison'
+        ensure_comparable(primary,Episode(matched))
+        dashboard=build_dashboard(primary,[Episode(matched)])
+        self.assertEqual(len(dashboard['methods']),2)
+        mismatch=copy.deepcopy(matched);mismatch['metadata']['seed']=99
+        with self.assertRaisesRegex(ValueError,'随机种子'):
+            ensure_comparable(primary,Episode(mismatch))
 
     def test_overlay_dimensions(self):
         frame=np.zeros((720,980,3),dtype=np.uint8);e=Episode(fixture())
