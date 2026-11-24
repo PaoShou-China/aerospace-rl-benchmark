@@ -48,7 +48,15 @@ def collect(args):
         else:
             controller = build_baseline('rocket', env)
             policy = controller.actions
-        recorder = RocketRecorder(env, seed=args.seed, source=source, config=config, terminal_height=args.terminal_height)
+        if args.method_label:
+            label = args.method_label
+        elif source == 'benchmark_pdg_baseline':
+            label = 'PDG 基线'
+        else:
+            algo = str(config.get('algo', '')).strip()
+            label = {'ppo': 'PPO', 'flash_sac': 'FlashSAC'}.get(algo, algo or '学习策略')
+        recorder = RocketRecorder(env, seed=args.seed, source=source, config=config,
+                                  terminal_height=args.terminal_height, method_label=label)
         if args.checkpoint:
             recorder.metadata['checkpoint_sha256'] = hashlib.sha256(args.checkpoint.read_bytes()).hexdigest()
         env.visual_recorder = recorder
@@ -79,6 +87,7 @@ def main(argv=None):
     c.add_argument('--checkpoint', type=Path, help='optional trained policy; omitted = PDG baseline')
     c.add_argument('--max-steps', type=int, help='collection cap; never changes the task time limit')
     c.add_argument('--terminal-height', type=float, default=20.)
+    c.add_argument('--method-label', help='label shown in the replay dashboard')
     for name in ('render','inspect','html'):
         q = sub.add_parser(name)
         q.add_argument('--episode', type=Path, required=True)
@@ -93,6 +102,8 @@ def main(argv=None):
             q.add_argument('--time', type=float, default=0.)
         else:
             q.add_argument('--video', type=Path, required=True);q.add_argument('--out', type=Path, required=True)
+            q.add_argument('--compare', type=Path, action='append', default=[], metavar='EPISODE',
+                           help='matched episode directory/path to add to the trajectory comparison (repeatable)')
     args = p.parse_args(argv)
     try:
         if args.command == 'collect':
@@ -110,7 +121,8 @@ def main(argv=None):
                 print(args.out)
             else:
                 from visualization.rocket_render import export_html
-                export_html(e, args.video, args.out);print(args.out)
+                comparisons = [Episode.load(path) for path in args.compare]
+                export_html(e, args.video, args.out, comparisons);print(args.out)
     except (ValueError, OSError, ModuleNotFoundError, ImportError) as exc:
         p.exit(2, f'rocket_replay: {exc}\nSee docs/rocket_genesis_replay.md for runtime requirements.\n')
 
